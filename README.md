@@ -76,9 +76,12 @@ YT_DOWNLOAD_EMBED_TOOLS=0 cargo build
 
 | | 크기 |
 | --- | --- |
-| 도구 원본 | 303 MB |
-| 실행 파일에 담긴 상태(gzip) | **132 MB** |
+| 도구 원본 | 387 MB |
+| 실행 파일에 담긴 상태(gzip) | **169 MB** |
 | 첫 실행 때 푸는 시간 | 약 5초 (한 번만) |
+
+ffmpeg/ffprobe 는 **정적 빌드**를 받아서 담습니다(Windows: BtbN, Linux/macOS: ffmpeg-static).
+PATH 에 깔린 것을 복사하면 그 PC 의 공유 라이브러리에 묶여서 옮겼을 때 실행되지 않습니다.
 
 ### 포터블 (파일 하나)
 

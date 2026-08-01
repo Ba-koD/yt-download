@@ -449,15 +449,14 @@ pub(crate) async fn assemble_capture_streams(dir: &Path) -> Result<Vec<CaptureSt
     for base in bases {
         let mut fragments = groups.remove(&base).unwrap_or_default();
         fragments.sort_by_key(|(index, _)| *index);
-        let mut ordered = Vec::new();
-        let mut expected = fragments.first().map(|(index, _)| *index).unwrap_or(1);
-        for (index, path) in fragments {
-            if index != expected {
-                break;
-            }
-            ordered.push(path);
-            expected += 1;
-        }
+        // 번호가 하나라도 비면 거기서 끊는다(빠진 조각 뒤는 이어붙여도 깨진다).
+        let first = fragments.first().map(|(index, _)| *index).unwrap_or(1);
+        let mut ordered: Vec<PathBuf> = fragments
+            .into_iter()
+            .zip(first..)
+            .take_while(|((index, _), expected)| index == expected)
+            .map(|((_, path), _)| path)
+            .collect();
         // 중단 시점에 쓰이던 조각은 잘려 있을 수 있으므로 꼬리를 버린다.
         let keep = ordered
             .len()

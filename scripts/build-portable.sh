@@ -51,7 +51,8 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   rm -rf "$app"
   mkdir -p "$app/Contents/MacOS"
   cp dist/yt-download "$app/Contents/MacOS/yt-download"
-  cat > "$app/Contents/Info.plist" <<'PLIST'
+  version="$(tr -d '[:space:]' < VERSION)"
+  cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -59,8 +60,8 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   <key>CFBundleName</key><string>yt-download</string>
   <key>CFBundleDisplayName</key><string>yt-download</string>
   <key>CFBundleIdentifier</key><string>dev.local.yt-download</string>
-  <key>CFBundleVersion</key><string>0.1.0</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleVersion</key><string>$version</string>
+  <key>CFBundleShortVersionString</key><string>$version</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>yt-download</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>

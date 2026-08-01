@@ -31,7 +31,7 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ steps.resolve.outputs.tag }}
 
@@ -62,7 +62,7 @@ jobs:
             artifact: yt-download-macos-x64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.verify.outputs.tag }}
 
@@ -104,14 +104,36 @@ jobs:
       - name: Test
         run: cargo test --release
 
-      - uses: actions/upload-artifact@v4
+      # 업로드되는 아티팩트는 실행 권한을 잃는다. 유닉스는 tar 로 묶어 권한을 지킨다.
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "${{ matrix.artifact }}"
+          Compress-Archive -Path dist\yt-download.exe -DestinationPath "$name.zip"
+          $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name.zip" | Set-Content "$name.zip.sha256" -Encoding ascii
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          name="${{ matrix.artifact }}"
+          # macOS 는 앱 번들만 담는다(번들 안에 같은 실행 파일이 들어 있다).
+          if [ -d dist/yt-download.app ]; then
+            tar -czf "$name.tar.gz" -C dist yt-download.app
+          else
+            tar -czf "$name.tar.gz" -C dist yt-download
+          fi
+          if command -v sha256sum >/dev/null; then
+            sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+          else
+            shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+          fi
+
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
-          path: |
-            dist/yt-download
-            dist/yt-download.exe
-            dist/yt-download.app
-            dist/*.sha256
+          path: ${{ matrix.artifact }}.*
           if-no-files-found: error
           retention-days: 7
 
@@ -121,25 +143,21 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.verify.outputs.tag }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
 
-      # 플랫폼마다 zip 하나로 묶고, 체크섬을 한 파일에 모은다.
-      - name: Pack per platform
+      # 아티팩트는 이름별 폴더로 내려온다. 한곳에 모으고 체크섬은 한 파일로 합친다.
+      - name: Collect assets
         run: |
-          cd artifacts
-          : > ../SHA256SUMS.txt
-          for dir in */; do
-            name="${dir%/}"
-            cat "$dir"/*.sha256 >> ../SHA256SUMS.txt || true
-            (cd "$dir" && zip -qr "../$name.zip" .)
-          done
-          ls -la
+          mkdir -p release
+          find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec mv {} release/ \;
+          find artifacts -type f -name '*.sha256' -exec cat {} + | sort -k2 > release/SHA256SUMS.txt
+          ls -l release
 
       - name: Build release notes
         run: |
@@ -150,26 +168,24 @@ jobs:
             echo "---"
             echo
             echo "도구(yt-dlp, ffmpeg, ffprobe, deno)를 모두 담은 포터블 빌드입니다."
-            echo "받은 zip 을 풀어 실행 파일 하나만 두고 쓰면 되고, 처음 실행할 때 도구를 풀어내느라 몇 초 걸립니다."
+            echo "풀어서 실행 파일 하나만 두고 쓰면 되고, 처음 실행할 때 도구를 풀어내느라 몇 초 걸립니다."
             echo
             echo "| 파일 | 대상 |"
             echo "| --- | --- |"
             echo "| \`yt-download-windows-x64.zip\` | Windows 10/11 (x64) — Microsoft Edge WebView2 런타임 필요 |"
-            echo "| \`yt-download-linux-x64.zip\` | Linux (x64) — \`libwebkit2gtk-4.1-0\` 필요 |"
-            echo "| \`yt-download-macos-arm64.zip\` | macOS (Apple Silicon) |"
-            echo "| \`yt-download-macos-x64.zip\` | macOS (Intel) |"
+            echo "| \`yt-download-linux-x64.tar.gz\` | Linux (x64) — \`libwebkit2gtk-4.1-0\` 필요 |"
+            echo "| \`yt-download-macos-arm64.tar.gz\` | macOS (Apple Silicon) — 앱 번들 |"
+            echo "| \`yt-download-macos-x64.tar.gz\` | macOS (Intel) — 앱 번들 |"
             echo
             echo "macOS 는 서명이 없어 처음 열 때 우클릭 → 열기 를 한 번 해줘야 합니다."
             echo "\`SHA256SUMS.txt\` 로 받은 파일을 확인할 수 있습니다."
           } > RELEASE_NOTES.md
           cat RELEASE_NOTES.md
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.verify.outputs.tag }}
           name: yt-download ${{ needs.verify.outputs.tag }}
           body_path: RELEASE_NOTES.md
-          files: |
-            artifacts/*.zip
-            SHA256SUMS.txt
+          files: release/*
           fail_on_unmatched_files: true

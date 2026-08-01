@@ -22,6 +22,12 @@ if ! grep -q "^## \[$version\]" CHANGELOG.md; then
   exit 1
 fi
 
+# 빈 칸으로 릴리스가 나가면 설명 없는 릴리스가 된다. 빌드를 시작하기 전에 잡는다.
+if [[ -z "$(bash "$root/scripts/changelog-section.sh" "$version" 2>/dev/null)" ]]; then
+  echo "CHANGELOG.md 의 [$version] 칸이 비어 있습니다. 무엇이 바뀌었는지 적어주세요." >&2
+  exit 1
+fi
+
 tag="${1:-}"
 if [[ -n "$tag" ]]; then
   if [[ "${tag#v}" != "$version" ]]; then

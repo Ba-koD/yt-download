@@ -85,7 +85,7 @@ YT_DOWNLOAD_EMBED_TOOLS=0 cargo build
 Windows:
 
 ```powershell
-.\scriptsuild-portable.ps1
+.\scripts\build-portable.ps1
 # → dist\yt-download.exe
 ```
 
@@ -117,8 +117,7 @@ macOS / Linux:
 
 ### 여러 플랫폼 한 번에
 
-`.github/workflows/build.yml` 이 Windows·Linux·macOS(Intel/Apple Silicon) 빌드를 만듭니다.
-Actions 탭에서 수동 실행하거나 `v` 로 시작하는 태그를 밀면 각 플랫폼 결과물이 릴리즈로 올라갑니다.
+GitHub Actions 가 Windows·Linux·macOS(Intel/Apple Silicon) 빌드를 만듭니다. 아래 [릴리스](#릴리스) 참고.
 
 ### 실행에 필요한 시스템 구성 요소
 
@@ -129,6 +128,47 @@ Actions 탭에서 수동 실행하거나 `v` 로 시작하는 태그를 밀면 �
 - **macOS**: 시스템 WebKit (별도 설치 없음). 서명이 없어서 처음 열 때 우클릭 → 열기
 
 이 구성 요소가 없어 앱 창을 못 만들면, 앱이 종료되지 않고 **기본 브라우저로 화면을 열어** 그대로 쓸 수 있게 합니다.
+
+## 릴리스
+
+버전 번호의 단일 출처는 **`VERSION`** 파일입니다.
+`build.rs` 가 빌드할 때마다 `VERSION` 과 `Cargo.toml` 이 같은지 확인하고, 다르면 빌드를 세웁니다.
+바뀐 내용은 [`CHANGELOG.md`](CHANGELOG.md) 의 `## [Unreleased]` 칸에 그때그때 적어둡니다.
+
+### 내보내기
+
+```powershell
+# 1) Unreleased 칸에 이번에 바뀐 내용을 적는다
+# 2) 버전을 올린다 (VERSION, Cargo.toml, Cargo.lock, CHANGELOG, git 태그를 한 번에)
+.\scripts\release.ps1 -Bump minor     # 0.1.0 -> 0.2.0
+.\scripts\release.ps1 -Version 1.0.0  # 직접 지정
+
+# 3) 밀면 릴리스가 시작된다
+git push origin HEAD; git push origin v0.2.0
+```
+
+macOS / Linux 는 `./scripts/release.sh minor` (바로 밀려면 `--push`).
+
+### 태그를 밀면 일어나는 일
+
+`.github/workflows/release.yml`:
+
+1. **verify** — 태그, `VERSION`, `Cargo.toml`, `CHANGELOG` 가 서로 맞는지 본다.
+   어긋나면 여기서 멈추므로 30분짜리 빌드를 헛돌리지 않는다.
+2. **build** — 네 플랫폼에서 도구를 담은 포터블 실행 파일을 만들고 테스트를 돌린다.
+3. **publish** — 플랫폼별 zip 과 `SHA256SUMS.txt` 를 붙여 릴리스를 올린다.
+   릴리스 설명은 `CHANGELOG.md` 의 해당 버전 칸을 그대로 쓴다.
+
+`.github/workflows/ci.yml` 은 평소(푸시·PR)에 `fmt`, `clippy`, 테스트, 프런트엔드 검사만 빠르게 돌립니다.
+
+### 손으로 확인하기
+
+```bash
+./scripts/check-version.sh v0.2.0        # 버전이 서로 맞는지
+./scripts/changelog-section.sh 0.2.0     # 릴리스에 올라갈 설명 미리 보기
+```
+
+앱 화면 제목 옆과 `/api/health` 의 `version` 에 지금 버전이 나옵니다.
 
 ## 비공개 영상
 
@@ -279,6 +319,17 @@ web/
   format.js      시간 표시
   ui.js          메시지와 알림
   console.html   콘솔 창
+
+scripts/
+  bundle-tools.ps1/.sh    도구 내려받기
+  build-portable.ps1/.sh  포터블 실행 파일 만들기
+  install.ps1/.sh         설치·제거
+  release.ps1/.sh         버전 올리고 태그 만들기
+  check-version.sh        VERSION·Cargo.toml·CHANGELOG·태그 대조
+  changelog-section.sh    릴리스 설명 뽑아내기
+
+VERSION          버전의 단일 출처
+CHANGELOG.md     변경 기록
 ```
 
 검사:

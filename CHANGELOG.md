@@ -43,5 +43,5 @@
 - 6시간짜리 영상을 열 때 화면이 몇 초간 비어 있던 문제. 메타데이터를 기다리지 않고
   미리보기를 먼저 띄운다.
 
-[Unreleased]: https://github.com/OWNER/yt-download/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/OWNER/yt-download/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.1.0

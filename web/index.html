@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>yt-download</title>
+    <link rel="stylesheet" href="/web/app.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <h1>yt-download <span id="appVersion" class="version-tag"></span></h1>
+          <p id="subtitle">YouTube 구간 다운로드</p>
+        </div>
+        <div class="tool-status" aria-live="polite">
+          <span id="ytDlpStatus" class="status-pill">yt-dlp 확인 중</span>
+          <span id="ffmpegStatus" class="status-pill">ffmpeg 확인 중</span>
+          <button id="openConsoleButton" class="secondary compact-button">콘솔 창</button>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <aside class="control-panel">
+          <div class="panel-scroll">
+            <section class="panel-group">
+              <div class="field">
+                <label for="urlInput">영상 주소</label>
+                <div class="input-row">
+                  <input id="urlInput" type="url" placeholder="https://www.youtube.com/watch?v=..." />
+                  <button id="loadButton" class="primary">불러오기</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel-group">
+              <h3 class="group-title">다운로드 설정</h3>
+              <div class="field">
+                <label for="outputDir">저장 폴더</label>
+                <input id="outputDir" type="text" />
+              </div>
+              <div class="grid-2">
+                <div class="field">
+                  <label for="formatMode">포맷</label>
+                  <select id="formatMode">
+                    <option value="mp4">MP4 우선</option>
+                    <option value="best">원본 코덱</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="qualityMode">화질</label>
+                  <select id="qualityMode">
+                    <option value="0">최고 화질</option>
+                    <option value="2160">4K (2160p)</option>
+                    <option value="1440">2K (1440p)</option>
+                    <option value="1080">1080p</option>
+                    <option value="720">720p</option>
+                  </select>
+                </div>
+              </div>
+              <div class="check-list">
+                <label class="check-field">
+                  <input id="accurateCut" type="checkbox" />
+                  <span>정확 컷<em>키프레임 대신 정확한 지점에서 자릅니다 (느림)</em></span>
+                </label>
+                <label class="check-field">
+                  <input id="liveFromStart" type="checkbox" />
+                  <span>라이브는 처음부터<em>구간을 지정하지 않은 라이브에 적용됩니다</em></span>
+                </label>
+              </div>
+            </section>
+
+            <details class="panel-group advanced">
+              <summary>
+                <h3 class="group-title">로그인 · 도구</h3>
+                <span class="hint">비공개·멤버 전용 영상을 받을 때만 필요합니다</span>
+              </summary>
+              <div class="field">
+                <label for="cookieBrowser">로그인 브라우저</label>
+                <select id="cookieBrowser">
+                  <option value="none">사용 안 함</option>
+                  <option value="chrome">Chrome</option>
+                  <option value="edge">Edge</option>
+                  <option value="firefox">Firefox</option>
+                  <option value="brave">Brave</option>
+                  <option value="vivaldi">Vivaldi</option>
+                  <option value="whale">Whale</option>
+                </select>
+              </div>
+              <div class="button-row">
+                <button id="openLoginButton" class="secondary">앱 로그인 열기</button>
+                <button id="applyLoginButton" class="secondary">로그인 적용</button>
+                <button id="closeBrowserButton" class="secondary danger">잠긴 브라우저 종료</button>
+              </div>
+              <div class="field">
+                <label for="cookiesFile">쿠키 파일</label>
+                <input id="cookiesFile" type="text" placeholder="cookies.txt 경로" />
+              </div>
+              <div class="field">
+                <label for="ytDlpPath">yt-dlp 경로</label>
+                <input id="ytDlpPath" type="text" placeholder="비우면 내장 도구 사용" />
+              </div>
+            </details>
+
+            <section class="panel-group library-panel">
+              <div class="library-head">
+                <h3 class="group-title">내 영상</h3>
+                <button id="loadLibraryButton" class="secondary compact-button">불러오기</button>
+              </div>
+              <div class="library-tabs">
+                <button class="library-tab active" data-library-tab="videos">동영상</button>
+                <button class="library-tab" data-library-tab="shorts">Shorts</button>
+                <button class="library-tab" data-library-tab="lives">라이브</button>
+              </div>
+              <div id="libraryList" class="library-list"></div>
+            </section>
+          </div>
+
+          <div class="panel-footer">
+            <p id="liveHint" class="live-hint" hidden></p>
+            <button id="downloadButton" class="download" disabled>선택 구간 다운로드</button>
+            <button id="cancelButton" class="secondary danger full" hidden>
+              중지하고 지금까지 받은 부분 저장
+            </button>
+            <div class="mini-progress">
+              <div class="mini-progress-top">
+                <span id="jobState" class="job-chip">대기</span>
+                <span id="miniJobPercent">0%</span>
+                <span id="miniJobDetails">대기 중</span>
+              </div>
+              <div class="progress-track">
+                <div id="miniJobProgressBar" class="progress-fill"></div>
+              </div>
+            </div>
+            <div id="message" class="message" role="status" aria-live="polite"></div>
+            <p class="job-hint">자세한 출력은 오른쪽 위 <b>콘솔 창</b>에서 볼 수 있습니다.</p>
+          </div>
+        </aside>
+
+        <section class="preview-panel">
+          <div class="preview-frame">
+            <div id="player"></div>
+            <div id="previewEmpty" class="preview-empty">주소를 넣고 불러오면 여기에 미리보기가 열립니다</div>
+          </div>
+
+          <div class="editor-panel">
+            <div class="segment-header">
+              <div>
+                <h2>구간 편집</h2>
+                <p id="segmentSummary">IN 00:00:00 · OUT 전체 · 길이 전체</p>
+              </div>
+              <span id="durationLabel">--:--</span>
+            </div>
+
+            <div class="transport-row">
+              <button id="playSegmentButton" class="icon-button" title="선택 구간 재생">▶</button>
+              <div class="button-set">
+                <button id="markStartButton" class="secondary">현재 위치 IN</button>
+                <button id="markEndButton" class="secondary">현재 위치 OUT</button>
+              </div>
+              <div class="button-set">
+                <button id="nudgeStartBack" class="secondary compact-button" title="IN 1초 앞으로">IN −1s</button>
+                <button id="nudgeStartForward" class="secondary compact-button" title="IN 1초 뒤로">IN +1s</button>
+              </div>
+              <div class="button-set">
+                <button id="nudgeEndBack" class="secondary compact-button" title="OUT 1초 앞으로">OUT −1s</button>
+                <button id="nudgeEndForward" class="secondary compact-button" title="OUT 1초 뒤로">OUT +1s</button>
+              </div>
+            </div>
+
+            <div class="zoom-row">
+              <div class="button-set">
+                <button id="zoomOutButton" class="secondary compact-button" title="축소 (마우스 휠)">−</button>
+                <button id="zoomInButton" class="secondary compact-button" title="확대 (마우스 휠)">＋</button>
+              </div>
+              <button id="fitSelectionButton" class="secondary compact-button">구간에 맞추기</button>
+              <button id="viewAllButton" class="secondary compact-button">전체 보기</button>
+              <span id="zoomLabel" class="zoom-label">전체 구간 표시</span>
+            </div>
+
+            <div id="rangeWrap" class="timeline">
+              <div id="timelineTrack" class="tl-track">
+                <div class="tl-base"></div>
+                <div id="tlSelection" class="tl-selection"></div>
+                <div id="tlHandleStart" class="tl-handle start" title="IN"><b>IN</b></div>
+                <div id="tlHandleEnd" class="tl-handle end" title="OUT"><b>OUT</b></div>
+                <div id="playhead" class="tl-playhead">
+                  <span id="playheadTime">00:00:00</span>
+                </div>
+              </div>
+              <div id="timelineRuler" class="tl-ruler"></div>
+              <div id="timelineMap" class="tl-map" title="전체 영상에서 보고 있는 범위">
+                <div id="timelineMapSelection" class="tl-map-selection"></div>
+                <div id="timelineMapView" class="tl-map-view"></div>
+              </div>
+            </div>
+
+            <div class="editor-controls">
+              <div class="field">
+                <label for="startInput">IN</label>
+                <input id="startInput" type="text" value="00:00:00" />
+              </div>
+              <div class="field">
+                <label for="endInput">OUT</label>
+                <input id="endInput" type="text" value="00:01:40" />
+              </div>
+              <div class="field">
+                <label>선택 길이</label>
+                <output id="selectionDuration">00:01:40</output>
+              </div>
+            </div>
+          </div>
+
+          <div class="meta-row">
+            <div>
+              <h2 id="videoTitle">영상 정보 없음</h2>
+              <p id="videoMeta">주소를 입력하면 미리보기가 표시됩니다.</p>
+            </div>
+            <img id="thumbnail" alt="" />
+          </div>
+        </section>
+      </section>
+    </main>
+    <div id="toastStack" class="toast-stack" aria-live="polite"></div>
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <script type="module" src="/web/app.js"></script>
+  </body>
+</html>

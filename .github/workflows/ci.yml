@@ -1,0 +1,43 @@
+name: ci
+
+# 평소 검사. 도구를 담지 않고 빠르게 돌린다(포터블 빌드는 release 워크플로에서 한다).
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # 도구를 실행 파일에 담지 않는다. 여기서는 컴파일과 검사만 하면 된다.
+  YT_DOWNLOAD_EMBED_TOOLS: "0"
+
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install webview dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Version files agree
+        run: ./scripts/check-version.sh
+
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+      - name: Frontend timeline checks
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno run --allow-read web/timeline-check.js

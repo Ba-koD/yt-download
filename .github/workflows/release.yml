@@ -1,0 +1,175 @@
+name: release
+
+# v0.1.0 같은 태그를 밀면 네 플랫폼용 포터블 실행 파일을 만들어 릴리스로 올린다.
+# Actions 탭에서 태그를 골라 손으로 돌릴 수도 있다.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "빌드할 태그 (예: v0.1.0)"
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # 태그와 VERSION, Cargo.toml, CHANGELOG 가 서로 맞는지부터 본다.
+  # 여기서 걸리면 30분짜리 빌드를 시작하지 않는다.
+  verify:
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - id: resolve
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.resolve.outputs.tag }}
+
+      - name: Version files agree with the tag
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/check-version.sh "${{ steps.resolve.outputs.tag }}"
+
+  build:
+    needs: verify
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows (x64)
+            artifact: yt-download-windows-x64
+          - os: ubuntu-22.04
+            label: Linux (x64)
+            artifact: yt-download-linux-x64
+          - os: macos-14
+            label: macOS (Apple Silicon)
+            artifact: yt-download-macos-arm64
+          - os: macos-13
+            label: macOS (Intel)
+            artifact: yt-download-macos-x64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # 리눅스 webview 는 시스템 라이브러리가 필요하다.
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+      # ffmpeg/ffprobe 는 실행 파일 안에 담을 원본이 필요하다.
+      - name: Install ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y ffmpeg
+
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
+
+      - name: Bundle tools and build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build-portable.ps1
+
+      - name: Bundle tools and build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/build-portable.sh
+
+      - name: Test
+        run: cargo test --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/yt-download
+            dist/yt-download.exe
+            dist/yt-download.app
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [verify, build]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.tag }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      # 플랫폼마다 zip 하나로 묶고, 체크섬을 한 파일에 모은다.
+      - name: Pack per platform
+        run: |
+          cd artifacts
+          : > ../SHA256SUMS.txt
+          for dir in */; do
+            name="${dir%/}"
+            cat "$dir"/*.sha256 >> ../SHA256SUMS.txt || true
+            (cd "$dir" && zip -qr "../$name.zip" .)
+          done
+          ls -la
+
+      - name: Build release notes
+        run: |
+          chmod +x scripts/*.sh
+          {
+            ./scripts/changelog-section.sh "${{ needs.verify.outputs.version }}"
+            echo
+            echo "---"
+            echo
+            echo "도구(yt-dlp, ffmpeg, ffprobe, deno)를 모두 담은 포터블 빌드입니다."
+            echo "받은 zip 을 풀어 실행 파일 하나만 두고 쓰면 되고, 처음 실행할 때 도구를 풀어내느라 몇 초 걸립니다."
+            echo
+            echo "| 파일 | 대상 |"
+            echo "| --- | --- |"
+            echo "| \`yt-download-windows-x64.zip\` | Windows 10/11 (x64) — Microsoft Edge WebView2 런타임 필요 |"
+            echo "| \`yt-download-linux-x64.zip\` | Linux (x64) — \`libwebkit2gtk-4.1-0\` 필요 |"
+            echo "| \`yt-download-macos-arm64.zip\` | macOS (Apple Silicon) |"
+            echo "| \`yt-download-macos-x64.zip\` | macOS (Intel) |"
+            echo
+            echo "macOS 는 서명이 없어 처음 열 때 우클릭 → 열기 를 한 번 해줘야 합니다."
+            echo "\`SHA256SUMS.txt\` 로 받은 파일을 확인할 수 있습니다."
+          } > RELEASE_NOTES.md
+          cat RELEASE_NOTES.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.verify.outputs.tag }}
+          name: yt-download ${{ needs.verify.outputs.tag }}
+          body_path: RELEASE_NOTES.md
+          files: |
+            artifacts/*.zip
+            SHA256SUMS.txt
+          fail_on_unmatched_files: true

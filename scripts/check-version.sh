@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# VERSION, Cargo.toml, (태그가 있으면) git 태그가 같은 버전을 가리키는지 본다.
+#
+#   ./scripts/check-version.sh          VERSION 과 Cargo.toml 만 비교
+#   ./scripts/check-version.sh v0.2.0   태그까지 함께 비교(릴리스 워크플로가 쓰는 방식)
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
+
+version="$(tr -d '[:space:]' < VERSION)"
+# Cargo.toml 의 첫 version 줄([package] 것)만 꺼낸다.
+manifest="$(sed -n '0,/^version = "/s|^version = "\([^"]*\)".*|\1|p' Cargo.toml)"
+
+if [[ "$version" != "$manifest" ]]; then
+  echo "VERSION($version) 과 Cargo.toml($manifest) 의 버전이 다릅니다." >&2
+  exit 1
+fi
+
+if ! grep -q "^## \[$version\]" CHANGELOG.md; then
+  echo "CHANGELOG.md 에 ## [$version] 항목이 없습니다." >&2
+  exit 1
+fi
+
+tag="${1:-}"
+if [[ -n "$tag" ]]; then
+  if [[ "${tag#v}" != "$version" ]]; then
+    echo "태그($tag) 와 VERSION($version) 이 다릅니다." >&2
+    exit 1
+  fi
+  echo "버전 확인: $version (태그 $tag)"
+else
+  echo "버전 확인: $version"
+fi

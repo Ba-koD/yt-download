@@ -1,0 +1,33 @@
+[package]
+name = "yt-download"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[dependencies]
+anyhow = "1.0"
+flate2 = "1.0"
+axum = "0.7"
+dirs = "5.0"
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tao = "0.35"
+tokio = { version = "1.42", features = ["full"] }
+tokio-tungstenite = "0.29"
+tower-http = { version = "0.6", features = ["cors"] }
+uuid = { version = "1.11", features = ["v4"] }
+webbrowser = "1.0"
+wry = "0.55"
+
+[build-dependencies]
+flate2 = "1.0"
+
+# 배포용 빌드는 크기와 속도를 함께 챙긴다.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "unwind"

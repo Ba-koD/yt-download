@@ -1,0 +1,14 @@
+/target
+/downloads
+/dist
+*.part
+
+# 내려받은 도구는 빌드할 때 채운다
+/tools/*/
+!/tools/.gitkeep
+
+# 앱이 남긴 임시/결과 파일
+*.m4a
+*.mp4
+*.webm
+*merge-*.txt

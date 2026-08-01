@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>yt-download 콘솔</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        background: #10151b;
+        color: #d7e1ea;
+        font-family: "Cascadia Mono", Consolas, "D2Coding", ui-monospace, monospace;
+        font-size: 12.5px;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex: 0 0 auto;
+        padding: 10px 14px;
+        border-bottom: 1px solid #22303d;
+        background: #141b23;
+      }
+
+      #state {
+        border-radius: 999px;
+        padding: 2px 10px;
+        font-weight: 700;
+        background: #1f3b3a;
+        color: #58d6c4;
+        white-space: nowrap;
+      }
+
+      #state.failed {
+        background: #3d1f22;
+        color: #ff8080;
+      }
+
+      #state.done {
+        background: #1f3320;
+        color: #86e08a;
+      }
+
+      #percent {
+        min-width: 52px;
+        color: #fff;
+        font-weight: 800;
+      }
+
+      #message {
+        overflow: hidden;
+        flex: 1 1 auto;
+        color: #9fb2c2;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      button {
+        border: 1px solid #2b3947;
+        border-radius: 6px;
+        background: #1b232c;
+        color: #cddae5;
+        padding: 4px 10px;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      .track {
+        height: 3px;
+        flex: 0 0 auto;
+        background: #1b2530;
+      }
+
+      .fill {
+        width: 0;
+        height: 100%;
+        background: linear-gradient(90deg, #0f766e, #d73333);
+        transition: width 0.2s ease;
+      }
+
+      #path {
+        flex: 0 0 auto;
+        padding: 8px 14px;
+        border-bottom: 1px solid #1c2731;
+        color: #7fd1c4;
+        word-break: break-all;
+      }
+
+      #log {
+        overflow: auto;
+        flex: 1 1 auto;
+        margin: 0;
+        padding: 10px 14px 16px;
+        line-height: 1.55;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      #log .line:nth-child(odd) {
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      .warn {
+        color: #ffcf70;
+      }
+
+      .err {
+        color: #ff8a8a;
+      }
+
+      .empty {
+        color: #64798a;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span id="state">대기</span>
+      <span id="percent">0%</span>
+      <span id="message">진행 중인 작업이 없습니다</span>
+      <label style="display: flex; align-items: center; gap: 5px; white-space: nowrap">
+        <input id="follow" type="checkbox" checked />
+        자동 스크롤
+      </label>
+      <button id="copyButton">복사</button>
+    </header>
+    <div class="track"><div id="fill" class="fill"></div></div>
+    <div id="path"></div>
+    <div id="log"><span class="empty">yt-dlp / ffmpeg 출력이 여기에 표시됩니다.</span></div>
+
+    <script>
+      const el = {
+        state: document.querySelector("#state"),
+        percent: document.querySelector("#percent"),
+        message: document.querySelector("#message"),
+        fill: document.querySelector("#fill"),
+        path: document.querySelector("#path"),
+        log: document.querySelector("#log"),
+        follow: document.querySelector("#follow"),
+        copyButton: document.querySelector("#copyButton"),
+      };
+
+      let lastKey = "";
+
+      el.copyButton.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(el.log.textContent);
+          el.copyButton.textContent = "복사됨";
+          setTimeout(() => (el.copyButton.textContent = "복사"), 1500);
+        } catch {
+          el.copyButton.textContent = "복사 실패";
+          setTimeout(() => (el.copyButton.textContent = "복사"), 1500);
+        }
+      });
+
+      function renderState(value) {
+        if (value === "running") return "실행 중";
+        if (value === "done") return "완료";
+        if (value === "failed") return "실패";
+        return "대기";
+      }
+
+      function lineClass(line) {
+        if (/^ERROR|ERROR:/.test(line)) return "line err";
+        if (/^WARNING|WARNING:/.test(line)) return "line warn";
+        return "line";
+      }
+
+      function render(job) {
+        if (!job) {
+          el.state.textContent = "대기";
+          el.state.className = "";
+          el.message.textContent = "진행 중인 작업이 없습니다";
+          document.title = "yt-download 콘솔";
+          return;
+        }
+
+        const percent = Number.isFinite(job.progress) ? Math.max(0, Math.min(100, job.progress)) : 0;
+        el.state.textContent = renderState(job.state);
+        el.state.className = job.state;
+        el.percent.textContent = `${Math.round(percent)}%`;
+        el.fill.style.width = `${percent}%`;
+        const details = [job.message];
+        if (job.speed) details.push(job.speed);
+        if (job.eta) details.push(`남은 시간 ${job.eta}`);
+        el.message.textContent = details.filter(Boolean).join(" · ");
+        el.message.title = el.message.textContent;
+        el.path.textContent = job.output_path || job.output_dir || "";
+        document.title = `${Math.round(percent)}% · yt-download 콘솔`;
+
+        const key = `${job.id}:${job.log.length}`;
+        if (key === lastKey) return;
+        lastKey = key;
+
+        el.log.innerHTML = "";
+        for (const line of job.log) {
+          const node = document.createElement("div");
+          node.className = lineClass(line);
+          node.textContent = line;
+          el.log.append(node);
+        }
+        if (el.follow.checked) el.log.scrollTop = el.log.scrollHeight;
+      }
+
+      async function tick() {
+        try {
+          const response = await fetch("/api/jobs/latest");
+          if (!response.ok) return;
+          const data = await response.json();
+          render(data.job);
+        } catch {
+          // 앱이 닫히는 중일 수 있다. 다음 주기에 다시 시도한다.
+        }
+      }
+
+      tick();
+      setInterval(tick, 700);
+    </script>
+  </body>
+</html>

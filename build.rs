@@ -99,14 +99,27 @@ fn tool_names(target: &str) -> Vec<&'static str> {
 }
 
 /// 도구를 gzip으로 줄여 OUT_DIR에 둔다. 원본이 그대로면 다시 압축하지 않는다.
+///
+/// 같은지 판단할 때 수정 시각만 보면 안 된다. 압축을 풀어서 받은 도구는
+/// 원본 아카이브의 옛 시각을 그대로 물려받는 일이 있어서, 파일이 바뀌었는데도
+/// "이미 최신"으로 보인다. 크기와 시각을 함께 적어두고 둘 다 맞을 때만 건너뛴다.
 fn compress_tool(name: &str, path: &Path, out_dir: &Path) -> PathBuf {
     let packed = out_dir.join(format!("{name}.gz"));
-    let source_time = fs::metadata(path).and_then(|meta| meta.modified()).ok();
-    let packed_time = fs::metadata(&packed).and_then(|meta| meta.modified()).ok();
-    if let (Some(source), Some(existing)) = (source_time, packed_time) {
-        if existing >= source {
-            return packed;
-        }
+    let stamp_path = out_dir.join(format!("{name}.stamp"));
+    let meta = fs::metadata(path).expect("tool metadata");
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|since| since.as_secs())
+        .unwrap_or(0);
+    let stamp = format!("{} {}", meta.len(), modified);
+
+    let unchanged = fs::read_to_string(&stamp_path)
+        .map(|old| old == stamp)
+        .unwrap_or(false);
+    if packed.is_file() && unchanged {
+        return packed;
     }
 
     let mut reader = BufReader::new(File::open(path).expect("open tool"));
@@ -114,5 +127,6 @@ fn compress_tool(name: &str, path: &Path, out_dir: &Path) -> PathBuf {
     let mut encoder = GzEncoder::new(writer, Compression::default());
     std::io::copy(&mut reader, &mut encoder).expect("compress tool");
     encoder.finish().expect("finish compression");
+    fs::write(&stamp_path, stamp).expect("write stamp");
     packed
 }

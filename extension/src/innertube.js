@@ -4,6 +4,8 @@
 // 반면 ANDROID_VR 클라이언트로 물어보면 포맷마다 직접 주소를 주고,
 // 그 주소에는 속도 제한용 n 파라미터도 붙지 않아 서명 해독이 필요 없다.
 
+import { request } from "./net.js";
+
 const PLAYER_ENDPOINT = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false";
 
 // 이 클라이언트 정보가 낡으면 유튜브가 주소를 주지 않는다. 가장 먼저 의심할 곳이다.
@@ -30,11 +32,7 @@ export function buildPlayerRequest(videoId, visitorData) {
 
 /** 유튜브 첫 화면에서 방문자 ID를 얻는다. 이게 없으면 로그인하라는 답이 온다. */
 export async function fetchVisitorData() {
-  const response = await fetch("https://www.youtube.com/", {
-    credentials: "omit",
-  });
-  const html = await response.text();
-  return extractVisitorData(html);
+  return extractVisitorData(await request.text("https://www.youtube.com/"));
 }
 
 export function extractVisitorData(html) {
@@ -44,17 +42,14 @@ export function extractVisitorData(html) {
 }
 
 export async function fetchPlayerResponse(videoId, visitorData) {
-  const response = await fetch(PLAYER_ENDPOINT, {
+  return request.json(PLAYER_ENDPOINT, {
     method: "POST",
-    credentials: "omit",
     headers: {
       "Content-Type": "application/json",
       "X-Goog-Visitor-Id": visitorData || "",
     },
     body: JSON.stringify(buildPlayerRequest(videoId, visitorData)),
   });
-  if (!response.ok) throw new Error(`InnerTube 응답 ${response.status}`);
-  return response.json();
 }
 
 /**

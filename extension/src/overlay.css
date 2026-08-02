@@ -77,6 +77,68 @@
   padding: 14px;
 }
 
+/* 타임라인: 전체 길이를 가로줄로 놓고 고른 구간을 칠한다. */
+.ytdl-track {
+  position: relative;
+  height: 34px;
+  margin: 2px 10px 14px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.ytdl-range {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
+  background: rgba(15, 123, 108, 0.35);
+  pointer-events: none;
+}
+
+.ytdl-handle {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 12px;
+  margin-left: -6px;
+  border-radius: 3px;
+  background: #0f7b6c;
+  cursor: ew-resize;
+}
+
+.ytdl-handle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 12px;
+  margin: -6px 0 0 -1px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.75);
+}
+
+/* 지금 재생 중인 위치 */
+.ytdl-head-mark {
+  position: absolute;
+  top: -5px;
+  bottom: -5px;
+  width: 2px;
+  margin-left: -1px;
+  background: #f03;
+  pointer-events: none;
+}
+
+.ytdl-total {
+  margin-left: auto;
+  margin-right: 10px;
+  color: rgba(0, 0, 0, 0.55);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 .ytdl-row {
   display: flex;
   align-items: center;
@@ -105,6 +167,14 @@
   text-align: center;
 }
 
+.ytdl-mark {
+  width: 34px;
+  padding: 0;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .ytdl-mark,
 .ytdl-go {
   height: 34px;
@@ -123,9 +193,14 @@
 }
 
 .ytdl-length {
-  min-width: 96px;
-  color: rgba(0, 0, 0, 0.6);
+  min-width: 62px;
+  border-radius: 6px;
+  background: rgba(15, 123, 108, 0.12);
+  color: #0f7b6c;
+  padding: 5px 10px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
+  text-align: center;
 }
 
 .ytdl-quality {
@@ -220,9 +295,18 @@ html[dark] .ytdl-mark:hover {
 }
 
 html[dark] .ytdl-sep,
-html[dark] .ytdl-length,
+html[dark] .ytdl-total,
 html[dark] .ytdl-status {
   color: rgba(255, 255, 255, 0.6);
+}
+
+html[dark] .ytdl-track {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+html[dark] .ytdl-length {
+  background: rgba(15, 123, 108, 0.28);
+  color: #7fd8c9;
 }
 
 html[dark] .ytdl-go:disabled {

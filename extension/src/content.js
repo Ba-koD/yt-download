@@ -6,8 +6,12 @@
 
 (async () => {
   const load = (name) => import(chrome.runtime.getURL(`src/${name}`));
-  const [{ downloadSection, getFormats, safeFileName, clockLabel }, { formatLabel }] =
-    await Promise.all([load("download.js"), load("innertube.js")]);
+  const [{ downloadSection, getFormats, safeFileName, clockLabel }, { formatLabel }, net] =
+    await Promise.all([load("download.js"), load("innertube.js"), load("net.js")]);
+
+  // 여기(content script)에서 곧바로 googlevideo 를 부르면 교차 출처로 막힌다.
+  // 실제 요청은 배경 일꾼이 대신 하도록 통로를 갈아끼운다.
+  net.useTransport(net.backgroundTransport(chrome.runtime));
 
   const state = {
     videoId: null,
@@ -16,6 +20,7 @@
     end: 0,
     busy: false,
     open: false,
+    drag: null,
   };
 
   const el = {};
@@ -76,22 +81,84 @@
     return button;
   }
 
+  // 타임라인: 전체 길이를 가로줄로 놓고 IN/OUT 손잡이와 재생 위치를 얹는다.
+  // 손잡이를 끌면 영상이 그 지점으로 따라가서, 유튜브 화면 자체가 미리보기가 된다.
+  function buildTimeline() {
+    el.range = make("div", { class: "ytdl-range" });
+    el.headMark = make("div", { class: "ytdl-head-mark" });
+    el.inHandle = make("div", { class: "ytdl-handle ytdl-in", title: "시작점" });
+    el.outHandle = make("div", { class: "ytdl-handle ytdl-out", title: "끝점" });
+    el.track = make("div", { class: "ytdl-track" }, [
+      el.range,
+      el.headMark,
+      el.inHandle,
+      el.outHandle,
+    ]);
+
+    const seconds = (event) => {
+      const box = el.track.getBoundingClientRect();
+      const ratio = (event.clientX - box.left) / Math.max(1, box.width);
+      return Math.max(0, Math.min(1, ratio)) * (playerDuration() || 0);
+    };
+
+    const startDrag = (what) => (event) => {
+      event.preventDefault();
+      el.track.setPointerCapture(event.pointerId);
+      state.drag = what;
+      onDrag(event);
+    };
+
+    const onDrag = (event) => {
+      if (!state.drag) return;
+      const value = seconds(event);
+      if (state.drag === "in") setRange(value, state.end);
+      else if (state.drag === "out") setRange(state.start, value);
+      // 끄는 지점을 영상에서 바로 보여준다.
+      seek(value);
+    };
+
+    el.inHandle.addEventListener("pointerdown", startDrag("in"));
+    el.outHandle.addEventListener("pointerdown", startDrag("out"));
+    el.track.addEventListener("pointerdown", (event) => {
+      if (event.target === el.inHandle || event.target === el.outHandle) return;
+      startDrag("seek")(event);
+    });
+    el.track.addEventListener("pointermove", onDrag);
+    el.track.addEventListener("pointerup", () => {
+      state.drag = null;
+    });
+    el.track.addEventListener("pointercancel", () => {
+      state.drag = null;
+    });
+
+    return el.track;
+  }
+
+  function seek(seconds) {
+    const video = player();
+    if (video && Number.isFinite(seconds)) video.currentTime = seconds;
+  }
+
   function buildPanel() {
     el.inputs = {
       start: make("input", { class: "ytdl-time", value: "0:00", dataset: { time: "start" } }),
       end: make("input", { class: "ytdl-time", value: "0:00", dataset: { time: "end" } }),
     };
-    const markStart = make("button", {
-      class: "ytdl-mark", type: "button", text: "지금 위치를 IN", dataset: { mark: "start" },
+    // 편집 프로그램에서 쓰는 대괄호 표시를 그대로 쓴다(I/O 단축키도 같이 받는다).
+    const markIn = make("button", {
+      class: "ytdl-mark", type: "button", text: "[", title: "지금 위치를 시작점으로 (I)",
+      dataset: { mark: "start" },
     });
-    const markEnd = make("button", {
-      class: "ytdl-mark", type: "button", text: "OUT", dataset: { mark: "end" },
+    const markOut = make("button", {
+      class: "ytdl-mark", type: "button", text: "]", title: "지금 위치를 끝점으로 (O)",
+      dataset: { mark: "end" },
     });
 
     el.length = make("span", { class: "ytdl-length" });
     el.quality = make("select", { class: "ytdl-quality" }, [make("option", { text: "불러오는 중…" })]);
     el.go = make("button", { class: "ytdl-go", type: "button", text: "구간 받기", disabled: true });
     el.status = make("div", { class: "ytdl-status", text: "화질 목록을 불러오는 중입니다" });
+    el.total = make("span", { class: "ytdl-total" });
 
     const close = make("button", { class: "ytdl-close", type: "button", title: "닫기", text: "✕" });
     close.addEventListener("click", togglePanel);
@@ -99,32 +166,28 @@
     const panel = make("div", { class: "ytdl-panel", hidden: true }, [
       make("div", { class: "ytdl-head" }, [
         make("span", { class: "ytdl-title", text: "구간 받기" }),
+        el.total,
         close,
       ]),
       make("div", { class: "ytdl-body" }, [
+        buildTimeline(),
         make("div", { class: "ytdl-row" }, [
-          markStart,
+          markIn,
           el.inputs.start,
           make("span", { class: "ytdl-sep", text: "~" }),
           el.inputs.end,
-          markEnd,
+          markOut,
+          el.length,
+          el.quality,
+          el.go,
         ]),
-        make("div", { class: "ytdl-row" }, [el.length, el.quality, el.go]),
         el.status,
       ]),
     ]);
     el.panel = panel;
 
-    for (const button of [markStart, markEnd]) {
-      button.addEventListener("click", () => {
-        const video = player();
-        if (!video) return;
-        const now = video.currentTime;
-        setRange(
-          button.dataset.mark === "start" ? now : state.start,
-          button.dataset.mark === "end" ? now : state.end,
-        );
-      });
+    for (const button of [markIn, markOut]) {
+      button.addEventListener("click", () => markHere(button.dataset.mark));
     }
 
     for (const [which, input] of Object.entries(el.inputs)) {
@@ -135,14 +198,19 @@
           return;
         }
         setRange(which === "start" ? value : state.start, which === "end" ? value : state.end);
-        // 고친 지점으로 영상을 옮겨 눈으로 확인할 수 있게 한다.
-        const video = player();
-        if (video) video.currentTime = value;
+        seek(value);
       });
     }
 
     el.go.addEventListener("click", start);
     return panel;
+  }
+
+  function markHere(which) {
+    const video = player();
+    if (!video) return;
+    const now = video.currentTime;
+    setRange(which === "start" ? now : state.start, which === "end" ? now : state.end);
   }
 
   function actionRow() {
@@ -191,8 +259,21 @@
     el.inputs.start.value = showClock(state.start);
     el.inputs.end.value = showClock(state.end);
     const length = Math.max(0, state.end - state.start);
-    el.length.textContent = `길이 ${showClock(length)}`;
+    el.length.textContent = showClock(length);
     el.go.disabled = state.busy || !state.formats || length < 0.5;
+    renderTimeline();
+  }
+
+  function renderTimeline() {
+    const duration = playerDuration();
+    el.total.textContent = duration ? showClock(duration) : "";
+    if (!duration) return;
+    const percent = (seconds) => `${(Math.max(0, Math.min(seconds, duration)) / duration) * 100}%`;
+    el.range.style.left = percent(state.start);
+    el.range.style.width = `${((state.end - state.start) / duration) * 100}%`;
+    el.inHandle.style.left = percent(state.start);
+    el.outHandle.style.left = percent(state.end);
+    el.headMark.style.left = percent(player()?.currentTime || 0);
   }
 
   function setStatus(text, kind = "") {
@@ -213,7 +294,11 @@
       const formats = await getFormats(videoId);
       if (state.videoId !== videoId) return; // 그 사이 다른 영상으로 옮겼다
       if (!formats.video.length || !formats.audio.length) {
-        throw new Error("받을 수 있는 mp4 화질이 없습니다");
+        throw new Error(
+          formats.liveWithoutIndex
+            ? "라이브·지난 라이브는 아직 지원하지 않습니다. 데스크톱 앱을 써주세요."
+            : "받을 수 있는 mp4 화질이 없습니다",
+        );
       }
       state.formats = formats;
       el.quality.replaceChildren(
@@ -222,7 +307,7 @@
         ),
       );
       setRange(0, player()?.duration || formats.durationSeconds || 0);
-      setStatus(formats.isLive ? "진행 중인 라이브는 아직 지원하지 않습니다" : "");
+      setStatus("");
     } catch (error) {
       setStatus(error.message, "ytdl-bad");
       el.quality.replaceChildren(make("option", { text: "없음" }));
@@ -278,6 +363,27 @@
   }
 
   mount();
+
+  // 재생 위치 표시가 영상을 따라가게 한다.
+  document.addEventListener(
+    "timeupdate",
+    (event) => {
+      if (state.open && event.target?.tagName === "VIDEO") renderTimeline();
+    },
+    true,
+  );
+
+  // 편집 프로그램처럼 I / O 로 시작점·끝점을 찍는다.
+  document.addEventListener("keydown", (event) => {
+    if (!state.open || event.ctrlKey || event.altKey || event.metaKey) return;
+    const tag = document.activeElement?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || document.activeElement?.isContentEditable) return;
+    if (event.key === "i" || event.key === "I") markHere("start");
+    else if (event.key === "o" || event.key === "O") markHere("end");
+    else return;
+    event.preventDefault();
+    event.stopPropagation();
+  });
 
   // 유튜브는 페이지를 새로 그리지 않고 영상만 갈아끼운다.
   let lastId = currentVideoId();

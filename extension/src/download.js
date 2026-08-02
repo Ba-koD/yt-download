@@ -5,6 +5,7 @@
 
 import { fetchPlayerResponse, fetchVisitorData, readFormats } from "./innertube.js";
 import { mergeRanges, parseSidx, segmentsForRange } from "./mp4index.js";
+import { request } from "./net.js";
 import {
   combineInit,
   concat,
@@ -26,9 +27,7 @@ export async function getFormats(videoId, visitorData) {
 }
 
 async function fetchRange(url, start, end) {
-  const response = await fetch(url, { headers: { Range: `bytes=${start}-${end}` } });
-  if (!response.ok) throw new Error(`조각을 받지 못했습니다 (HTTP ${response.status})`);
-  return new Uint8Array(await response.arrayBuffer());
+  return request.bytes(url, { Range: `bytes=${start}-${end}` });
 }
 
 /** 앞머리(init)와 조각 색인(sidx)을 한 번에 받아 온다. 둘이 파일 맨 앞에 붙어 있다. */

@@ -5,16 +5,35 @@
   "description": "유튜브 영상 페이지에서 원하는 구간만 골라 받습니다.",
   "content_scripts": [
     {
-      "matches": ["https://www.youtube.com/watch*", "https://www.youtube.com/live/*"],
-      "js": ["src/content.js"],
-      "css": ["src/overlay.css"],
+      "matches": [
+        "https://www.youtube.com/watch*",
+        "https://www.youtube.com/live/*"
+      ],
+      "js": [
+        "src/content.js"
+      ],
+      "css": [
+        "src/overlay.css"
+      ],
       "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["src/*.js"],
-      "matches": ["https://www.youtube.com/*"]
+      "resources": [
+        "src/*.js"
+      ],
+      "matches": [
+        "https://www.youtube.com/*"
+      ]
     }
-  ]
+  ],
+  "host_permissions": [
+    "https://www.youtube.com/*",
+    "https://*.googlevideo.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  }
 }

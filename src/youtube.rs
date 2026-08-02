@@ -39,53 +39,47 @@ pub(crate) async fn load_channel_library(
         lives: Vec::new(),
     };
 
-    // 채널 주인에게는 업로드 재생목록(UU…)이 가장 넓다. 공개 탭에는 안 나오는
-    // 비공개·일부공개 영상까지 들어 있어서, 내 영상 목록은 여기서 먼저 가져온다.
-    if let Some(uploads) = uploads_playlist_id(channel_id) {
-        let url = format!("https://www.youtube.com/playlist?list={uploads}");
-        for item in load_optional_library_tab(exe, req, browser, &url).await? {
-            match library_kind(&item) {
-                LibraryKind::Live => push_unique_library_item(&mut response.lives, item),
-                LibraryKind::Short => push_unique_library_item(&mut response.shorts, item),
-                LibraryKind::Video => push_unique_library_item(&mut response.videos, item),
+    // 두 곳을 합쳐야 목록이 온전해진다.
+    //
+    // - 업로드 재생목록(UU…): 비공개·일부공개까지 들어 있지만 최근 것부터 섞여 나온다.
+    //   방송을 자주 하는 채널이면 앞쪽이 전부 스트림이라 동영상이 몇 개 안 걸린다.
+    // - 채널 탭(videos/shorts/streams): 종류별로 나뉘어 있어 각 칸을 채워주지만 공개된 것만 나온다.
+    //
+    // 넷을 동시에 읽고 겹치는 것은 버린다.
+    let base = format!("https://www.youtube.com/channel/{channel_id}");
+    let uploads_url = uploads_playlist_id(channel_id)
+        .map(|uploads| format!("https://www.youtube.com/playlist?list={uploads}"));
+    let videos_url = format!("{base}/videos");
+    let shorts_url = format!("{base}/shorts");
+    let streams_url = format!("{base}/streams");
+
+    let (uploads, videos, shorts, lives) = tokio::join!(
+        async {
+            match &uploads_url {
+                Some(url) => load_optional_library_tab(exe, req, browser, url).await,
+                None => Ok(Vec::new()),
             }
-        }
-        if !library_response_is_empty(&response) {
-            return Ok(response);
+        },
+        load_optional_library_tab(exe, req, browser, &videos_url),
+        load_optional_library_tab(exe, req, browser, &shorts_url),
+        load_optional_library_tab(exe, req, browser, &streams_url),
+    );
+
+    // 업로드 재생목록이 먼저다. 비공개 영상이 목록 위쪽에 오도록.
+    for item in uploads? {
+        match library_kind(&item) {
+            LibraryKind::Live => push_unique_library_item(&mut response.lives, item),
+            LibraryKind::Short => push_unique_library_item(&mut response.shorts, item),
+            LibraryKind::Video => push_unique_library_item(&mut response.videos, item),
         }
     }
-
-    // 재생목록을 못 읽으면 공개 탭이라도 보여준다.
-    for item in load_optional_library_tab(
-        exe,
-        req,
-        browser,
-        &format!("https://www.youtube.com/channel/{channel_id}/videos"),
-    )
-    .await?
-    {
+    for item in videos? {
         push_unique_library_item(&mut response.videos, item);
     }
-
-    for item in load_optional_library_tab(
-        exe,
-        req,
-        browser,
-        &format!("https://www.youtube.com/channel/{channel_id}/shorts"),
-    )
-    .await?
-    {
+    for item in shorts? {
         push_unique_library_item(&mut response.shorts, item);
     }
-
-    for item in load_optional_library_tab(
-        exe,
-        req,
-        browser,
-        &format!("https://www.youtube.com/channel/{channel_id}/streams"),
-    )
-    .await?
-    {
+    for item in lives? {
         push_unique_library_item(&mut response.lives, item);
     }
 

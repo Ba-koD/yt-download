@@ -115,6 +115,25 @@ fn handle(action: &str, proxy: EventLoopProxy<Message>) {
     match action {
         "check" => check_in_background(proxy),
         "install" => install_in_background(proxy),
+        "remove" => {
+            let dir = install_dir();
+            let mut view = View::base();
+            match fs::remove_dir_all(&dir) {
+                Ok(()) => {
+                    view.installed = None;
+                    view.update = true;
+                    view.note = "지웠습니다 · 크롬의 확장 목록에서도 제거해 주세요".into();
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    view.note = "이미 없습니다".into();
+                }
+                Err(err) => {
+                    view.failed = true;
+                    view.note = format!("지우지 못했습니다: {err}");
+                }
+            }
+            let _ = proxy.send_event(Message::Show(view));
+        }
         "open" => {
             let dir = install_dir();
             if dir.exists() {

@@ -115,6 +115,14 @@
       button:hover:not(:disabled) {
         background: rgba(127, 127, 127, 0.12);
       }
+      button.danger {
+        margin-left: auto;
+        color: var(--accent);
+        border-color: transparent;
+      }
+      button.danger:hover:not(:disabled) {
+        border-color: var(--accent);
+      }
       button.primary {
         background: var(--teal);
         border-color: var(--teal);
@@ -158,6 +166,7 @@
         <button class="primary" id="install">설치</button>
         <button id="check">다시 확인</button>
         <button id="open">폴더 열기</button>
+        <button id="remove" class="danger">삭제</button>
       </div>
     </div>
 
@@ -176,6 +185,24 @@
         document.getElementById(id).addEventListener("click", () => send(id));
       }
 
+      // 삭제는 되돌릴 수 없으니 한 번 더 묻는다. 창을 띄우는 대신 단추가 스스로 물어본다.
+      const removeButton = document.getElementById("remove");
+      let armed = false;
+      const disarm = () => {
+        armed = false;
+        removeButton.textContent = "삭제";
+      };
+      removeButton.addEventListener("click", () => {
+        if (!armed) {
+          armed = true;
+          removeButton.textContent = "정말 삭제할까요?";
+          setTimeout(disarm, 4000);
+          return;
+        }
+        disarm();
+        send("remove");
+      });
+
       // 러스트 쪽에서 상태가 바뀔 때마다 부른다.
       window.show = (view) => {
         document.getElementById("installed").textContent = view.installed || "없음";
@@ -192,6 +219,8 @@
         // 받을 것이 없으면 누를 수 없게 둔다. 눌러도 같은 걸 다시 받을 뿐이다.
         install.disabled = view.busy || (!view.update && Boolean(view.installed));
         document.getElementById("check").disabled = view.busy;
+        removeButton.disabled = view.busy || !view.installed;
+        if (removeButton.disabled) disarm();
       };
     </script>
   </body>

@@ -28,8 +28,8 @@ use crate::download::{
 };
 use crate::jobs::{push_log, update_job, JobState, JobStatus};
 use crate::login::{
-    close_browser_processes, export_login_cookies, open_url_for_login, selected_browser,
-    start_app_login_browser, LoginSession, YOUTUBE_LOGIN_URL,
+    close_browser_processes, detect_default_browser, export_login_cookies, open_url_for_login,
+    selected_browser, start_app_login_browser, LoginSession, YOUTUBE_LOGIN_URL,
 };
 use crate::tools::{
     add_cookie_args, add_ffmpeg_location, add_js_runtime, resolve_tool, tool_version,
@@ -135,6 +135,8 @@ pub(crate) struct HealthResponse {
     pub(crate) yt_dlp: ToolStatus,
     pub(crate) ffmpeg: ToolStatus,
     pub(crate) default_output_dir: String,
+    /// 이 컴퓨터의 기본 브라우저. 브라우저 칸을 처음 채울 때 쓴다.
+    pub(crate) default_browser: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -287,6 +289,7 @@ pub(crate) async fn health() -> Json<HealthResponse> {
         yt_dlp,
         ffmpeg,
         default_output_dir: default_output_dir().to_string_lossy().to_string(),
+        default_browser: detect_default_browser(),
     })
 }
 

@@ -1,7 +1,7 @@
 // 로그인 브라우저와 도구 상태.
 
 import { api } from "./api.js";
-import { saveSettings } from "./settings.js";
+import { hasChosenBrowser, saveSettings } from "./settings.js";
 import { el } from "./state.js";
 import { browserLabel, setMessage } from "./ui.js";
 
@@ -90,12 +90,23 @@ export async function refreshHealth() {
     renderTool(el.ytDlpStatus, "yt-dlp", health.yt_dlp);
     renderTool(el.ffmpegStatus, "ffmpeg", health.ffmpeg);
     if (!el.outputDir.value) el.outputDir.value = health.default_output_dir;
+    applyDefaultBrowser(health.default_browser);
     if (!health.yt_dlp.available) {
       setMessage("yt-dlp를 찾을 수 없습니다. 경로를 입력하거나 내장 도구를 확인하세요.", true);
     }
   } catch (error) {
     setMessage(error.message, true);
   }
+}
+
+// 처음 켰을 때 브라우저 칸을 이 컴퓨터의 기본 브라우저로 채워준다.
+// 한 번이라도 직접 고른 적이 있으면 건드리지 않는다.
+function applyDefaultBrowser(name) {
+  if (!name || hasChosenBrowser()) return;
+  const option = [...el.cookieBrowser.options].find((item) => item.value === name);
+  if (!option) return;
+  el.cookieBrowser.value = name;
+  option.textContent = `${option.textContent} (기본)`;
 }
 
 export function renderTool(node, label, status) {

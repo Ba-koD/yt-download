@@ -18,6 +18,16 @@ export function saveSettings() {
   );
 }
 
+/** 사용자가 브라우저를 직접 고른 적이 있는지. 있으면 자동 선택으로 덮어쓰지 않는다. */
+export function hasChosenBrowser() {
+  try {
+    const settings = JSON.parse(localStorage.getItem("yt-download-settings") || "{}");
+    return Boolean(settings.cookieBrowser);
+  } catch {
+    return false;
+  }
+}
+
 export function restoreSettings() {
   try {
     const settings = JSON.parse(localStorage.getItem("yt-download-settings") || "{}");

@@ -671,3 +671,80 @@ pub(crate) fn open_specific_browser(browser: &str, _url: &str) -> Result<()> {
         "unsupported platform for browser selection: {browser}"
     ))
 }
+
+/// 이 컴퓨터의 기본 브라우저. 화면의 브라우저 칸을 처음 채울 때 쓴다.
+///
+/// 화면의 값(chrome/edge/firefox/…)과 같은 이름으로 돌려주고, 알아내지 못하면 `None`.
+pub(crate) fn detect_default_browser() -> Option<String> {
+    let raw = default_browser_id()?.to_ascii_lowercase();
+    // 각 브라우저가 자기 이름을 조금씩 다르게 적어서(BraveHTML, brave-browser.desktop,
+    // com.brave.browser …) 이름이 들어 있는지만 본다.
+    // "chromium" 도 "chrome" 에 걸리는데, 어차피 같은 취급이라 그대로 둔다.
+    [
+        "chrome", "edge", "firefox", "brave", "vivaldi", "whale", "opera", "safari",
+    ]
+    .into_iter()
+    .find(|name| raw.contains(name))
+    .map(ToOwned::to_owned)
+}
+
+#[cfg(windows)]
+fn default_browser_id() -> Option<String> {
+    // https 를 여는 프로그램이 곧 기본 브라우저다.
+    let output = std::process::Command::new("reg")
+        .args([
+            "query",
+            r"HKCU\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice",
+            "/v",
+            "ProgId",
+        ])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    // "    ProgId    REG_SZ    ChromeHTML" 형태에서 마지막 토막만 꺼낸다.
+    text.lines()
+        .find(|line| line.contains("ProgId"))
+        .and_then(|line| line.split_whitespace().last())
+        .map(ToOwned::to_owned)
+}
+
+#[cfg(target_os = "macos")]
+fn default_browser_id() -> Option<String> {
+    let output = std::process::Command::new("defaults")
+        .args([
+            "read",
+            "com.apple.LaunchServices/com.apple.launchservices.secure",
+            "LSHandlers",
+        ])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    // https 항목 바로 앞뒤에 적힌 번들 ID를 찾는다.
+    let position = text.find("LSHandlerURLScheme = https")?;
+    let around = &text[position.saturating_sub(240)..text.len().min(position + 240)];
+    around
+        .lines()
+        .find(|line| line.contains("LSHandlerRoleAll"))
+        .and_then(|line| line.split('=').nth(1))
+        .map(|value| {
+            value
+                .trim()
+                .trim_matches(|c| c == '"' || c == ';')
+                .to_string()
+        })
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn default_browser_id() -> Option<String> {
+    let output = std::process::Command::new("xdg-settings")
+        .args(["get", "default-web-browser"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
+#[cfg(not(any(windows, unix)))]
+fn default_browser_id() -> Option<String> {
+    None
+}

@@ -21,10 +21,21 @@ import {
 /** 한 번에 보내는 요청 수. 너무 늘리면 유튜브가 속도를 깎는다. */
 const CONCURRENCY = 6;
 
-export async function getFormats(videoId, visitorData) {
+export async function getFormats(videoId, visitorData, unlock) {
   const visitor = visitorData || (await fetchVisitorData());
   const player = await fetchPlayerResponse(videoId, visitor);
-  return readFormats(player);
+  const formats = readFormats(player);
+
+  // 로그인해야 볼 수 있는 영상의 주소에는 `n` 이 붙어 있고, 풀지 않으면 403 이다.
+  // 공개 영상 주소에는 아예 없으므로 이 길로 오지 않는다.
+  const tracks = [...formats.video, ...formats.audio];
+  if (unlock && tracks.some((track) => track.url.includes("n="))) {
+    const solved = await unlock(tracks.map((track) => track.url));
+    tracks.forEach((track, index) => {
+      track.url = solved[index];
+    });
+  }
+  return formats;
 }
 
 async function fetchRange(url, start, end) {
@@ -38,7 +49,7 @@ async function fetchRange(url, start, end) {
  * `&sq=N` 으로 N번째 조각을 바로 집어올 수 있다. 조각마다 앞머리가 붙어 오므로
  * 첫 조각의 앞머리만 쓰고 나머지는 버린다.
  */
-export async function fetchLiveSegments(format, start, end, onProgress) {
+export async function fetchLiveSegments(format, start, end, onProgress, control) {
   const step = format.segmentSeconds;
   if (!(step > 0)) throw new Error("조각 길이를 알 수 없습니다");
 
@@ -53,7 +64,7 @@ export async function fetchLiveSegments(format, start, end, onProgress) {
     done += 1;
     onProgress?.(done, numbers.length);
     return { sq, bytes };
-  });
+  }, control);
 
   let init = null;
   const segments = [];
@@ -75,11 +86,13 @@ export async function fetchIndex(format) {
 }
 
 /** 여러 요청을 동시에 보내되, 결과 순서는 그대로 지킨다. */
-async function mapWithLimit(items, limit, worker) {
+async function mapWithLimit(items, limit, worker, control) {
   const results = new Array(items.length);
   let next = 0;
   const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (next < items.length) {
+      // 조각을 새로 집기 직전에만 멈춘다. 이미 나간 요청은 그대로 끝나게 둔다.
+      await control?.gate();
       const index = next;
       next += 1;
       results[index] = await worker(items[index], index);
@@ -89,13 +102,69 @@ async function mapWithLimit(items, limit, worker) {
   return results;
 }
 
+/** 받기를 그만뒀을 때 던진다. 실패와 구분해서 조용히 끝내려는 것이다. */
+export class Stopped extends Error {
+  constructor() {
+    super("받기를 멈췄습니다");
+    this.name = "Stopped";
+  }
+}
+
+/**
+ * 받는 도중 잠깐 멈추거나 아예 그만두게 해준다.
+ *
+ * 이미 나간 요청을 중간에 끊지는 않는다. 조각 하나는 길어야 몇 초라,
+ * 다음 조각을 집지 않는 것만으로 충분히 빨리 멈춘다.
+ */
+export function createControl() {
+  let paused = false;
+  let stopped = false;
+  let wake = null;
+
+  const release = () => {
+    const fn = wake;
+    wake = null;
+    fn?.();
+  };
+
+  return {
+    get paused() {
+      return paused;
+    },
+    get stopped() {
+      return stopped;
+    },
+    pause() {
+      paused = true;
+    },
+    resume() {
+      paused = false;
+      release();
+    },
+    stop() {
+      stopped = true;
+      paused = false;
+      release();
+    },
+    async gate() {
+      if (stopped) throw new Stopped();
+      while (paused) {
+        await new Promise((resolve) => {
+          wake = resolve;
+        });
+        if (stopped) throw new Stopped();
+      }
+    },
+  };
+}
+
 /**
  * 구간에 걸치는 조각들을 받아 온다.
  *
  * 이어진 조각은 한 요청으로 묶어 받고, 받은 뒤 다시 조각별로 쪼갠다.
  * 조각 단위를 유지해야 영상과 소리를 시간 순서대로 섞을 수 있다.
  */
-export async function fetchSegments(format, index, start, end, onProgress) {
+export async function fetchSegments(format, index, start, end, onProgress, control) {
   const wanted = segmentsForRange(index.segments, start, end);
   if (!wanted.length) throw new Error("해당 구간에 받을 조각이 없습니다");
 
@@ -108,7 +177,7 @@ export async function fetchSegments(format, index, start, end, onProgress) {
     done += bytes.length;
     onProgress?.(done, totalBytes);
     return { range, bytes };
-  });
+  }, control);
 
   // 묶어 받은 덩어리를 다시 조각 단위로 되돌린다.
   const out = [];
@@ -219,7 +288,7 @@ export function clockLabel(seconds) {
  *
  * @param onProgress (받은 바이트, 전체 바이트, 단계 이름)
  */
-export async function downloadSection({ videoFormat, audioFormat, start, end, onProgress }) {
+export async function downloadSection({ videoFormat, audioFormat, start, end, onProgress, control }) {
   // 두 트랙의 진행률을 하나로 합쳐 보여준다.
   const progress = { video: [0, 1], audio: [0, 1] };
   const report = (kind) => (received, expected) => {
@@ -238,8 +307,8 @@ export async function downloadSection({ videoFormat, audioFormat, start, end, on
   if (live) {
     onProgress?.(0, 1, "조각 받는 중");
     [video, audio] = await Promise.all([
-      fetchLiveSegments(videoFormat, start, end, report("video")),
-      fetchLiveSegments(audioFormat, start, end, report("audio")),
+      fetchLiveSegments(videoFormat, start, end, report("video"), control),
+      fetchLiveSegments(audioFormat, start, end, report("audio"), control),
     ]);
   } else {
     onProgress?.(0, 1, "색인 읽는 중");
@@ -248,8 +317,8 @@ export async function downloadSection({ videoFormat, audioFormat, start, end, on
       fetchIndex(audioFormat),
     ]);
     const [videoParts, audioParts] = await Promise.all([
-      fetchSegments(videoFormat, videoIndex, start, end, report("video")),
-      fetchSegments(audioFormat, audioIndex, start, end, report("audio")),
+      fetchSegments(videoFormat, videoIndex, start, end, report("video"), control),
+      fetchSegments(audioFormat, audioIndex, start, end, report("audio"), control),
     ]);
     video = { init: videoIndex.init, ...videoParts };
     audio = { init: audioIndex.init, ...audioParts };

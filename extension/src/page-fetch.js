@@ -38,6 +38,18 @@ window.addEventListener("message", async (event) => {
   if (event.source !== window) return;
   const message = event.data;
 
+  // 확장 쪽에서는 페이지의 설정값(ytcfg)을 읽을 수 없어서 여기서 넘겨준다.
+  if (message?.ytdl === "config") {
+    window.postMessage({
+      ytdl: "response",
+      id: message.id,
+      ok: true,
+      jsUrl: window.ytcfg?.get?.("PLAYER_JS_URL") || null,
+      sts: window.ytcfg?.get?.("STS") || null,
+    }, "*");
+    return;
+  }
+
   if (message?.ytdl === "watch-progress") {
     clearInterval(progressTimer);
     progressTimer = null;

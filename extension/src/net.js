@@ -61,11 +61,12 @@ export function pageTransport(target = window, timeoutMs = 120_000) {
     else entry.reject(new Error(message.error || `요청 실패 (HTTP ${message.status})`));
   });
 
-  const ask = (payload) =>
+  // kind 는 페이지 쪽에서 무슨 일을 시킬지 고르는 값이다("request" 는 그냥 받아오기).
+  const ask = (payload, kind = "request") =>
     new Promise((resolve, reject) => {
       const id = nextId++;
       waiting.set(id, { resolve, reject });
-      target.postMessage({ ytdl: "request", id, ...payload }, "*");
+      target.postMessage({ ytdl: kind, id, ...payload }, "*");
       setTimeout(() => {
         if (waiting.delete(id)) reject(new Error("페이지가 응답하지 않습니다"));
       }, timeoutMs);
@@ -82,6 +83,8 @@ export function pageTransport(target = window, timeoutMs = 120_000) {
       ),
     text: async (url) => decode((await ask({ url })).buffer),
     bytes: async (url, headers) => new Uint8Array((await ask({ url, headers })).buffer),
+    // 받아오기 말고 다른 일(예: n 풀기)을 시킬 때 쓴다.
+    ask,
   };
 }
 

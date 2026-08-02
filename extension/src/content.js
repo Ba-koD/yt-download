@@ -10,8 +10,18 @@
   const say = (...parts) => console.info("[yt-download]", ...parts);
 
   const load = (name) => import(chrome.runtime.getURL(`src/${name}`));
-  const [{ downloadSection, getFormats, safeFileName, clockLabel }, { formatLabel }, net] =
-    await Promise.all([load("download.js"), load("innertube.js"), load("net.js")]);
+  const [
+    { downloadSection, getFormats, safeFileName, clockLabel, createControl, Stopped },
+    { formatLabel },
+    net,
+    nsig,
+  ] =
+    await Promise.all([
+      load("download.js"),
+      load("innertube.js"),
+      load("net.js"),
+      load("nsig.js"),
+    ]);
 
   // 미디어는 페이지 쪽에서 받아온다. 여기서 곧바로 부르면 교차 출처로 막히고,
   // 배경 일꾼으로 보내면 Origin 이 붙어 InnerTube 가 403 을 준다.
@@ -39,6 +49,8 @@
     touched: false,
     // 페이지 쪽 플레이어가 알려준 재생 위치·되감기 구간.
     progress: null,
+    // 받는 중에 멈추거나 그만두게 해주는 손잡이.
+    control: null,
   };
 
   // 패널이 열려 있는 동안만 페이지에게 재생 상태를 받아온다.
@@ -255,6 +267,9 @@
     el.length = make("span", { class: "ytdl-length" });
     el.quality = make("select", { class: "ytdl-quality" }, [make("option", { text: "불러오는 중…" })]);
     el.go = make("button", { class: "ytdl-go", type: "button", text: "구간 받기", disabled: true });
+    // 받는 동안에만 보이는 버튼들.
+    el.hold = make("button", { class: "ytdl-hold", type: "button", text: "일시정지", hidden: true });
+    el.halt = make("button", { class: "ytdl-halt", type: "button", text: "정지", hidden: true });
     el.status = make("div", { class: "ytdl-status", text: "화질 목록을 불러오는 중입니다" });
     el.total = make("span", { class: "ytdl-total" });
 
@@ -278,6 +293,8 @@
           el.length,
           el.quality,
           el.go,
+          el.hold,
+          el.halt,
         ]),
         el.status,
       ]),
@@ -300,6 +317,13 @@
     }
 
     el.go.addEventListener("click", start);
+    el.hold.addEventListener("click", () => {
+      if (!state.control) return;
+      if (state.control.paused) state.control.resume();
+      else state.control.pause();
+      render();
+    });
+    el.halt.addEventListener("click", () => state.control?.stop());
     return panel;
   }
 
@@ -374,6 +398,9 @@
     const length = Math.max(0, state.end - state.start);
     el.length.textContent = showClock(length);
     el.go.disabled = state.busy || !state.formats || length < 0.5;
+    el.hold.hidden = !state.busy;
+    el.halt.hidden = !state.busy;
+    el.hold.textContent = state.control?.paused ? "이어받기" : "일시정지";
     renderTimeline();
   }
 
@@ -406,7 +433,17 @@
     setStatus("화질 목록을 불러오는 중입니다");
 
     try {
-      const formats = await getFormats(videoId);
+      // 로그인해야 볼 수 있는 영상은 주소의 `n` 을 풀어야 받을 수 있다.
+      const unlock = async (urls) => {
+        const config = await viaPage.ask({}, "config");
+        if (!config?.jsUrl) throw new Error("플레이어 주소를 찾지 못했습니다");
+        return nsig.solveUrls(urls, {
+          runtime: chrome.runtime,
+          playerUrl: new URL(config.jsUrl, location.origin).href,
+          onStep: (text) => setStatus(text),
+        });
+      };
+      const formats = await getFormats(videoId, null, unlock);
       if (state.videoId !== videoId) return; // 그 사이 다른 영상으로 옮겼다
       if (!formats.video.length || !formats.audio.length) {
         throw new Error("받을 수 있는 mp4 화질이 없습니다");
@@ -441,6 +478,7 @@
       state.formats.video[0];
 
     state.busy = true;
+    state.control = createControl();
     render();
     const began = Date.now();
 
@@ -450,9 +488,11 @@
         audioFormat: state.formats.audio[0],
         start: state.start,
         end: state.end,
+        control: state.control,
         onProgress: (done, total, stage) => {
           const percent = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
-          setStatus(stage === "받는 중" ? `${stage} ${percent}%` : stage);
+          const paused = state.control?.paused ? " (멈춤)" : "";
+          setStatus(stage === "받는 중" ? `${stage} ${percent}%${paused}` : stage);
         },
       });
 
@@ -471,10 +511,15 @@
         "ytdl-ok",
       );
     } catch (error) {
-      setStatus(error.message, "ytdl-bad");
-      say("받기 실패:", error);
+      // 내가 정지를 누른 것은 실패가 아니다.
+      if (error instanceof Stopped) setStatus("받기를 멈췄습니다");
+      else {
+        setStatus(error.message, "ytdl-bad");
+        say("받기 실패:", error);
+      }
     } finally {
       state.busy = false;
+      state.control = null;
       render();
     }
   }

@@ -148,6 +148,10 @@ h1 {
 .status-pill {
   display: inline-flex;
   align-items: center;
+  max-width: 190px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   min-height: 28px;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -197,7 +201,7 @@ h1 {
 .panel-scroll {
   overflow: auto;
   flex: 1 1 auto;
-  padding: 14px 14px 4px;
+  padding: 18px 18px 6px;
 }
 
 /* 다운로드 버튼과 진행 상황은 스크롤과 상관없이 항상 보이게 둔다. */
@@ -205,12 +209,12 @@ h1 {
   flex: 0 0 auto;
   border-top: 1px solid var(--line);
   background: var(--panel);
-  padding: 12px 14px 14px;
+  padding: 14px 18px 16px;
 }
 
 .panel-group {
-  padding-bottom: 12px;
-  margin-bottom: 12px;
+  padding-bottom: 18px;
+  margin-bottom: 18px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -220,7 +224,7 @@ h1 {
 }
 
 .group-title {
-  margin: 0 0 10px;
+  margin: 0 0 12px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
@@ -295,7 +299,7 @@ h1 {
 }
 
 .field {
-  margin-bottom: 10px;
+  margin-bottom: 14px;
 }
 
 .input-row {
@@ -434,6 +438,14 @@ h1 {
   font-size: 15px;
 }
 
+/* 아직 누를 수 없을 뿐인데 흐린 빨강이면 "잘못됐다"는 신호로 읽힌다.
+   눌리지 않는 상태는 색을 빼서 조용히 둔다. */
+.download:disabled {
+  background: var(--surface-strong);
+  color: var(--muted);
+  opacity: 1;
+}
+
 .mini-progress {
   margin-top: 10px;
 }
@@ -550,7 +562,7 @@ h1 {
   --preview-ratio: 1.7778;
   /* 창이 커지면 미리보기도 같이 커진다.
      로그는 별도 콘솔 창으로 뺐으므로 구간 편집에 필요한 만큼만 아래를 남겨둔다. */
-  --preview-max-height: min(70vh, calc(100vh - 420px));
+  --preview-max-height: min(62vh, calc(100vh - 528px));
   width: min(100%, calc(var(--preview-max-height) * var(--preview-ratio)));
   max-height: var(--preview-max-height);
   aspect-ratio: var(--preview-ratio);
@@ -636,21 +648,49 @@ h1 {
 .transport-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 10px;
+  gap: 10px 20px;
+  align-items: flex-end;
+  margin-bottom: 14px;
 }
 
 .transport-row .secondary {
   min-height: 34px;
 }
 
+/* 하는 일이 같은 버튼끼리 묶고 이름을 붙인다.
+   버튼만 늘어놓으면 어디까지가 한 묶음인지 눈으로 구분되지 않는다. */
+.control-cluster {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cluster-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+/* 묶음 사이를 옅은 선으로 끊어 준다. */
+.transport-row > .control-cluster + .control-cluster {
+  padding-left: 20px;
+  border-left: 1px solid var(--line);
+}
+
+/* 확대·축소는 타임라인을 다루는 도구라 타임라인에 붙여 둔다. */
 .zoom-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  background: var(--surface-strong);
 }
 
 .zoom-caption {
@@ -668,11 +708,11 @@ h1 {
 }
 
 .timeline {
-  margin-bottom: 12px;
+  margin-bottom: 14px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 0 0 10px 10px;
   background: var(--surface);
-  padding: 6px 12px 8px;
+  padding: 10px 12px 12px;
 }
 
 .tl-track {

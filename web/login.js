@@ -105,9 +105,15 @@ export function renderTool(node, label, status) {
   node.title = [status.version, status.path, status.error].filter(Boolean).join("\n");
 }
 
-// 버전 문자열이 길어서(ffmpeg는 빌드 정보까지 붙는다) 숫자만 남긴다.
+// 버전 문자열이 길어서(ffmpeg는 "ffmpeg version N-125881-g946272b79a-20260801 Copyright…"
+// 처럼 빌드 정보까지 붙는다) 알아볼 수 있는 짧은 조각만 남긴다.
 function shortVersion(version) {
   if (!version) return "OK";
-  const match = String(version).match(/\d+(\.\d+)+/);
-  return match ? match[0] : String(version).slice(0, 12);
+  const text = String(version).trim();
+  const token = text.replace(/^\S+\s+version\s+/i, "").split(/\s+/)[0] || text;
+  const semver = token.match(/^\d+(\.\d+)+/);
+  if (semver) return semver[0];
+  // 정식 릴리스가 아닌 빌드(N-125881-g946272…)는 빌드 번호까지만 보여준다.
+  if (token.startsWith("N-")) return token.split("-").slice(0, 2).join("-");
+  return token.slice(0, 14);
 }

@@ -112,7 +112,9 @@
                 <button class="library-tab" data-library-tab="shorts">Shorts</button>
                 <button class="library-tab" data-library-tab="lives">라이브</button>
               </div>
-              <div id="libraryList" class="library-list"></div>
+              <div id="libraryList" class="library-list">
+                <div class="library-empty">불러오기를 누르면 내 채널의 영상이 여기에 나옵니다</div>
+              </div>
             </section>
           </div>
 
@@ -153,28 +155,40 @@
             </div>
 
             <div class="transport-row">
-              <div class="button-set">
-                <button id="playSegmentButton" class="icon-button" title="선택한 구간만 재생 (IN에서 OUT까지)">
-                  <span aria-hidden="true">▶</span> 구간
-                </button>
-                <button id="playButton" class="icon-button" title="현재 위치에서 이어 재생">▶</button>
-                <button id="pauseButton" class="icon-button" title="일시정지">❚❚</button>
+              <div class="control-cluster">
+                <span class="cluster-label">재생</span>
+                <div class="button-set">
+                  <button id="playSegmentButton" class="icon-button" title="선택한 구간만 재생 (IN에서 OUT까지)">
+                    <span aria-hidden="true">▶</span> 구간
+                  </button>
+                  <button id="playButton" class="icon-button" title="현재 위치에서 이어 재생">▶</button>
+                  <button id="pauseButton" class="icon-button" title="일시정지">❚❚</button>
+                </div>
               </div>
-              <div class="button-set">
-                <button id="markStartButton" class="secondary">현재 위치 IN</button>
-                <button id="markEndButton" class="secondary">현재 위치 OUT</button>
+
+              <div class="control-cluster">
+                <span class="cluster-label">지금 위치를</span>
+                <div class="button-set">
+                  <button id="markStartButton" class="secondary">IN 으로</button>
+                  <button id="markEndButton" class="secondary">OUT 으로</button>
+                </div>
               </div>
-              <div class="button-set">
-                <button id="nudgeStartBack" class="secondary compact-button" title="IN 1초 앞으로">IN −1s</button>
-                <button id="nudgeStartForward" class="secondary compact-button" title="IN 1초 뒤로">IN +1s</button>
-              </div>
-              <div class="button-set">
-                <button id="nudgeEndBack" class="secondary compact-button" title="OUT 1초 앞으로">OUT −1s</button>
-                <button id="nudgeEndForward" class="secondary compact-button" title="OUT 1초 뒤로">OUT +1s</button>
+
+              <div class="control-cluster">
+                <span class="cluster-label">1초씩</span>
+                <div class="button-set">
+                  <button id="nudgeStartBack" class="secondary compact-button" title="IN 1초 앞으로">IN −</button>
+                  <button id="nudgeStartForward" class="secondary compact-button" title="IN 1초 뒤로">IN ＋</button>
+                </div>
+                <div class="button-set">
+                  <button id="nudgeEndBack" class="secondary compact-button" title="OUT 1초 앞으로">OUT −</button>
+                  <button id="nudgeEndForward" class="secondary compact-button" title="OUT 1초 뒤로">OUT ＋</button>
+                </div>
               </div>
             </div>
 
             <div class="zoom-row">
+              <span class="cluster-label">보기</span>
               <div class="button-set">
                 <button id="zoomOutButton" class="secondary compact-button" title="축소 (마우스 휠)">−</button>
                 <button id="zoomInButton" class="secondary compact-button" title="확대 (마우스 휠)">＋</button>

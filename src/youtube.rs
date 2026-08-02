@@ -12,7 +12,10 @@ use serde_json::Value;
 
 use crate::live::{header_number, live_sources_from_formats, LiveSourceKind};
 use crate::server::{LibraryRequest, LibraryResponse};
-use crate::tools::{add_cookie_args, yt_dlp_command};
+use crate::tools::{add_cookie_args, add_js_runtime, yt_dlp_command};
+
+/// 한 번에 읽어올 목록 개수. 올릴수록 오래 걸린다(200개에 약 3초).
+pub(crate) const LIBRARY_PAGE_SIZE: &str = "200";
 
 #[derive(Debug, Serialize)]
 pub(crate) struct LibraryItem {
@@ -36,6 +39,23 @@ pub(crate) async fn load_channel_library(
         lives: Vec::new(),
     };
 
+    // 채널 주인에게는 업로드 재생목록(UU…)이 가장 넓다. 공개 탭에는 안 나오는
+    // 비공개·일부공개 영상까지 들어 있어서, 내 영상 목록은 여기서 먼저 가져온다.
+    if let Some(uploads) = uploads_playlist_id(channel_id) {
+        let url = format!("https://www.youtube.com/playlist?list={uploads}");
+        for item in load_optional_library_tab(exe, req, browser, &url).await? {
+            match library_kind(&item) {
+                LibraryKind::Live => push_unique_library_item(&mut response.lives, item),
+                LibraryKind::Short => push_unique_library_item(&mut response.shorts, item),
+                LibraryKind::Video => push_unique_library_item(&mut response.videos, item),
+            }
+        }
+        if !library_response_is_empty(&response) {
+            return Ok(response);
+        }
+    }
+
+    // 재생목록을 못 읽으면 공개 탭이라도 보여준다.
     for item in load_optional_library_tab(
         exe,
         req,
@@ -85,6 +105,11 @@ pub(crate) async fn load_optional_library_tab(
     }
 }
 
+/// 채널의 업로드 재생목록 ID. `UC…` 채널 ID의 앞 두 글자만 `UU` 로 바꾼 것이다.
+pub(crate) fn uploads_playlist_id(channel_id: &str) -> Option<String> {
+    is_youtube_channel_id(channel_id).then(|| format!("UU{}", &channel_id[2..]))
+}
+
 pub(crate) async fn load_library_playlist(
     exe: &Path,
     req: &LibraryRequest,
@@ -98,10 +123,12 @@ pub(crate) async fn load_library_playlist(
         "--dump-single-json",
         "--flat-playlist",
         "--playlist-end",
-        "80",
+        LIBRARY_PAGE_SIZE,
         "--skip-download",
         "--no-warnings",
     ]);
+    // 유튜브는 요즘 목록을 읽을 때도 자바스크립트 실행을 요구한다.
+    add_js_runtime(&mut cmd);
     add_cookie_args(
         &mut cmd,
         browser,
@@ -140,9 +167,12 @@ pub(crate) async fn discover_owned_channel_id(
     else {
         return Ok(None);
     };
-    let Some(cookie_header) = cookie_header_from_netscape_file(cookies_file)? else {
+    let Some(cookie_header) = cookie_header_from_netscape_file(cookies_file, "www.youtube.com")?
+    else {
         return Ok(None);
     };
+
+    let cookie_count = cookie_header.split("; ").count();
 
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::limited(10))
@@ -154,7 +184,7 @@ pub(crate) async fn discover_owned_channel_id(
             reqwest::header::USER_AGENT,
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36",
         )
-        .header(reqwest::header::COOKIE, cookie_header)
+        .header(reqwest::header::COOKIE, &cookie_header)
         .send()
         .await
         .context("could not load YouTube account page")?
@@ -162,46 +192,86 @@ pub(crate) async fn discover_owned_channel_id(
         .await
         .context("could not read YouTube account page")?;
 
-    Ok(extract_owned_channel_id(&html))
+    let channel_id = extract_owned_channel_id(&html);
+    // 쿠키가 모자라면 유튜브는 로그아웃 페이지를 준다. 목록이 비었을 때 원인을 가리려면 이 셋을 같이 봐야 한다.
+    eprintln!(
+        "library: account page with {} cookies, signed in: {}, channel: {}",
+        cookie_count,
+        html.contains("\"LOGGED_IN\":true"),
+        channel_id.as_deref().unwrap_or("(찾지 못함)")
+    );
+    Ok(channel_id)
 }
 
-pub(crate) fn cookie_header_from_netscape_file(path: &str) -> Result<Option<String>> {
+/// 쿠키 파일에서 `host` 로 보낼 `Cookie` 헤더를 만든다.
+///
+/// 파일에는 google.com, google.co.kr, youtube.com 것이 섞여 있고 `SID` 같은 이름은
+/// 도메인마다 값이 다르다. 전부 이어붙이면 같은 이름이 여러 번 들어가서 유튜브가
+/// 아예 로그아웃 상태로 취급한다. 그래서 해당 호스트에 해당하는 것만 골라내고,
+/// 이름이 겹치면 더 구체적인 도메인(길이가 긴 쪽)을 남긴다.
+pub(crate) fn cookie_header_from_netscape_file(path: &str, host: &str) -> Result<Option<String>> {
     let text =
         fs::read_to_string(path).with_context(|| format!("could not read cookies file {path}"))?;
-    let mut pairs = Vec::new();
+    let host = host.to_ascii_lowercase();
+
+    // 이름 -> (고른 도메인, 값). 도메인이 더 긴 쪽이 이긴다.
+    let mut chosen: Vec<(String, String, String)> = Vec::new();
     for line in text.lines() {
         let line = line.trim();
         let line = line.strip_prefix("#HttpOnly_").unwrap_or(line);
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let mut fields = line.split('\t');
-        let _domain = fields.next();
-        let _include_subdomains = fields.next();
-        let _path = fields.next();
-        let _secure = fields.next();
-        let _expires = fields.next();
-        let Some(name) = fields.next() else {
+        let fields: Vec<&str> = line.split('\t').collect();
+        let [domain, _include_subdomains, _path, _secure, _expires, name, value] = fields[..]
+        else {
             continue;
         };
-        let Some(value) = fields.next() else {
-            continue;
-        };
-        if name.is_empty() {
+        if name.is_empty() || !cookie_domain_matches(domain, &host) {
             continue;
         }
-        pairs.push(format!("{name}={value}"));
+
+        let domain = domain.trim_start_matches('.').to_ascii_lowercase();
+        match chosen.iter_mut().find(|(existing, _, _)| existing == name) {
+            Some((_, best_domain, best_value)) => {
+                if domain.len() > best_domain.len() {
+                    *best_domain = domain;
+                    *best_value = value.to_string();
+                }
+            }
+            None => chosen.push((name.to_string(), domain, value.to_string())),
+        }
     }
 
+    let pairs: Vec<String> = chosen
+        .into_iter()
+        .map(|(name, _, value)| format!("{name}={value}"))
+        .collect();
     Ok((!pairs.is_empty()).then(|| pairs.join("; ")))
 }
 
+/// 넷스케이프 쿠키의 도메인이 이 호스트에 보내도 되는 것인지 본다.
+/// `.youtube.com` 은 `www.youtube.com` 에 보내지만 `google.com` 에는 보내지 않는다.
+pub(crate) fn cookie_domain_matches(domain: &str, host: &str) -> bool {
+    let domain = domain.trim_start_matches('.').to_ascii_lowercase();
+    if domain.is_empty() {
+        return false;
+    }
+    host == domain || host.ends_with(&format!(".{domain}"))
+}
+
+/// 로그인한 계정의 채널 ID를 계정 페이지 HTML에서 찾는다.
+///
+/// 유튜브는 채널 주소를 절대 URL로 쓰지 않는다. 실제로 나오는 형태는
+/// `"shortUrl":"UC…"`, `"browseId":"UC…"`, `"url":"/channel/UC…"` 셋이다.
 pub(crate) fn extract_owned_channel_id(html: &str) -> Option<String> {
     [
         "\"shortUrl\":\"",
         "\\\"shortUrl\\\":\\\"",
-        "https://www.youtube.com/channel/",
-        "https:\\/\\/www.youtube.com\\/channel\\/",
+        "\"browseId\":\"",
+        "\\\"browseId\\\":\\\"",
+        "/channel/",
+        "\\/channel\\/",
     ]
     .iter()
     .find_map(|marker| extract_channel_id_after_marker(html, marker))
@@ -454,5 +524,72 @@ mod tests {
             extract_owned_channel_id(escaped),
             Some("UCgO9qWNRUzHIeRQNwmyyR0g".to_string())
         );
+    }
+
+    #[test]
+    fn finds_channel_id_in_relative_urls_and_browse_ids() {
+        // 유튜브가 실제로 내려주는 형태. 절대 URL은 나오지 않는다.
+        let relative = r#""webCommandMetadata":{"url":"/channel/UCgO9qWNRUzHIeRQNwmyyR0g/posts"}"#;
+        assert_eq!(
+            extract_owned_channel_id(relative),
+            Some("UCgO9qWNRUzHIeRQNwmyyR0g".to_string())
+        );
+
+        // 채널이 아닌 browseId("FEwhat_to_watch" 등)는 건너뛰고 진짜를 찾아야 한다.
+        let browse = r#"{"browseId":"FEwhat_to_watch"},{"browseId":"UCgO9qWNRUzHIeRQNwmyyR0g"}"#;
+        assert_eq!(
+            extract_owned_channel_id(browse),
+            Some("UCgO9qWNRUzHIeRQNwmyyR0g".to_string())
+        );
+
+        // "/channel/UC/livestreaming" 처럼 채널 ID가 아닌 것에 걸리면 안 된다.
+        assert_eq!(
+            extract_owned_channel_id(r#""url":"/channel/UC/live""#),
+            None
+        );
+    }
+
+    #[test]
+    fn uploads_playlist_id_swaps_the_prefix() {
+        assert_eq!(
+            uploads_playlist_id("UCgO9qWNRUzHIeRQNwmyyR0g").as_deref(),
+            Some("UUgO9qWNRUzHIeRQNwmyyR0g")
+        );
+        assert_eq!(uploads_playlist_id("not-a-channel"), None);
+    }
+
+    #[test]
+    fn cookie_header_keeps_one_value_per_name() {
+        // 같은 이름이 도메인마다 다른 값으로 들어 있는 실제 상황.
+        // 전부 이어붙이면 유튜브가 로그아웃으로 본다.
+        let file = concat!(
+            ".google.com\tTRUE\t/\tFALSE\t0\tSID\tgoogle-value\n",
+            ".google.co.kr\tTRUE\t/\tFALSE\t0\tSID\tkr-value\n",
+            "#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tyoutube-value\n",
+            ".youtube.com\tTRUE\t/\tTRUE\t0\tLOGIN_INFO\tinfo\n",
+            "accounts.google.com\tFALSE\t/\tTRUE\t0\tLSID\tlsid\n",
+        );
+        let path = std::env::temp_dir().join("yt-download-cookie-test.txt");
+        fs::write(&path, file).unwrap();
+
+        let header = cookie_header_from_netscape_file(path.to_str().unwrap(), "www.youtube.com")
+            .unwrap()
+            .unwrap();
+        assert_eq!(header, "SID=youtube-value; LOGIN_INFO=info");
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn cookie_domains_only_match_their_own_host() {
+        assert!(cookie_domain_matches(".youtube.com", "www.youtube.com"));
+        assert!(cookie_domain_matches("www.youtube.com", "www.youtube.com"));
+        assert!(!cookie_domain_matches(".google.com", "www.youtube.com"));
+        assert!(!cookie_domain_matches(
+            "accounts.google.com",
+            "www.youtube.com"
+        ));
+        // "notyoutube.com" 이 "youtube.com" 에 붙으면 안 된다.
+        assert!(!cookie_domain_matches("youtube.com", "wwwyoutube.com"));
     }
 }

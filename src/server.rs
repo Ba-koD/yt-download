@@ -38,7 +38,7 @@ use crate::tools::{
 use crate::youtube::{
     available_max_height, discover_owned_channel_id, library_item, library_kind,
     library_response_is_empty, live_edge_seconds, load_channel_library, metadata_duration,
-    validate_url, value_str, yt_dlp_error, LibraryItem, LibraryKind,
+    validate_url, value_str, yt_dlp_error, LibraryItem, LibraryKind, LIBRARY_PAGE_SIZE,
 };
 
 pub(crate) const INDEX_HTML: &str = include_str!("../web/index.html");
@@ -169,6 +169,7 @@ pub(crate) struct ExportLoginResponse {
     pub(crate) cookie_count: usize,
     pub(crate) youtube_cookie_count: usize,
     pub(crate) auth_cookie_count: usize,
+    pub(crate) youtube_session_cookie_count: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -342,6 +343,7 @@ pub(crate) async fn export_login(
         cookie_count: result.cookie_count,
         youtube_cookie_count: result.youtube_cookie_count,
         auth_cookie_count: result.auth_cookie_count,
+        youtube_session_cookie_count: result.youtube_session_cookie_count,
     }))
 }
 
@@ -395,6 +397,8 @@ pub(crate) async fn library(
         if !library_response_is_empty(&channel_response) {
             return Ok(Json(channel_response));
         }
+    } else {
+        eprintln!("library: could not find the signed-in channel id; falling back to /feed/you");
     }
 
     let mut cmd = yt_dlp_command(&exe);
@@ -404,7 +408,7 @@ pub(crate) async fn library(
         "--dump-single-json",
         "--flat-playlist",
         "--playlist-end",
-        "80",
+        LIBRARY_PAGE_SIZE,
         "--skip-download",
         "--no-warnings",
     ]);
@@ -449,6 +453,16 @@ pub(crate) async fn library(
             LibraryKind::Short => response.shorts.push(item),
             LibraryKind::Video => response.videos.push(item),
         }
+    }
+
+    // 여기까지 왔는데 비어 있으면 내 채널을 알아내지 못한 것이다.
+    // 채널을 찾으려면 쿠키 파일이 필요하고, 그건 "로그인 적용"이 만들어 준다.
+    if library_response_is_empty(&response) && !has_cookies_file {
+        return Err(anyhow!(
+            "내 영상 목록을 가져오려면 쿠키 파일이 필요합니다. \
+             \"앱 로그인 열기\"로 YouTube에 로그인한 뒤 \"로그인 적용\"을 눌러주세요."
+        )
+        .into());
     }
 
     Ok(Json(response))

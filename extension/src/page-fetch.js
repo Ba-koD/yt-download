@@ -8,9 +8,49 @@
 //
 // 여기서는 오직 요청만 대신하고, 판단은 전부 확장 쪽에서 한다.
 
+// 재생 위치와 되감기 구간은 플레이어에게 직접 물어본다.
+//
+// `video.seekable` 은 라이브에서 실제 되감기 구간보다 한 시간쯤 앞을 가리킨다.
+// 그 값으로 막대를 그리면 라이브를 보고 있는데도 막대가 중간에 놓인다.
+// 플레이어의 `getProgressState()` 는 정확하다. 다만 그 함수는 페이지 쪽에만 있어서
+// 확장(격리된 세계)에서는 부를 수 없다. 그래서 여기서 읽어 넘긴다.
+function readProgress() {
+  const api = document.querySelector("#movie_player");
+  if (!api || typeof api.getProgressState !== "function") return null;
+  let state;
+  try {
+    state = api.getProgressState();
+  } catch {
+    return null;
+  }
+  if (!state || !Number.isFinite(state.current)) return null;
+  // 라이브는 방송 전체 시간축을 쓰므로 offset 을 빼서 영상 기준으로 되돌린다.
+  const offset = Number(state.offset) || 0;
+  const start = Number(state.seekableStart) - offset;
+  const end = Number(state.seekableEnd) - offset;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  return { start, end, current: Number(state.current) - offset, live: Boolean(state.ingestionTime) };
+}
+
+let progressTimer = null;
+
 window.addEventListener("message", async (event) => {
   if (event.source !== window) return;
   const message = event.data;
+
+  if (message?.ytdl === "watch-progress") {
+    clearInterval(progressTimer);
+    progressTimer = null;
+    if (!message.on) return;
+    const tick = () => {
+      const progress = readProgress();
+      if (progress) window.postMessage({ ytdl: "progress", ...progress }, "*");
+    };
+    tick();
+    progressTimer = setInterval(tick, 400);
+    return;
+  }
+
   if (message?.ytdl !== "request") return;
 
   const reply = (payload, transfer = []) =>

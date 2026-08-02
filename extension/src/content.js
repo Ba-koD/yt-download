@@ -37,7 +37,27 @@
     saveTimer: null,
     // 사용자가 구간을 직접 정했는지. 그 전에는 길이를 알게 될 때마다 전 구간으로 맞춰준다.
     touched: false,
+    // 페이지 쪽 플레이어가 알려준 재생 위치·되감기 구간.
+    progress: null,
   };
+
+  // 패널이 열려 있는 동안만 페이지에게 재생 상태를 받아온다.
+  window.addEventListener("message", (event) => {
+    if (event.source !== window || event.data?.ytdl !== "progress") return;
+    const before = state.progress;
+    state.progress = {
+      start: event.data.start,
+      end: event.data.end,
+      current: event.data.current,
+      live: event.data.live,
+    };
+    // 처음 알게 됐거나 길이가 달라졌을 때만 다시 그린다(매 400ms 그리면 낭비다).
+    const changed = !before || before.end !== state.progress.end ||
+      before.current !== state.progress.current;
+    if (changed && state.open) renderTimeline();
+  });
+
+  const watchProgress = (on) => window.postMessage({ ytdl: "watch-progress", on }, "*");
 
   const el = {};
 
@@ -100,27 +120,26 @@
   /**
    * 타임라인이 다룰 구간. 대개 0~길이지만 라이브는 다르다.
    *
-   * 진행 중인 라이브는 `duration` 이 Infinity 라서 길이를 알 수 없다.
-   * 대신 되감기 가능한 구간(seekable)이 실제로 고를 수 있는 범위다.
+   * 라이브에서 `video.seekable` 과 `duration` 은 믿을 수 없다. 실제 되감기 구간보다
+   * 한 시간쯤 앞을 가리켜서, 라이브 지점을 보고 있는데도 막대가 중간에 놓인다.
+   * (14시간짜리 방송에서 잰 값: seekable 끝 50400, 실제 라이브 지점 46813)
+   * 플레이어가 가진 값이 정확하므로 페이지 쪽에서 받아온 걸 먼저 쓴다.
    */
   function bounds() {
+    if (state.progress) return { start: state.progress.start, end: state.progress.end };
+
     const video = player();
-
-    // 되감기 가능한 구간(seekable)을 먼저 본다. 이게 실제로 고르고 받을 수 있는 범위다.
-    // 라이브는 `duration` 이 실제보다 크게 잡히는 일이 있어(막 시작한 방송에서 특히)
-    // 그걸 기준으로 삼으면 재생 위치 막대가 엉뚱한 데 놓인다. 일반 영상은 둘이 같다.
-    if (video?.seekable?.length) {
-      const last = video.seekable.length - 1;
-      const start = video.seekable.start(0);
-      const end = video.seekable.end(last);
-      if (end > start) return { start, end };
-    }
-
     const known = Number(video?.duration);
     if (Number.isFinite(known) && known > 0) return { start: 0, end: known };
 
     const fallback = Number(state.formats?.durationSeconds) || 0;
     return { start: 0, end: fallback };
+  }
+
+  /** 지금 재생 중인 지점. 라이브에서는 플레이어가 알려준 값이 정확하다. */
+  function playedSeconds() {
+    if (state.progress) return state.progress.current;
+    return Number(player()?.currentTime) || 0;
   }
 
   function boundsSpan() {
@@ -319,6 +338,8 @@
     state.open = !state.open;
     if (el.panel) el.panel.hidden = !state.open;
     el.button?.classList.toggle("ytdl-open-active", state.open);
+    // 열려 있는 동안만 재생 상태를 받아온다.
+    watchProgress(state.open);
     // 목록은 처음 열 때만 받아온다(영상마다 미리 받아두면 낭비다).
     if (state.open && !state.formats) await loadFormats();
   }
@@ -367,7 +388,7 @@
     el.range.style.width = `${((state.end - state.start) / span) * 100}%`;
     el.inHandle.style.left = percent(state.start);
     el.outHandle.style.left = percent(state.end);
-    el.headMark.style.left = percent(player()?.currentTime || edge.start);
+    el.headMark.style.left = percent(playedSeconds());
   }
 
   function setStatus(text, kind = "") {
@@ -504,6 +525,8 @@
       state.formats = null;
       state.videoId = id;
       state.touched = false;
+      // 이전 영상의 재생 위치를 새 영상에 쓰면 안 된다.
+      state.progress = null;
       // 열려 있으면 새 영상 목록으로 갈아끼우고, 닫혀 있으면 열 때 받는다.
       if (state.open) loadFormats();
       else render();

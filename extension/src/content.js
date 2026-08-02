@@ -5,6 +5,10 @@
 // 덕분에 InnerTube 는 동일 출처로, 미디어는 Range 를 허용하는 CORS 로 그대로 받을 수 있다.
 
 (async () => {
+  // 붙었는지 콘솔에서 바로 알 수 있게 한 줄 남긴다.
+  // 이게 안 보이면 확장이 이 페이지에 붙지 않은 것이다(새로고침이나 재로드가 필요하다).
+  const say = (...parts) => console.info("[yt-download]", ...parts);
+
   const load = (name) => import(chrome.runtime.getURL(`src/${name}`));
   const [{ downloadSection, getFormats, safeFileName, clockLabel }, { formatLabel }, net] =
     await Promise.all([load("download.js"), load("innertube.js"), load("net.js")]);
@@ -399,6 +403,7 @@
       }
     } catch (error) {
       setStatus(error.message, "ytdl-bad");
+      say("화질 목록 실패:", error);
       el.quality.replaceChildren(make("option", { text: "없음" }));
     }
     render();
@@ -442,6 +447,7 @@
       );
     } catch (error) {
       setStatus(error.message, "ytdl-bad");
+      say("받기 실패:", error);
     } finally {
       state.busy = false;
       render();
@@ -459,6 +465,7 @@
   }
 
   mount();
+  say("준비됨 · 좋아요 옆 '구간 받기' 버튼을 눌러주세요");
 
   // 재생 위치 표시가 영상을 따라가게 한다.
   document.addEventListener(
@@ -498,4 +505,6 @@
       else render();
     }
   }, 1000);
-})();
+})().catch((error) => {
+  console.error("[yt-download] 시작하지 못했습니다:", error);
+});

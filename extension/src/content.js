@@ -105,15 +105,19 @@
    */
   function bounds() {
     const video = player();
-    const known = Number(video?.duration);
-    if (Number.isFinite(known) && known > 0) return { start: 0, end: known };
 
+    // 되감기 가능한 구간(seekable)을 먼저 본다. 이게 실제로 고르고 받을 수 있는 범위다.
+    // 라이브는 `duration` 이 실제보다 크게 잡히는 일이 있어(막 시작한 방송에서 특히)
+    // 그걸 기준으로 삼으면 재생 위치 막대가 엉뚱한 데 놓인다. 일반 영상은 둘이 같다.
     if (video?.seekable?.length) {
       const last = video.seekable.length - 1;
       const start = video.seekable.start(0);
       const end = video.seekable.end(last);
       if (end > start) return { start, end };
     }
+
+    const known = Number(video?.duration);
+    if (Number.isFinite(known) && known > 0) return { start: 0, end: known };
 
     const fallback = Number(state.formats?.durationSeconds) || 0;
     return { start: 0, end: fallback };

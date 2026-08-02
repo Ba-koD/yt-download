@@ -42,10 +42,11 @@ export function extractVisitorData(html) {
 }
 
 /**
- * 내 비공개 영상을 물어볼 때 쓰는 클라이언트.
+ * 내 비공개·멤버 전용 영상을 물어볼 때 쓰는 클라이언트.
  *
- * ANDROID_VR 은 로그인 정보를 받아주지 않아서 "Please sign in" 으로 끝난다.
- * 창작자용 클라이언트는 쿠키를 인정하므로 내가 올린 비공개 영상도 주소를 준다.
+ * ANDROID_VR 은 로그인 정보를 아예 받아주지 않아서 "Please sign in" 으로 끝난다.
+ * 창작자용 클라이언트는 로그인 상태를 인정하지만, 쿠키만으로는 부족하고
+ * 아래 SAPISIDHASH 인증 헤더까지 있어야 한다(유튜브 웹 화면이 쓰는 방식과 같다).
  */
 const CREATOR_CLIENT = {
   clientName: "WEB_CREATOR",
@@ -54,30 +55,66 @@ const CREATOR_CLIENT = {
   gl: "KR",
 };
 
+const ORIGIN = "https://www.youtube.com";
+
 export async function fetchPlayerResponse(videoId, visitorData) {
   const first = await requestPlayer(videoId, visitorData, CLIENT);
-  const status = first?.playabilityStatus?.status;
-  // 로그인해야 볼 수 있는 영상이면 창작자용 클라이언트로 한 번 더 물어본다.
-  if (status && status !== "OK") {
-    try {
-      const second = await requestPlayer(videoId, visitorData, CREATOR_CLIENT);
-      if (second?.playabilityStatus?.status === "OK") return second;
-    } catch {
-      // 두 번째 시도는 실패해도 첫 번째 결과의 이유를 그대로 보여준다.
-    }
+  if (first?.playabilityStatus?.status === "OK") return first;
+
+  // 로그인해야 볼 수 있는 영상이면 내 계정으로 다시 물어본다.
+  try {
+    const auth = await authHeaders();
+    if (!auth) return first;
+    const second = await requestPlayer(videoId, visitorData, CREATOR_CLIENT, auth);
+    if (second?.playabilityStatus?.status === "OK") return second;
+  } catch {
+    // 두 번째 시도가 실패해도 첫 번째 결과의 이유를 그대로 보여준다.
   }
   return first;
 }
 
-function requestPlayer(videoId, visitorData, client) {
+function requestPlayer(videoId, visitorData, client, extraHeaders) {
   return request.json(PLAYER_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-Goog-Visitor-Id": visitorData || "",
+      ...extraHeaders,
     },
     body: JSON.stringify(buildPlayerRequest(videoId, visitorData, client)),
   });
+}
+
+/**
+ * 유튜브가 로그인으로 인정하는 인증 헤더.
+ *
+ * 쿠키만 보내면 로그인으로 쳐주지 않는다. `SAPISID` 쿠키와 지금 시각을 섞어
+ * SHA-1 로 해시한 값을 함께 보내야 내 계정으로 물어본 것이 된다.
+ * 브라우저 밖(테스트)에서는 쿠키가 없으므로 `null` 을 돌려주고 조용히 넘어간다.
+ */
+export async function authHeaders() {
+  const sapisid = readCookie("SAPISID") || readCookie("__Secure-3PAPISID");
+  if (!sapisid || typeof crypto === "undefined" || !crypto.subtle) return null;
+
+  const stamp = Math.floor(Date.now() / 1000);
+  const digest = await sha1(`${stamp} ${sapisid} ${ORIGIN}`);
+  return {
+    Authorization: `SAPISIDHASH ${stamp}_${digest}`,
+    "X-Origin": ORIGIN,
+    "X-Goog-AuthUser": "0",
+  };
+}
+
+function readCookie(name) {
+  if (typeof document === "undefined") return null;
+  const prefix = `${name}=`;
+  const found = document.cookie.split("; ").find((pair) => pair.startsWith(prefix));
+  return found ? found.slice(prefix.length) : null;
+}
+
+export async function sha1(text) {
+  const digest = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 /**

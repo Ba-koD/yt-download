@@ -205,3 +205,12 @@ Deno.test("페이지 요청이 되면 예비 통로는 쓰지 않는다", async 
   assertEquals([...(await fetcher("u"))], [7]);
   assertEquals(secondaryCalls, 0);
 });
+
+Deno.test("SAPISIDHASH 해시가 유튜브 방식과 같다", async () => {
+  const { sha1 } = await import("../src/innertube.js");
+  // 유튜브는 "시각 SAPISID 출처" 를 SHA-1 로 해시한다.
+  assertEquals(
+    await sha1("1785680789 TESTSAPISID https://www.youtube.com"),
+    "34f704ae8aa2cceb8d411121f5dd513207cbe18c",
+  );
+});

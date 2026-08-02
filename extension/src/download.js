@@ -225,15 +225,22 @@ export function buildMp4(video, audio, section) {
     if (trimmed) audioPieces.push({ time: Math.max(segment.time, mediaStart), bytes: trimmed });
   }
 
+  // 앞부분을 편집 목록(elst)으로 건너뛰게 하면 안 된다.
+  //
+  // 영상은 키프레임에서만 자를 수 있어 요청한 지점보다 조금 앞에서 시작한다.
+  // 예전에는 그 앞부분을 건너뛰라고 편집 목록에 적어뒀는데, 재생기가 그 지시를
+  // **소리에만** 적용하고 영상은 앞부분을 그대로 두더라(디코딩에 필요하니까).
+  // 그래서 소리가 5초쯤 앞서 갔다. 실측한 값이다.
+  //
+  //   소리 밀림 4.96초 / 화면 밀림 0.00초 → 어긋남 4.96초
+  //
+  // 앞은 손대지 않고 뒤 길이만 맞춘다. 두 트랙이 항상 같이 간다.
+  // 대신 파일이 요청보다 몇 초 앞에서 시작하는데, 그건 부르는 쪽에서 알려준다.
   const { init, audioTrackId } = combineInit(
     video.init,
     audio.init,
-    section
-      ? {
-          video: { skip: Math.max(0, section.start - mediaStart), seconds: section.end - section.start },
-          audio: { skip: Math.max(0, section.start - mediaStart), seconds: section.end - section.start },
-        }
-      : null,
+    section ? { video: { skip: 0, seconds: section.end - mediaStart },
+                audio: { skip: 0, seconds: section.end - mediaStart } } : null,
   );
 
   // 두 트랙 모두 같은 지점을 0으로 삼아야 서로 어긋나지 않는다.
@@ -326,6 +333,7 @@ export async function downloadSection({ videoFormat, audioFormat, start, end, on
 
   onProgress?.(1, 1, "합치는 중");
   const bytes = buildMp4(video, audio, { start, end });
-  // 조각을 통째로 받으므로 파일은 요청보다 조금 길다. 얼마나 긴지 함께 알려준다.
-  return { bytes, mediaSeconds: sectionSeconds(video.segments) };
+  // 조각을 통째로 받으므로 파일은 요청보다 앞에서 시작하고 조금 길다. 그대로 알려준다.
+  const mediaStart = video.segments[0]?.time ?? start;
+  return { bytes, mediaStart, mediaSeconds: Math.max(0, end - mediaStart) };
 }

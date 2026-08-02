@@ -480,7 +480,7 @@
     const began = Date.now();
 
     try {
-      const { bytes, mediaSeconds } = await downloadSection({
+      const { bytes, mediaStart, mediaSeconds } = await downloadSection({
         videoFormat,
         audioFormat: state.formats.audio[0],
         start: state.start,
@@ -493,18 +493,21 @@
         },
       });
 
+      // 영상은 키프레임에서만 자를 수 있어 실제 파일은 고른 지점보다 조금 앞에서 시작한다.
+      // 이름도 실제 내용에 맞춰 붙인다. 이름과 속이 다르면 헷갈리기만 한다.
+      const realStart = Number.isFinite(mediaStart) ? mediaStart : state.start;
       save(
         bytes,
         `${safeFileName(state.formats.title)} ` +
-          `[${clockLabel(state.start)}~${clockLabel(state.end)}].mp4`,
+          `[${clockLabel(realStart)}~${clockLabel(state.end)}].mp4`,
       );
       const took = ((Date.now() - began) / 1000).toFixed(1);
-      const asked = state.end - state.start;
-      // 조각 단위로 받으므로 파일이 요청보다 몇 초 길다. 그 차이를 숨기지 않는다.
-      const extra = mediaSeconds && mediaSeconds - asked >= 1 ? ` → 파일 ${showClock(mediaSeconds)}` : "";
+      const lead = state.start - realStart;
+      const note = lead >= 0.5 ? ` · 앞 ${lead.toFixed(1)}초가 더 붙었습니다(키프레임)` : "";
       setStatus(
-        `저장했습니다 · ${showClock(state.start)}~${showClock(state.end)} ` +
-          `(${showClock(asked)}${extra}) · ${(bytes.length / 1048576).toFixed(1)} MB · ${took}초`,
+        `저장했습니다 · ${showClock(realStart)}~${showClock(state.end)} ` +
+          `(${showClock(mediaSeconds)})${note} · ` +
+          `${(bytes.length / 1048576).toFixed(1)} MB · ${took}초`,
         "ytdl-ok",
       );
     } catch (error) {

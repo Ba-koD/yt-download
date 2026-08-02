@@ -1,4 +1,5 @@
-// 유튜브 영상 페이지에 구간 편집 패널을 얹는다.
+// 유튜브 영상 페이지의 좋아요·공유 줄에 "구간 받기" 버튼을 넣고,
+// 누르면 영상 아래에 구간 편집 패널을 펼친다.
 //
 // content script 는 확장의 격리된 세계에서 돌지만 네트워크는 페이지(youtube.com) 몫으로 나간다.
 // 덕분에 InnerTube 는 동일 출처로, 미디어는 Range 를 허용하는 CORS 로 그대로 받을 수 있다.
@@ -14,9 +15,23 @@
     start: 0,
     end: 0,
     busy: false,
+    open: false,
   };
 
   const el = {};
+
+  // 유튜브는 Trusted Types 를 강제해서 innerHTML 을 막는다. 노드를 직접 만들어 붙인다.
+  function make(tag, props = {}, children = []) {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(props)) {
+      if (key === "class") node.className = value;
+      else if (key === "text") node.textContent = value;
+      else if (key === "dataset") Object.assign(node.dataset, value);
+      else node[key] = value;
+    }
+    node.append(...children);
+    return node;
+  }
 
   function currentVideoId() {
     const url = new URL(location.href);
@@ -29,8 +44,7 @@
   }
 
   function playerDuration() {
-    const video = player();
-    const known = Number(video?.duration);
+    const known = Number(player()?.duration);
     if (Number.isFinite(known) && known > 0) return known;
     return state.formats?.durationSeconds || 0;
   }
@@ -49,56 +63,66 @@
     return h ? `${h}:${m}:${s}` : `${m}:${s}`;
   }
 
-  function build() {
-    const root = document.createElement("div");
-    root.className = "ytdl-panel";
-    root.innerHTML = `
-      <div class="ytdl-head">
-        <span class="ytdl-title">구간 받기</span>
-        <button class="ytdl-fold" type="button" title="접기">−</button>
-      </div>
-      <div class="ytdl-body">
-        <div class="ytdl-row">
-          <button class="ytdl-mark" data-mark="start" type="button">현재 위치 IN</button>
-          <input class="ytdl-time" data-time="start" value="0:00" size="8" />
-          <span class="ytdl-sep">~</span>
-          <input class="ytdl-time" data-time="end" value="0:00" size="8" />
-          <button class="ytdl-mark" data-mark="end" type="button">OUT</button>
-        </div>
-        <div class="ytdl-row">
-          <span class="ytdl-length"></span>
-          <select class="ytdl-quality"><option>불러오는 중…</option></select>
-        </div>
-        <button class="ytdl-go" type="button" disabled>구간 받기</button>
-        <div class="ytdl-status">화질 목록을 불러오는 중입니다</div>
-      </div>`;
-    document.body.append(root);
+  // 유튜브의 좋아요·공유 버튼과 나란히 설 버튼.
+  function buildButton() {
+    const icon = make("span", { class: "ytdl-open-icon", text: "↧" });
+    icon.setAttribute("aria-hidden", "true");
+    const button = make(
+      "button",
+      { id: "ytdl-open", class: "ytdl-open", type: "button", title: "이 영상의 원하는 구간만 받기" },
+      [icon, make("span", { text: "구간 받기" })],
+    );
+    button.addEventListener("click", togglePanel);
+    return button;
+  }
 
-    el.root = root;
-    el.body = root.querySelector(".ytdl-body");
-    el.fold = root.querySelector(".ytdl-fold");
-    el.length = root.querySelector(".ytdl-length");
-    el.quality = root.querySelector(".ytdl-quality");
-    el.go = root.querySelector(".ytdl-go");
-    el.status = root.querySelector(".ytdl-status");
+  function buildPanel() {
     el.inputs = {
-      start: root.querySelector('[data-time="start"]'),
-      end: root.querySelector('[data-time="end"]'),
+      start: make("input", { class: "ytdl-time", value: "0:00", dataset: { time: "start" } }),
+      end: make("input", { class: "ytdl-time", value: "0:00", dataset: { time: "end" } }),
     };
-
-    el.fold.addEventListener("click", () => {
-      const folded = el.body.classList.toggle("ytdl-hidden");
-      el.fold.textContent = folded ? "+" : "−";
-      el.fold.title = folded ? "펼치기" : "접기";
+    const markStart = make("button", {
+      class: "ytdl-mark", type: "button", text: "지금 위치를 IN", dataset: { mark: "start" },
+    });
+    const markEnd = make("button", {
+      class: "ytdl-mark", type: "button", text: "OUT", dataset: { mark: "end" },
     });
 
-    for (const button of root.querySelectorAll(".ytdl-mark")) {
+    el.length = make("span", { class: "ytdl-length" });
+    el.quality = make("select", { class: "ytdl-quality" }, [make("option", { text: "불러오는 중…" })]);
+    el.go = make("button", { class: "ytdl-go", type: "button", text: "구간 받기", disabled: true });
+    el.status = make("div", { class: "ytdl-status", text: "화질 목록을 불러오는 중입니다" });
+
+    const close = make("button", { class: "ytdl-close", type: "button", title: "닫기", text: "✕" });
+    close.addEventListener("click", togglePanel);
+
+    const panel = make("div", { class: "ytdl-panel", hidden: true }, [
+      make("div", { class: "ytdl-head" }, [
+        make("span", { class: "ytdl-title", text: "구간 받기" }),
+        close,
+      ]),
+      make("div", { class: "ytdl-body" }, [
+        make("div", { class: "ytdl-row" }, [
+          markStart,
+          el.inputs.start,
+          make("span", { class: "ytdl-sep", text: "~" }),
+          el.inputs.end,
+          markEnd,
+        ]),
+        make("div", { class: "ytdl-row" }, [el.length, el.quality, el.go]),
+        el.status,
+      ]),
+    ]);
+    el.panel = panel;
+
+    for (const button of [markStart, markEnd]) {
       button.addEventListener("click", () => {
         const video = player();
         if (!video) return;
+        const now = video.currentTime;
         setRange(
-          button.dataset.mark === "start" ? video.currentTime : state.start,
-          button.dataset.mark === "end" ? video.currentTime : state.end,
+          button.dataset.mark === "start" ? now : state.start,
+          button.dataset.mark === "end" ? now : state.end,
         );
       });
     }
@@ -111,14 +135,46 @@
           return;
         }
         setRange(which === "start" ? value : state.start, which === "end" ? value : state.end);
-        // 고친 지점으로 미리보기를 옮겨 눈으로 확인할 수 있게 한다.
+        // 고친 지점으로 영상을 옮겨 눈으로 확인할 수 있게 한다.
         const video = player();
         if (video) video.currentTime = value;
       });
     }
 
     el.go.addEventListener("click", start);
-    return root;
+    return panel;
+  }
+
+  function actionRow() {
+    return (
+      document.querySelector("#actions #top-level-buttons-computed") ||
+      document.querySelector("ytd-watch-metadata #actions-inner")
+    );
+  }
+
+  // 유튜브는 화면을 통째로 다시 그리는 일이 잦다. 사라졌으면 다시 붙인다.
+  function mount() {
+    const row = actionRow();
+    if (row && !row.querySelector("#ytdl-open")) {
+      el.button = buildButton();
+      row.append(el.button);
+    }
+
+    const below = document.querySelector("ytd-watch-metadata") || document.querySelector("#below");
+    if (below && (!el.panel || !el.panel.isConnected)) {
+      const panel = buildPanel();
+      below.insertAdjacentElement("afterend", panel);
+      panel.hidden = !state.open;
+      render();
+    }
+  }
+
+  async function togglePanel() {
+    state.open = !state.open;
+    if (el.panel) el.panel.hidden = !state.open;
+    el.button?.classList.toggle("ytdl-open-active", state.open);
+    // 목록은 처음 열 때만 받아온다(영상마다 미리 받아두면 낭비다).
+    if (state.open && !state.formats) await loadFormats();
   }
 
   function setRange(start, end) {
@@ -131,6 +187,7 @@
   }
 
   function render() {
+    if (!el.panel) return;
     el.inputs.start.value = showClock(state.start);
     el.inputs.end.value = showClock(state.end);
     const length = Math.max(0, state.end - state.start);
@@ -139,6 +196,7 @@
   }
 
   function setStatus(text, kind = "") {
+    if (!el.status) return;
     el.status.textContent = text;
     el.status.className = `ytdl-status ${kind}`;
   }
@@ -148,7 +206,7 @@
     if (!videoId) return;
     state.videoId = videoId;
     state.formats = null;
-    el.quality.innerHTML = "<option>불러오는 중…</option>";
+    el.quality.replaceChildren(make("option", { text: "불러오는 중…" }));
     setStatus("화질 목록을 불러오는 중입니다");
 
     try {
@@ -158,19 +216,16 @@
         throw new Error("받을 수 있는 mp4 화질이 없습니다");
       }
       state.formats = formats;
-      el.quality.innerHTML = "";
-      for (const format of formats.video) {
-        const option = document.createElement("option");
-        option.value = String(format.itag);
-        option.textContent = formatLabel(format);
-        el.quality.append(option);
-      }
-      const video = player();
-      setRange(0, video?.duration || formats.durationSeconds || 0);
-      setStatus(formats.isLive ? "진행 중인 라이브는 아직 지원하지 않습니다" : "준비됨");
+      el.quality.replaceChildren(
+        ...formats.video.map((format) =>
+          make("option", { value: String(format.itag), text: formatLabel(format) }),
+        ),
+      );
+      setRange(0, player()?.duration || formats.durationSeconds || 0);
+      setStatus(formats.isLive ? "진행 중인 라이브는 아직 지원하지 않습니다" : "");
     } catch (error) {
       setStatus(error.message, "ytdl-bad");
-      el.quality.innerHTML = "<option>없음</option>";
+      el.quality.replaceChildren(make("option", { text: "없음" }));
     }
     render();
   }
@@ -180,7 +235,6 @@
     const videoFormat =
       state.formats.video.find((format) => String(format.itag) === el.quality.value) ||
       state.formats.video[0];
-    const audioFormat = state.formats.audio[0];
 
     state.busy = true;
     render();
@@ -189,7 +243,7 @@
     try {
       const { bytes } = await downloadSection({
         videoFormat,
-        audioFormat,
+        audioFormat: state.formats.audio[0],
         start: state.start,
         end: state.end,
         onProgress: (done, total, stage) => {
@@ -198,10 +252,11 @@
         },
       });
 
-      const name =
+      save(
+        bytes,
         `${safeFileName(state.formats.title)} ` +
-        `[${clockLabel(state.start)}~${clockLabel(state.end)}].mp4`;
-      save(bytes, name);
+          `[${clockLabel(state.start)}~${clockLabel(state.end)}].mp4`,
+      );
       const seconds = ((Date.now() - began) / 1000).toFixed(1);
       setStatus(`저장했습니다 · ${(bytes.length / 1048576).toFixed(1)} MB · ${seconds}초`, "ytdl-ok");
     } catch (error) {
@@ -222,17 +277,20 @@
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
   }
 
-  build();
-  render();
-  await loadFormats();
+  mount();
 
   // 유튜브는 페이지를 새로 그리지 않고 영상만 갈아끼운다.
-  let lastId = state.videoId;
+  let lastId = currentVideoId();
   setInterval(() => {
+    mount();
     const id = currentVideoId();
     if (id && id !== lastId) {
       lastId = id;
-      loadFormats();
+      state.formats = null;
+      state.videoId = id;
+      // 열려 있으면 새 영상 목록으로 갈아끼우고, 닫혀 있으면 열 때 받는다.
+      if (state.open) loadFormats();
+      else render();
     }
   }, 1000);
 })();

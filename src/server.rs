@@ -476,12 +476,16 @@ pub(crate) async fn library(
     }
 
     // 여기까지 왔는데 비어 있으면 내 채널을 알아내지 못한 것이다.
-    // 채널을 찾으려면 쿠키 파일이 필요하고, 그건 "로그인 적용"이 만들어 준다.
-    if library_response_is_empty(&response) && !has_cookies_file {
-        return Err(anyhow!(
-            "내 영상 목록을 가져오려면 쿠키 파일이 필요합니다. \
-             \"앱 로그인 열기\"로 YouTube에 로그인한 뒤 \"로그인 적용\"을 눌러주세요."
-        )
+    // 쿠키 파일이 있는데도 그렇다면 대개 로그인이 만료된 경우다.
+    // 유튜브는 `__Secure-1PSIDTS` 같은 쿠키를 수시로 갈아치우기 때문에 저장해둔 파일이 금방 낡는다.
+    if library_response_is_empty(&response) {
+        return Err(anyhow!(if has_cookies_file {
+            "내 영상을 찾지 못했습니다. 저장된 로그인이 만료됐을 수 있습니다. \
+             로그인·도구 칸에서 \"로그인 적용\"을 다시 눌러주세요."
+        } else {
+            "내 영상 목록을 가져오려면 로그인이 필요합니다. \
+             로그인·도구 칸에서 \"로그인 적용\"을 눌러주세요."
+        })
         .into());
     }
 

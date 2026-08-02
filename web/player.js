@@ -206,6 +206,7 @@ export function playerTimeToUiTime(seconds) {
 
 export function syncPlayheadFromPlayer() {
   syncLiveDuration();
+  updateTransportButtons();
   if (!state.player || typeof state.player.getCurrentTime !== "function") return;
   try {
     calibratePlayerTimeOffset();
@@ -260,17 +261,29 @@ export function playSelectedSegment() {
   updateTransportButtons();
 }
 
-// 일반 재생: 지금 위치에서 그냥 이어 재생한다. OUT에서 멈추지 않는다.
-export function playFromHere() {
+// 재생/일시정지를 한 버튼으로 오간다. 지금 상태를 보고 반대로 움직인다.
+export function togglePlayPause() {
   if (!playerReady()) return;
   stopSegmentPlayback();
-  if (typeof state.player.playVideo === "function") state.player.playVideo();
+  if (isPlaying()) state.player.pauseVideo?.();
+  else state.player.playVideo?.();
+  updateTransportButtons();
 }
 
 export function pausePlayback() {
   if (!playerReady()) return;
   stopSegmentPlayback();
-  if (typeof state.player.pauseVideo === "function") state.player.pauseVideo();
+  state.player.pauseVideo?.();
+}
+
+// 유튜브 플레이어 상태: 1=재생 중, 3=버퍼링(곧 재생).
+function isPlaying() {
+  try {
+    const value = state.player?.getPlayerState?.();
+    return value === 1 || value === 3;
+  } catch {
+    return false;
+  }
 }
 
 function playerReady() {
@@ -289,13 +302,20 @@ export function stopSegmentPlayback() {
   updateTransportButtons();
 }
 
-// 구간 재생 중임을 버튼에서 알 수 있게 한다.
+// 버튼이 지금 무엇을 하는 버튼인지 보여준다.
 export function updateTransportButtons() {
-  if (!el.playSegmentButton) return;
-  const playing = Boolean(state.segmentTimer);
-  el.playSegmentButton.classList.toggle("active", playing);
-  el.playSegmentButton.innerHTML = playing
-    ? '<span aria-hidden="true">■</span> 구간'
-    : '<span aria-hidden="true">▶</span> 구간';
-  el.playSegmentButton.title = playing ? "구간 재생 멈추기" : "선택한 구간만 재생 (IN에서 OUT까지)";
+  if (el.playSegmentButton) {
+    const inSegment = Boolean(state.segmentTimer);
+    el.playSegmentButton.classList.toggle("active", inSegment);
+    el.playSegmentButton.textContent = inSegment ? "구간 정지" : "구간 재생";
+    el.playSegmentButton.title = inSegment
+      ? "구간 재생 멈추기"
+      : "선택한 구간만 재생 (IN에서 OUT까지)";
+  }
+
+  if (el.playPauseButton) {
+    const playing = isPlaying();
+    el.playPauseButton.textContent = playing ? "❚❚" : "▶";
+    el.playPauseButton.title = playing ? "일시정지" : "재생";
+  }
 }

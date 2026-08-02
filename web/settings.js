@@ -7,6 +7,7 @@ export function saveSettings() {
     "yt-download-settings",
     JSON.stringify({
       cookieBrowser: el.cookieBrowser.value,
+      useBrowserCookies: el.useBrowserCookies.checked,
       cookiesFile: el.cookiesFile.value,
       outputDir: el.outputDir.value,
       ytDlpPath: el.ytDlpPath.value,
@@ -32,6 +33,7 @@ export function restoreSettings() {
   try {
     const settings = JSON.parse(localStorage.getItem("yt-download-settings") || "{}");
     if (settings.cookieBrowser) el.cookieBrowser.value = settings.cookieBrowser;
+    el.useBrowserCookies.checked = Boolean(settings.useBrowserCookies);
     if (settings.cookiesFile) el.cookiesFile.value = settings.cookiesFile;
     if (settings.outputDir) el.outputDir.value = settings.outputDir;
     if (settings.ytDlpPath) el.ytDlpPath.value = settings.ytDlpPath;

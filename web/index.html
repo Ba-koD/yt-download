@@ -97,6 +97,10 @@
                 <button id="applyLoginButton" class="primary">2. 로그인 적용</button>
                 <button id="closeBrowserButton" class="secondary danger">브라우저 종료</button>
               </div>
+              <label class="check-field">
+                <input id="useBrowserCookies" type="checkbox" />
+                <span>브라우저 쿠키를 직접 읽기<em>앱 로그인 대신 씁니다. 그 브라우저를 완전히 종료해야 동작합니다</em></span>
+              </label>
               <div class="field">
                 <label for="cookiesFile">쿠키 파일</label>
                 <input id="cookiesFile" type="text" placeholder="cookies.txt 경로" />
@@ -192,11 +196,8 @@
               <div class="control-cluster">
                 <span class="cluster-label">재생</span>
                 <div class="button-set">
-                  <button id="playSegmentButton" class="icon-button" title="선택한 구간만 재생 (IN에서 OUT까지)">
-                    <span aria-hidden="true">▶</span> 구간
-                  </button>
-                  <button id="playButton" class="icon-button" title="현재 위치에서 이어 재생">▶</button>
-                  <button id="pauseButton" class="icon-button" title="일시정지">❚❚</button>
+                  <button id="playSegmentButton" class="icon-button" title="선택한 구간만 재생 (IN에서 OUT까지)">구간 재생</button>
+                  <button id="playPauseButton" class="icon-button" title="재생">▶</button>
                 </div>
               </div>
 

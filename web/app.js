@@ -3,7 +3,12 @@
 import { cancelCurrentJob, openConsoleWindow, resetJobUi, startDownload } from "./jobs.js";
 import { bindLibraryFilters, loadLibrary, renderLibrary } from "./library.js";
 import { applyAppLogin, closeSelectedBrowser, openAppLoginBrowser, refreshHealth } from "./login.js";
-import { markFromPlayer, pausePlayback, playFromHere, playSelectedSegment, syncPlayheadFromPlayer } from "./player.js";
+import {
+  markFromPlayer,
+  playSelectedSegment,
+  syncPlayheadFromPlayer,
+  togglePlayPause,
+} from "./player.js";
 import { restoreSettings, saveSettings } from "./settings.js";
 import { el, state } from "./state.js";
 import { bindTimeline, fitViewToSelection, nudgeTime, resetView, setRangeValues, updateFromText, zoomBy } from "./timeline.js";
@@ -35,8 +40,7 @@ export function bindEvents() {
   el.startInput.addEventListener("change", () => updateFromText("start"));
   el.endInput.addEventListener("change", () => updateFromText("end"));
   el.playSegmentButton.addEventListener("click", playSelectedSegment);
-  el.playButton.addEventListener("click", playFromHere);
-  el.pauseButton.addEventListener("click", pausePlayback);
+  el.playPauseButton.addEventListener("click", togglePlayPause);
   el.markStartButton.addEventListener("click", () => markFromPlayer("start"));
   el.markEndButton.addEventListener("click", () => markFromPlayer("end"));
   el.nudgeStartBack.addEventListener("click", () => nudgeTime("start", -1));

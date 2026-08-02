@@ -9,9 +9,9 @@ import { loadMetadata } from "./video.js";
 const TAB_LABELS = { videos: "동영상", shorts: "Shorts", lives: "라이브" };
 
 export async function loadLibrary() {
-  const browser = el.cookieBrowser.value;
-  if ((!browser || browser === "none") && !el.cookiesFile.value.trim()) {
-    setMessage("내 영상을 보려면 로그인 브라우저 또는 쿠키 파일을 먼저 선택하세요.", true);
+  // 내 채널을 알아내려면 쿠키 파일이 필요하고, 그건 "로그인 적용"이 만들어 준다.
+  if (!el.cookiesFile.value.trim() && !el.useBrowserCookies?.checked) {
+    setMessage("먼저 로그인·도구 칸에서 '로그인 적용'을 눌러 로그인해 주세요.", true);
     return;
   }
 

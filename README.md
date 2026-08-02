@@ -191,18 +191,29 @@ macOS / Linux 는 `./scripts/release.sh minor` (바로 밀려면 `--push`).
 
 권장 흐름:
 
-1. 로그인 브라우저에서 Chrome, Edge, Brave, Vivaldi, Whale 중 하나를 선택합니다.
-2. `앱 로그인 열기`를 눌러 앱 전용 브라우저 프로필을 엽니다.
-3. 열린 브라우저에서 YouTube 로그인을 완료합니다.
-4. 앱으로 돌아와 `로그인 적용`을 누릅니다.
+1. 브라우저에서 Chrome, Edge, Brave, Vivaldi, Whale 중 하나를 선택합니다.
+2. `로그인 적용`을 누릅니다. 앱 전용 프로필로 브라우저가 열립니다.
+3. 열린 창에서 YouTube 로그인을 마칩니다.
+4. 앱으로 돌아와 `로그인 적용`을 다시 누릅니다.
 
-이 방식은 기존에 사용 중인 Chrome/Edge를 닫지 않아도 됩니다. 앱이 전용 프로필의 쿠키를 `cookies.txt`로 저장하고, 이후 `yt-dlp --cookies`로 사용합니다.
+한 번 로그인해두면 프로필이 남아 있어서, 다음부터는 `로그인 적용` 한 번이면 됩니다.
+쓰던 Chrome을 닫을 필요가 없습니다. 앱이 전용 프로필의 쿠키를 `cookies.txt`로 저장하고
+이후 `yt-dlp --cookies`로 씁니다.
 
-기존 브라우저 쿠키를 직접 쓰고 싶으면 쿠키 파일을 비워두고 로그인 브라우저만 선택하면 `yt-dlp --cookies-from-browser`를 사용합니다. Chromium 계열 브라우저가 쿠키 DB를 잠그고 있으면 실패할 수 있습니다.
+### 왜 "브라우저에서 쿠키 읽기"는 자주 실패하나
 
-지원 브라우저는 `yt-dlp` 기준으로 Chrome, Edge, Firefox, Brave, Vivaldi, Whale, Safari 등입니다. Safari 쿠키는 macOS에서만 의미가 있습니다.
+쿠키 파일을 비워두고 브라우저만 고르면 `yt-dlp --cookies-from-browser`를 씁니다.
+이 방식은 **그 브라우저가 완전히 꺼져 있어야만** 동작합니다.
 
-일부 Chromium 계열 브라우저는 쿠키 DB가 잠겨 있으면 실패할 수 있으므로, 비공개 영상 다운로드가 실패하면 해당 브라우저를 닫은 뒤 다시 시도하세요.
+크로미움 계열은 실행 중에 쿠키 DB(`User Data/Default/Network/Cookies`)를 **배타적으로 잠급니다.**
+공유 플래그를 줘서 읽기 전용으로 열어도 거부당하므로, 켜져 있는 동안에는 우회할 방법이 없습니다.
+그래서 `Could not copy Chrome cookie database` 오류가 납니다.
+
+앱 로그인 방식은 파일을 건드리지 않고 DevTools로 **살아 있는 브라우저에서** 쿠키를 받아오기 때문에
+이 잠금과 무관하고, 요즘 크롬이 쓰는 App-Bound 암호화의 영향도 받지 않습니다.
+
+지원 브라우저는 `yt-dlp` 기준으로 Chrome, Edge, Firefox, Brave, Vivaldi, Whale, Safari 등입니다.
+Firefox는 실행 중에도 쿠키를 읽을 수 있습니다. Safari 쿠키는 macOS에서만 의미가 있습니다.
 
 ## 라이브 다운로드 방식
 

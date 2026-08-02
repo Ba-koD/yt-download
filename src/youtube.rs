@@ -373,11 +373,16 @@ pub(crate) fn yt_dlp_error(prefix: &str, stderr: &str) -> anyhow::Error {
         stderr.trim()
     };
 
+    // 크로미움 계열은 실행 중일 때 쿠키 DB를 배타적으로 잠근다.
+    // 공유 플래그를 줘도 열리지 않으므로, 브라우저를 켜둔 채로는 이 방법이 아예 불가능하다.
+    // 대신 앱 로그인 창은 DevTools로 살아 있는 브라우저에서 쿠키를 받아오므로 잠금과 무관하다.
     if detail.contains("Could not copy Chrome cookie database") || detail.contains("issues/7271") {
         return anyhow!(
-            "{prefix}: Chrome/Edge/Brave가 쿠키 DB를 잠가서 로그인 쿠키를 읽지 못했습니다. \
-앱의 '브라우저 종료' 버튼으로 선택 브라우저를 완전히 종료한 뒤 다시 시도하거나, Firefox를 로그인 브라우저로 사용하세요. \
-이미 Netscape 형식 cookies.txt가 있으면 쿠키 파일 경로에 넣으면 브라우저 쿠키 읽기를 건너뜁니다. 원문: {detail}"
+            "{prefix}: 브라우저가 실행 중이면 쿠키를 읽을 수 없습니다. \
+브라우저가 쿠키 파일을 잠가버려서, 켜져 있는 동안에는 어떤 방법으로도 열리지 않습니다.\n\n\
+→ '앱 로그인 열기'로 로그인한 뒤 '로그인 적용'을 누르세요. \
+이 방법은 브라우저를 켜둔 채로도 되고, 한 번 해두면 계속 쓸 수 있습니다.\n\n\
+'브라우저에서 쿠키 읽기'를 굳이 쓰려면 그 브라우저를 창 하나 없이 완전히 종료해야 합니다."
         );
     }
 

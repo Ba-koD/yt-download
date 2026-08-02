@@ -75,8 +75,13 @@
                 <h3 class="group-title">로그인 · 도구</h3>
                 <span class="hint">비공개·멤버 전용 영상을 받을 때만 필요합니다</span>
               </summary>
+              <p class="login-note">
+                <b>앱 로그인</b>을 쓰세요. 브라우저를 켜둔 채로 됩니다.<br />
+                브라우저에서 직접 쿠키를 읽는 방식은 그 브라우저를 <b>완전히 종료</b>해야만 동작합니다
+                (실행 중에는 브라우저가 쿠키 파일을 잠급니다).
+              </p>
               <div class="field">
-                <label for="cookieBrowser">로그인 브라우저</label>
+                <label for="cookieBrowser">브라우저</label>
                 <select id="cookieBrowser">
                   <option value="none">사용 안 함</option>
                   <option value="chrome">Chrome</option>
@@ -88,9 +93,9 @@
                 </select>
               </div>
               <div class="button-row">
-                <button id="openLoginButton" class="secondary">앱 로그인 열기</button>
-                <button id="applyLoginButton" class="secondary">로그인 적용</button>
-                <button id="closeBrowserButton" class="secondary danger">잠긴 브라우저 종료</button>
+                <button id="openLoginButton" class="secondary">1. 앱 로그인 열기</button>
+                <button id="applyLoginButton" class="primary">2. 로그인 적용</button>
+                <button id="closeBrowserButton" class="secondary danger">브라우저 종료</button>
               </div>
               <div class="field">
                 <label for="cookiesFile">쿠키 파일</label>

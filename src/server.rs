@@ -335,13 +335,22 @@ pub(crate) async fn export_login(
     Json(req): Json<ExportLoginRequest>,
 ) -> Result<Json<ExportLoginResponse>, AppError> {
     let browser = selected_browser(req.cookies_browser.as_deref())?;
-    let session = state
-        .login_sessions
-        .lock()
-        .await
-        .get(&browser)
-        .cloned()
-        .ok_or_else(|| anyhow!("앱 로그인 브라우저를 먼저 여세요"))?;
+
+    // 창을 아직 안 열었으면 여기서 연다. 이미 떠 있으면 그 창에 다시 붙으므로,
+    // 앱을 껐다 켠 뒤에도 "로그인 적용"만 눌러서 쿠키를 새로 받을 수 있다.
+    let existing = state.login_sessions.lock().await.get(&browser).cloned();
+    let session = match existing {
+        Some(session) => session,
+        None => {
+            let session = start_app_login_browser(&browser).await?;
+            state
+                .login_sessions
+                .lock()
+                .await
+                .insert(browser.clone(), session.clone());
+            session
+        }
+    };
 
     let result = export_login_cookies(&session).await?;
 

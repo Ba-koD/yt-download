@@ -162,3 +162,46 @@ Deno.test("재생할 수 없는 영상은 이유를 그대로 알려준다", () 
     "로그인 필요",
   );
 });
+
+// --- 요청 통로 ---
+import { decodeBase64, withFallback } from "../src/net.js";
+
+Deno.test("base64 로 온 바이트를 원래대로 되돌린다", () => {
+  const original = new Uint8Array([0, 1, 127, 128, 255, 66, 0, 9]);
+  const encoded = btoa(String.fromCharCode(...original));
+  assertEquals([...decodeBase64(encoded)], [...original]);
+});
+
+Deno.test("페이지 요청이 막히면 예비 통로로 넘어가고 그 뒤로는 계속 예비를 쓴다", async () => {
+  let primaryCalls = 0;
+  let secondaryCalls = 0;
+  const fetcher = withFallback(
+    async () => {
+      primaryCalls += 1;
+      throw new Error("Failed to fetch");
+    },
+    async () => {
+      secondaryCalls += 1;
+      return new Uint8Array([1, 2, 3]);
+    },
+  );
+
+  assertEquals([...(await fetcher("u"))], [1, 2, 3]);
+  assertEquals([...(await fetcher("u"))], [1, 2, 3]);
+  // 한 번 막히면 다시 시도하지 않는다.
+  assertEquals(primaryCalls, 1);
+  assertEquals(secondaryCalls, 2);
+});
+
+Deno.test("페이지 요청이 되면 예비 통로는 쓰지 않는다", async () => {
+  let secondaryCalls = 0;
+  const fetcher = withFallback(
+    async () => new Uint8Array([7]),
+    async () => {
+      secondaryCalls += 1;
+      return new Uint8Array();
+    },
+  );
+  assertEquals([...(await fetcher("u"))], [7]);
+  assertEquals(secondaryCalls, 0);
+});

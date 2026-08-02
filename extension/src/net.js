@@ -81,3 +81,45 @@ export function pageTransport(target = window, timeoutMs = 120_000) {
     bytes: async (url, headers) => new Uint8Array((await ask({ url, headers })).buffer),
   };
 }
+
+/**
+ * 예비 통로. 배경 일꾼이 대신 받아 base64 로 돌려준다.
+ *
+ * 페이지 쪽이 CORS 로 막혔을 때만 쓴다. 바이트를 문자로 바꿔 넘기느라 느리지만,
+ * 배경 일꾼은 host_permissions 덕분에 리다이렉트를 타도 막히지 않는다.
+ */
+export function workerBytes(runtime) {
+  return (url, headers) =>
+    new Promise((resolve, reject) => {
+      runtime.sendMessage({ type: "bytes", url, headers }, (reply) => {
+        const failure = runtime.lastError;
+        if (failure) return reject(new Error(failure.message));
+        if (!reply?.ok) return reject(new Error(reply?.error || "요청 실패"));
+        resolve(decodeBase64(reply.base64));
+      });
+    });
+}
+
+export function decodeBase64(text) {
+  const binary = atob(text);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/** 먼저 빠른 쪽으로 받아보고, 막히면 예비 통로로 다시 받는다. */
+export function withFallback(primary, secondary) {
+  let usePrimary = true;
+  return async (url, headers) => {
+    if (usePrimary) {
+      try {
+        return await primary(url, headers);
+      } catch (error) {
+        // 한 번 막히면 그 뒤로도 막힐 가능성이 크므로 아예 예비 통로로 옮겨 탄다.
+        usePrimary = false;
+        console.warn("[yt-download] 페이지 요청이 막혀 예비 통로로 넘어갑니다:", error.message);
+      }
+    }
+    return secondary(url, headers);
+  };
+}

@@ -56,9 +56,15 @@ InnerTube(ANDROID_VR 클라이언트)에 물어보기 → 포맷별 직접 주�
 googlevideo 는 가끔 다른 호스트로 넘깁니다(`cms_redirect`). 그런데 **넘어간 쪽 응답에는
 `Access-Control-Allow-Origin` 이 없어서** 브라우저가 막아버립니다. 간헐적이라 더 헷갈립니다.
 
-그래서 `src/rules.json` 으로 googlevideo 응답에 그 헤더를 붙입니다
-(`declarativeNetRequest` 의 `modifyHeaders`). 이 규칙이 없으면 어떤 영상은 되고
-어떤 영상은 `failed to fetch` 로 끝납니다.
+그래서 두 겹으로 막습니다.
+
+1. `src/rules.json` 으로 googlevideo 응답에 그 헤더를 붙입니다
+   (`declarativeNetRequest` 의 `modifyHeaders`).
+   **주의**: 이 규칙이 먹으려면 요청 대상(`*.googlevideo.com`)뿐 아니라
+   **요청을 시작한 쪽(`www.youtube.com`)에도 host 권한**이 있어야 합니다.
+   하나라도 빠지면 규칙이 조용히 무시됩니다.
+2. 그래도 막히면 배경 일꾼이 대신 받아옵니다. `sendMessage` 는 JSON 직렬화라
+   바이트를 base64 로 바꿔 넘깁니다. 느리지만 리다이렉트를 타도 막히지 않습니다.
 
 웹 클라이언트로 물어보면 유튜브가 주소를 주지 않습니다(SABR 로 넘어갔습니다).
 `ANDROID_VR` 클라이언트는 아직 주소를 그대로 주고, 속도 제한용 `n` 파라미터도 붙지 않아

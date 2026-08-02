@@ -14,7 +14,13 @@
   // youtube.com 은 여기가 동일 출처라 그대로 부른다.
   const direct = net.directTransport();
   const viaPage = net.pageTransport();
-  net.useTransport({ json: direct.json, text: direct.text, bytes: viaPage.bytes });
+  net.useTransport({
+    json: direct.json,
+    text: direct.text,
+    // googlevideo 가 다른 호스트로 넘기면 페이지 쪽이 CORS 로 막힐 때가 있다.
+    // 그때는 배경 일꾼이 대신 받아온다(느리지만 확실하다).
+    bytes: net.withFallback(viaPage.bytes, net.workerBytes(chrome.runtime)),
+  });
 
   const state = {
     videoId: null,

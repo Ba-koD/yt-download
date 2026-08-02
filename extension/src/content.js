@@ -51,6 +51,8 @@
     progress: null,
     // 받는 중에 멈추거나 그만두게 해주는 손잡이.
     control: null,
+    // 끝점을 "끝까지"로 둔 상태. 라이브면 방송이 진행되는 만큼 따라간다.
+    toEnd: false,
   };
 
   // 패널이 열려 있는 동안만 페이지에게 재생 상태를 받아온다.
@@ -102,7 +104,12 @@
     if (!state.videoId) return;
     try {
       const all = readSaved();
-      all[state.videoId] = { start: state.start, end: state.end, at: Date.now() };
+      all[state.videoId] = {
+        start: state.start,
+        end: state.end,
+        toEnd: state.toEnd,
+        at: Date.now(),
+      };
       // 오래된 것부터 버려서 저장 공간이 넘치지 않게 한다.
       const keys = Object.keys(all).sort((a, b) => (all[b].at || 0) - (all[a].at || 0));
       const trimmed = {};
@@ -307,6 +314,11 @@
 
     for (const [which, input] of Object.entries(el.inputs)) {
       input.addEventListener("change", () => {
+        // 끝칸을 비우면 "끝까지"라는 뜻으로 받는다.
+        if (which === "end" && !input.value.trim()) {
+          setRange(state.start, bounds().end);
+          return;
+        }
         const value = parseClock(input.value);
         if (value === null) {
           render();
@@ -374,6 +386,7 @@
     if (edge.end <= edge.start) return false;
     state.start = edge.start;
     state.end = edge.end;
+    state.toEnd = true;
     render();
     return true;
   }
@@ -385,6 +398,8 @@
     state.start = Math.max(low, Math.min(start, high));
     state.end = Math.max(low, Math.min(end, high));
     if (state.end < state.start) [state.start, state.end] = [state.end, state.start];
+    // 끝에 붙여뒀으면 "끝까지"로 본다. 라이브면 방송이 나아가는 만큼 함께 간다.
+    state.toEnd = high > low && state.end >= high - 0.5;
     state.touched = true;
     render();
     clearTimeout(state.saveTimer);
@@ -394,7 +409,9 @@
   function render() {
     if (!el.panel) return;
     el.inputs.start.value = showClock(state.start);
-    el.inputs.end.value = showClock(state.end);
+    // 끝까지 받는 중이면 시각 대신 그렇다고 적는다. 라이브는 끝이 계속 밀리니까.
+    el.inputs.end.value = state.toEnd ? "" : showClock(state.end);
+    el.inputs.end.placeholder = state.toEnd ? "끝까지" : "";
     const length = Math.max(0, state.end - state.start);
     el.length.textContent = showClock(length);
     el.go.disabled = state.busy || !state.formats || length < 0.5;
@@ -454,7 +471,8 @@
       const saved = savedRange(videoId);
       if (saved) {
         state.touched = true;
-        setRange(saved.start, saved.end);
+        // 끝까지로 저장돼 있었다면 지금 기준의 끝으로 되살린다(라이브는 그새 늘어난다).
+        setRange(saved.start, saved.toEnd ? bounds().end : saved.end);
         setStatus("지난번에 골라둔 구간을 불러왔습니다");
       } else {
         selectWhole();
@@ -564,6 +582,14 @@
     mount();
     // 영상 길이는 늦게 정해진다(특히 라이브). 손대기 전이라면 전 구간을 따라간다.
     if (state.open && !state.touched) selectWhole();
+    // "끝까지"로 둔 상태면 라이브가 나아가는 만큼 끝점도 함께 민다.
+    else if (state.open && state.toEnd) {
+      const edge = bounds();
+      if (edge.end > state.end + 0.5) {
+        state.end = edge.end;
+        render();
+      }
+    }
     const id = currentVideoId();
     if (id && id !== lastId) {
       lastId = id;

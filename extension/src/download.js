@@ -244,8 +244,13 @@ export function buildMp4(video, audio, section) {
   );
 
   // 두 트랙 모두 같은 지점을 0으로 삼아야 서로 어긋나지 않는다.
+  //
+  // 소리가 영상보다 늦게 시작할 수도 있다(조각 경계가 서로 다르니까).
+  // 그때 소리를 0초에 붙여버리면 그 차이만큼 소리가 앞서 간다. 늦은 만큼 뒤로 민다.
   const videoBase = video.segments.length ? firstDecodeTime(video.segments[0].bytes) : 0;
   const audioBase = audioPieces.length ? firstDecodeTime(audioPieces[0].bytes) : 0;
+  const audioLate = Math.max(0, (audioPieces[0]?.time ?? mediaStart) - mediaStart);
+  const audioOrigin = audioBase - audioLate * audioTimescale;
 
   const timeline = [
     ...video.segments.map((segment) => ({
@@ -256,7 +261,7 @@ export function buildMp4(video, audio, section) {
     ...audioPieces.map((piece) => ({
       time: piece.time,
       kind: 1,
-      bytes: rebaseDecodeTimes(retagFragments(piece.bytes, audioTrackId), audioBase),
+      bytes: rebaseDecodeTimes(retagFragments(piece.bytes, audioTrackId), audioOrigin),
     })),
   ].sort((a, b) => a.time - b.time || a.kind - b.kind);
 
@@ -313,9 +318,12 @@ export async function downloadSection({ videoFormat, audioFormat, start, end, on
 
   if (live) {
     onProgress?.(0, 1, "조각 받는 중");
+    // 소리는 영상이 시작하는 지점부터 받아야 한다. 조각 길이가 서로 달라서
+    // 같은 시각을 달라고 하면 소리가 영상보다 늦게 시작하는 일이 생긴다.
+    const videoHead = Math.floor(start / videoFormat.segmentSeconds) * videoFormat.segmentSeconds;
     [video, audio] = await Promise.all([
       fetchLiveSegments(videoFormat, start, end, report("video"), control),
-      fetchLiveSegments(audioFormat, start, end, report("audio"), control),
+      fetchLiveSegments(audioFormat, videoHead, end, report("audio"), control),
     ]);
   } else {
     onProgress?.(0, 1, "색인 읽는 중");
@@ -323,9 +331,12 @@ export async function downloadSection({ videoFormat, audioFormat, start, end, on
       fetchIndex(videoFormat),
       fetchIndex(audioFormat),
     ]);
+    // 영상은 조각 경계에서만 시작할 수 있다. 소리도 그 지점부터 받아야
+    // 두 트랙이 같은 곳에서 시작한다. 그러지 않으면 소리가 늦게 시작해 앞서 간다.
+    const videoHead = segmentsForRange(videoIndex.segments, start, end)[0]?.time ?? start;
     const [videoParts, audioParts] = await Promise.all([
       fetchSegments(videoFormat, videoIndex, start, end, report("video"), control),
-      fetchSegments(audioFormat, audioIndex, start, end, report("audio"), control),
+      fetchSegments(audioFormat, audioIndex, videoHead, end, report("audio"), control),
     ]);
     video = { init: videoIndex.init, ...videoParts };
     audio = { init: audioIndex.init, ...audioParts };

@@ -41,3 +41,6 @@ jobs:
         with:
           deno-version: v2.x
       - run: deno run --allow-read web/timeline-check.js
+
+      - name: Extension tests
+        run: deno test --allow-read extension/test/

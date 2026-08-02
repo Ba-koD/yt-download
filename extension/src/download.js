@@ -8,7 +8,9 @@ import { mergeRanges, parseSidx, segmentsForRange } from "./mp4index.js";
 import {
   combineInit,
   concat,
+  dropLeadingSamples,
   firstDecodeTime,
+  mediaTimescaleOf,
   patchDurations,
   rebaseDecodeTimes,
   retagFragments,
@@ -97,26 +99,42 @@ export async function fetchSegments(format, index, start, end, onProgress) {
  * 같은 시각이면 영상을 먼저 둔다(재생기가 화면부터 준비하도록).
  */
 export function buildMp4(video, audio, section) {
-  // 조각은 통째로만 받을 수 있어서 요청한 구간보다 앞뒤로 조금 넓다.
-  // 편집 목록으로 "여기부터 이만큼만 보여줘"라고 적어 정확히 맞춘다.
-  const edits = section
-    ? {
-        video: {
-          skip: Math.max(0, section.start - (video.segments[0]?.time ?? 0)),
-          seconds: section.end - section.start,
-        },
-        audio: {
-          skip: Math.max(0, section.start - (audio.segments[0]?.time ?? 0)),
-          seconds: section.end - section.start,
-        },
-      }
-    : null;
+  // 영상과 소리는 조각 길이가 달라서(영상 5초, 소리 10초 같은 식) 구간을 잡으면
+  // 두 트랙이 서로 다른 지점에서 시작한다. 영상은 키프레임에서만 자를 수 있으므로
+  // 영상 조각의 시작을 기준으로 삼고, 소리 쪽 앞부분을 그만큼 실제로 버린다.
+  // 이렇게 해두면 편집 목록을 무시하는 재생기에서도 소리가 어긋나지 않는다.
+  const mediaStart = video.segments[0]?.time ?? 0;
+  const audioStart = audio.segments[0]?.time ?? 0;
+  const audioLead = Math.max(0, mediaStart - audioStart);
 
-  const { init, audioTrackId } = combineInit(video.init, audio.init, edits);
+  const audioTimescale = mediaTimescaleOf(audio.init);
+  const audioPieces = [];
+  let toDrop = audioLead;
+  for (const segment of audio.segments) {
+    if (toDrop <= 0) {
+      audioPieces.push({ time: segment.time, bytes: segment.bytes });
+      continue;
+    }
+    const trimmed = dropLeadingSamples(segment.bytes, toDrop, audioTimescale);
+    toDrop -= segment.duration || 0;
+    // 통째로 버려야 하는 조각이면 건너뛴다.
+    if (trimmed) audioPieces.push({ time: Math.max(segment.time, mediaStart), bytes: trimmed });
+  }
 
-  // 각 트랙의 첫 조각이 들고 있는 시각만큼 전체를 앞으로 당겨 0에서 시작하게 한다.
+  const { init, audioTrackId } = combineInit(
+    video.init,
+    audio.init,
+    section
+      ? {
+          video: { skip: Math.max(0, section.start - mediaStart), seconds: section.end - section.start },
+          audio: { skip: Math.max(0, section.start - mediaStart), seconds: section.end - section.start },
+        }
+      : null,
+  );
+
+  // 두 트랙 모두 같은 지점을 0으로 삼아야 서로 어긋나지 않는다.
   const videoBase = video.segments.length ? firstDecodeTime(video.segments[0].bytes) : 0;
-  const audioBase = audio.segments.length ? firstDecodeTime(audio.segments[0].bytes) : 0;
+  const audioBase = audioPieces.length ? firstDecodeTime(audioPieces[0].bytes) : 0;
 
   const timeline = [
     ...video.segments.map((segment) => ({
@@ -124,10 +142,10 @@ export function buildMp4(video, audio, section) {
       kind: 0,
       bytes: rebaseDecodeTimes(segment.bytes, videoBase),
     })),
-    ...audio.segments.map((segment) => ({
-      time: segment.time,
+    ...audioPieces.map((piece) => ({
+      time: piece.time,
       kind: 1,
-      bytes: rebaseDecodeTimes(retagFragments(segment.bytes, audioTrackId), audioBase),
+      bytes: rebaseDecodeTimes(retagFragments(piece.bytes, audioTrackId), audioBase),
     })),
   ].sort((a, b) => a.time - b.time || a.kind - b.kind);
 

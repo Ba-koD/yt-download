@@ -88,7 +88,15 @@ export function readFormats(playerResponse) {
     durationSeconds: Number(playerResponse?.videoDetails?.lengthSeconds || 0),
     title: playerResponse?.videoDetails?.title || "",
     isLive: Boolean(playerResponse?.videoDetails?.isLiveContent),
+    // 라이브·지난 라이브는 조각(`&sq=N`) 방식이라 mp4 에 색인이 없다.
+    // 왜 못 받는지 구분해서 알려주려고 따로 표시해 둔다.
+    liveWithoutIndex: all.length > 0 && usable.length === 0 && all.some(isSegmentedLive),
   };
+}
+
+/// 색인 대신 조각 목록으로 오는 포맷인지. 라이브가 여기에 해당한다.
+function isSegmentedLive(format) {
+  return Boolean(format.url) && !format.indexRange;
 }
 
 function isMp4(format) {

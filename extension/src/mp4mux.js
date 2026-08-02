@@ -232,6 +232,14 @@ function setTkhdDuration(bytes, tkhd, seconds, timescale) {
   else writeU32At(bytes, at, value);
 }
 
+/** 앞머리(init)에 담긴 트랙의 시간 단위. 조각의 tfdt 와 샘플 길이가 이 단위를 쓴다. */
+export function mediaTimescaleOf(init) {
+  const moov = findPath(init, ["moov"]);
+  if (!moov) return 0;
+  const trak = findPath(init, ["trak"], moov.start + HEADER, moov.end);
+  return trak ? readMediaTimescale(init, trak) : 0;
+}
+
 export function readMediaTimescale(bytes, trakBox) {
   const mdhd = findPath(bytes, ["mdia", "mdhd"], trakBox.start + HEADER, trakBox.end);
   if (!mdhd) throw new Error("mdhd 를 찾지 못했습니다");
@@ -370,4 +378,140 @@ export function combineInit(videoInit, audioInit, edits) {
   );
 
   return { init: concat([boxBytes(videoInit, videoFtyp), moov]), audioTrackId };
+}
+
+/**
+ * 조각 앞부분의 샘플을 실제로 잘라낸다.
+ *
+ * 영상과 소리는 조각 길이가 달라서(영상 5초, 소리 10초 같은 식) 구간을 잡으면
+ * 두 트랙의 시작 시각이 서로 어긋난다. 편집 목록으로 가리려 해도 그걸 무시하는
+ * 재생기에서는 소리가 몇 초씩 앞서 나온다. 그래서 소리 쪽 앞 샘플을 아예 버려
+ * 두 트랙이 같은 지점에서 시작하게 만든다.
+ *
+ * 소리(AAC)는 샘플마다 독립이라 아무 데서나 잘라도 되지만, 영상은 키프레임에서만
+ * 자를 수 있어서 이 함수는 소리에만 쓴다.
+ *
+ * @param seconds  버릴 길이(초). 0 이하면 그대로 돌려준다.
+ * @returns 잘라낸 조각. 통째로 버려야 하면 `null`.
+ */
+export function dropLeadingSamples(fragment, seconds, timescale) {
+  if (!(seconds > 0)) return fragment;
+
+  const moof = listBoxes(fragment).find((box) => box.type === "moof");
+  const mdat = listBoxes(fragment).find((box) => box.type === "mdat");
+  if (!moof || !mdat) return fragment;
+
+  const traf = listBoxes(fragment, moof.start + HEADER, moof.end).find((b) => b.type === "traf");
+  if (!traf) return fragment;
+  const children = listBoxes(fragment, traf.start + HEADER, traf.end);
+  const tfhd = children.find((b) => b.type === "tfhd");
+  const tfdt = children.find((b) => b.type === "tfdt");
+  const trun = children.find((b) => b.type === "trun");
+  if (!tfhd || !trun) return fragment;
+
+  const sampleDuration = defaultSampleDuration(fragment, tfhd);
+  if (!sampleDuration) return fragment;
+
+  const sizes = readTrunSizes(fragment, trun);
+  if (!sizes) return fragment;
+
+  const drop = Math.min(sizes.length, Math.floor((seconds * timescale) / sampleDuration));
+  if (drop <= 0) return fragment;
+  if (drop >= sizes.length) return null;
+
+  const droppedBytes = sizes.slice(0, drop).reduce((sum, size) => sum + size, 0);
+  const keptSizes = sizes.slice(drop);
+
+  // trun 을 남은 샘플만으로 다시 쓴다. 크기 목록만 줄이면 되고 나머지 앞머리는 그대로다.
+  const newTrun = concat([
+    boxBytes(fragment, trun).subarray(0, HEADER + 4), // size+type+version/flags
+    u32be(keptSizes.length),
+    new Uint8Array(4), // data_offset 자리. 아래에서 다시 계산한다.
+    ...keptSizes.map(u32be),
+  ]);
+  writeU32At(newTrun, 0, newTrun.length);
+
+  const newTraf = rebuildBox(fragment, traf, (child) =>
+    child.type === "trun" ? newTrun : boxBytes(fragment, child),
+  );
+  const newMoof = rebuildBox(fragment, moof, (child) =>
+    child.type === "traf" ? newTraf : boxBytes(fragment, child),
+  );
+
+  // 샘플 데이터는 moof 바로 뒤(mdat 안)에서 시작한다.
+  const dataOffset = newMoof.length + HEADER;
+  const trunInNew = listBoxes(newMoof, HEADER, newMoof.length)
+    .filter((b) => b.type === "traf")
+    .flatMap((t) => listBoxes(newMoof, t.start + HEADER, t.end))
+    .find((b) => b.type === "trun");
+  writeU32At(newMoof, trunInNew.start + HEADER + 8, dataOffset);
+
+  const newMdat = concat([
+    u32be(mdat.end - mdat.start - droppedBytes),
+    ascii("mdat"),
+    fragment.subarray(mdat.start + HEADER + droppedBytes, mdat.end),
+  ]);
+
+  const result = concat([newMoof, newMdat]);
+  if (tfdt) shiftDecodeTime(result, drop * sampleDuration);
+  return result;
+}
+
+function u32be(value) {
+  return u32(value);
+}
+
+/** 상자의 자식들을 하나씩 바꿔 새로 만든다. */
+function rebuildBox(bytes, box, mapChild) {
+  const head = bytes.subarray(box.start, box.start + HEADER);
+  const children = listBoxes(bytes, box.start + HEADER, box.end).map(mapChild);
+  const out = concat([head, ...children]);
+  writeU32At(out, 0, out.length);
+  return out;
+}
+
+/** tfhd 의 default_sample_duration. 소리 조각은 이 값 하나로 모든 샘플 길이를 정한다. */
+function defaultSampleDuration(bytes, tfhd) {
+  const flags = readU32At(bytes, tfhd.start + HEADER) & 0xffffff;
+  let offset = tfhd.start + HEADER + 4 + 4; // version/flags + track_ID
+  if (flags & 0x000001) offset += 8; // base_data_offset
+  if (flags & 0x000002) offset += 4; // sample_description_index
+  if (!(flags & 0x000008)) return 0; // default_sample_duration 없음
+  return readU32At(bytes, offset);
+}
+
+/** trun 의 샘플 크기 목록. 크기 항목이 없으면 손대지 않는다. */
+function readTrunSizes(bytes, trun) {
+  const flags = readU32At(bytes, trun.start + HEADER) & 0xffffff;
+  if (!(flags & 0x000200)) return null; // sample-size 없음
+  // 이 함수는 "크기만 있는" 단순한 형태만 다룬다(유튜브 소리 조각이 그렇다).
+  if (flags & (0x000100 | 0x000400 | 0x000800)) return null;
+
+  const count = readU32At(bytes, trun.start + HEADER + 4);
+  let offset = trun.start + HEADER + 8;
+  if (flags & 0x000001) offset += 4; // data_offset
+  if (flags & 0x000004) offset += 4; // first_sample_flags
+
+  const sizes = [];
+  for (let i = 0; i < count; i += 1) {
+    sizes.push(readU32At(bytes, offset));
+    offset += 4;
+  }
+  return sizes;
+}
+
+/** 조각의 시작 시각을 뒤로 민다(앞을 잘라냈으면 그만큼 늦게 시작한다). */
+function shiftDecodeTime(bytes, delta) {
+  for (const moof of listBoxes(bytes)) {
+    if (moof.type !== "moof") continue;
+    for (const traf of listBoxes(bytes, moof.start + HEADER, moof.end)) {
+      if (traf.type !== "traf") continue;
+      const tfdt = listBoxes(bytes, traf.start + HEADER, traf.end).find((b) => b.type === "tfdt");
+      if (!tfdt) continue;
+      const version = bytes[tfdt.start + HEADER];
+      const at = tfdt.start + HEADER + 4;
+      if (version === 1) writeU64At(bytes, at, readU64At(bytes, at) + delta);
+      else writeU32At(bytes, at, readU32At(bytes, at) + delta);
+    }
+  }
 }

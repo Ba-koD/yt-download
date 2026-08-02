@@ -86,7 +86,14 @@ $versionLine = New-Object Text.RegularExpressions.Regex '(?m)^version = "[^"]+"\
 if (-not $versionLine.IsMatch($manifest)) { throw "Cargo.toml 에서 version 줄을 찾지 못했습니다." }
 Write-Utf8 $manifestPath $versionLine.Replace($manifest, "version = `"$next`"", 1)
 
-# 3) CHANGELOG — Unreleased 아래에 새 칸을 만들고 비교 링크를 옮긴다.
+# 3) 확장 매니페스트도 같은 버전을 달아야 한다.
+$extensionPath = Join-Path $root "extension\manifest.json"
+$extension = [IO.File]::ReadAllText($extensionPath)
+$extensionVersion = New-Object Text.RegularExpressions.Regex '"version"\s*:\s*"[^"]+"'
+if (-not $extensionVersion.IsMatch($extension)) { throw "extension/manifest.json 에서 version 을 찾지 못했습니다." }
+Write-Utf8 $extensionPath $extensionVersion.Replace($extension, """version"": ""$next""", 1)
+
+# 4) CHANGELOG — Unreleased 아래에 새 칸을 만들고 비교 링크를 옮긴다.
 $changelogPath = Join-Path $root "CHANGELOG.md"
 $changelog = [IO.File]::ReadAllText($changelogPath)
 $today = Get-Date -Format "yyyy-MM-dd"
@@ -105,14 +112,14 @@ $changelog = $linkPattern.Replace(
   1)
 Write-Utf8 $changelogPath $changelog
 
-# 4) Cargo.lock 에도 자기 버전이 적혀 있다.
+# 5) Cargo.lock 에도 자기 버전이 적혀 있다.
 $previous = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 & cargo update --workspace --offline 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Warning "Cargo.lock 갱신 실패 — cargo check 를 한 번 돌려주세요." }
 $ErrorActionPreference = $previous
 
-Invoke-Git @("add", "VERSION", "Cargo.toml", "Cargo.lock", "CHANGELOG.md") | Out-Null
+Invoke-Git @("add", "VERSION", "Cargo.toml", "Cargo.lock", "CHANGELOG.md", "extension/manifest.json") | Out-Null
 Invoke-Git @("commit", "-m", "release: $tag") | Out-Null
 Invoke-Git @("tag", "-a", $tag, "-m", "yt-download $tag") | Out-Null
 

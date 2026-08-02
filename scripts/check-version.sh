@@ -17,6 +17,13 @@ if [[ "$version" != "$manifest" ]]; then
   exit 1
 fi
 
+# 확장도 같은 버전을 달고 나가야 한다.
+extension="$(sed -n 's|^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*|\1|p' extension/manifest.json | head -1)"
+if [[ "$version" != "$extension" ]]; then
+  echo "VERSION($version) 과 extension/manifest.json($extension) 의 버전이 다릅니다." >&2
+  exit 1
+fi
+
 if ! grep -q "^## \[$version\]" CHANGELOG.md; then
   echo "CHANGELOG.md 에 ## [$version] 항목이 없습니다." >&2
   exit 1

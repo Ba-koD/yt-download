@@ -52,7 +52,13 @@ awk -v v="$next" '
   { print }
 ' Cargo.toml > Cargo.toml.tmp && mv Cargo.toml.tmp Cargo.toml
 
-# 3) CHANGELOG — Unreleased 아래에 새 칸을 만들고 비교 링크를 옮긴다.
+# 3) 확장 매니페스트도 같은 버전을 달아야 한다.
+awk -v v="$next" '
+  !seen && /^[[:space:]]*"version"[[:space:]]*:/ { sub(/"version"[[:space:]]*:[[:space:]]*"[^"]*"/, "\"version\": \"" v "\""); seen = 1 }
+  { print }
+' extension/manifest.json > extension/manifest.json.tmp && mv extension/manifest.json.tmp extension/manifest.json
+
+# 4) CHANGELOG — Unreleased 아래에 새 칸을 만들고 비교 링크를 옮긴다.
 grep -q '^## \[Unreleased\]' CHANGELOG.md || { echo "CHANGELOG 에 ## [Unreleased] 가 없습니다." >&2; exit 1; }
 repo_url="$(sed -n 's|^\[Unreleased\]: \(.*\)/compare/v[0-9.]*\.\.\.HEAD$|\1|p' CHANGELOG.md | head -1)"
 [[ -n "$repo_url" ]] || { echo "CHANGELOG 의 [Unreleased] 링크를 찾지 못했습니다." >&2; exit 1; }
@@ -67,11 +73,11 @@ awk -v v="$next" -v d="$(date +%F)" -v tag="$tag" -v url="$repo_url" '
   { print }
 ' CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
 
-# 4) Cargo.lock 에도 자기 버전이 적혀 있다.
+# 5) Cargo.lock 에도 자기 버전이 적혀 있다.
 cargo update --workspace --offline >/dev/null 2>&1 ||
   echo "경고: Cargo.lock 갱신 실패 — cargo check 를 한 번 돌려주세요." >&2
 
-git add VERSION Cargo.toml Cargo.lock CHANGELOG.md
+git add VERSION Cargo.toml Cargo.lock CHANGELOG.md extension/manifest.json
 git commit -m "release: $tag" >/dev/null
 git tag -a "$tag" -m "yt-download $tag"
 

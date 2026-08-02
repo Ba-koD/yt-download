@@ -33,8 +33,14 @@ InnerTube(ANDROID_VR 클라이언트)에 물어보기 → 포맷별 직접 주�
 영상·소리 트랙을 mp4 하나로 엮기 (재인코딩 없음)
 ```
 
-실제 요청은 배경 일꾼이 대신 합니다. content script 에서 곧바로 googlevideo 를 부르면
-교차 출처로 막히기 때문입니다(같은 출처인 InnerTube 는 되는데 미디어만 실패하는 증상).
+요청은 종류에 따라 통로가 다릅니다.
+
+| 대상 | 어디서 | 왜 |
+|---|---|---|
+| youtube.com (InnerTube) | content script | 동일 출처. 배경 일꾼으로 보내면 `Origin: chrome-extension://…` 이 붙어 403 |
+| googlevideo (미디어) | 배경 일꾼 | content script 에서 부르면 교차 출처로 막힘 |
+
+한쪽으로 몰면 반드시 한쪽이 깨집니다.
 
 웹 클라이언트로 물어보면 유튜브가 주소를 주지 않습니다(SABR 로 넘어갔습니다).
 `ANDROID_VR` 클라이언트는 아직 주소를 그대로 주고, 속도 제한용 `n` 파라미터도 붙지 않아

@@ -9,9 +9,12 @@
   const [{ downloadSection, getFormats, safeFileName, clockLabel }, { formatLabel }, net] =
     await Promise.all([load("download.js"), load("innertube.js"), load("net.js")]);
 
-  // 여기(content script)에서 곧바로 googlevideo 를 부르면 교차 출처로 막힌다.
-  // 실제 요청은 배경 일꾼이 대신 하도록 통로를 갈아끼운다.
-  net.useTransport(net.backgroundTransport(chrome.runtime));
+  // 요청 종류에 따라 통로가 다르다.
+  // - youtube.com(InnerTube): 여기서 직접. 배경 일꾼으로 보내면 Origin 이 붙어 403 이 난다.
+  // - googlevideo(미디어): 배경 일꾼으로. 여기서 직접 부르면 교차 출처로 막힌다.
+  const direct = net.directTransport();
+  const viaWorker = net.backgroundTransport(chrome.runtime);
+  net.useTransport({ json: direct.json, text: direct.text, bytes: viaWorker.bytes });
 
   const state = {
     videoId: null,

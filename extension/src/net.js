@@ -3,7 +3,9 @@
 // content script 가 직접 googlevideo 를 부르면 교차 출처로 막히기 때문이다.
 // 이렇게 갈아끼울 수 있게 해두면 브라우저 밖(테스트)에서도 같은 코드를 돌릴 수 있다.
 
-let transport = {
+/** 페이지에서 그대로 부르는 통로. youtube.com 은 동일 출처라 이걸 써야 한다. */
+export function directTransport() {
+  return {
   async json(url, init) {
     const response = await fetch(url, { credentials: "omit", ...init });
     if (!response.ok) throw new Error(`요청 실패 (HTTP ${response.status})`);
@@ -19,7 +21,10 @@ let transport = {
     if (!response.ok) throw new Error(`조각을 받지 못했습니다 (HTTP ${response.status})`);
     return new Uint8Array(await response.arrayBuffer());
   },
-};
+  };
+}
+
+let transport = directTransport();
 
 export function useTransport(next) {
   transport = next;
@@ -31,7 +36,13 @@ export const request = {
   bytes: (url, headers) => transport.bytes(url, headers),
 };
 
-/** 확장 안에서 쓰는 통로. 실제 요청은 배경 일꾼이 대신 한다. */
+/**
+ * 배경 일꾼을 거치는 통로.
+ *
+ * 미디어(googlevideo)는 content script 에서 곧바로 부르면 교차 출처로 막히므로 이쪽을 써야 한다.
+ * 반대로 youtube.com 은 이쪽으로 보내면 안 된다. 배경 일꾼의 요청에는
+ * `Origin: chrome-extension://…` 이 붙는데, InnerTube 는 그런 요청을 403 으로 거절한다.
+ */
 export function backgroundTransport(runtime) {
   const ask = (message) =>
     new Promise((resolve, reject) => {

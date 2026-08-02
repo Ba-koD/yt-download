@@ -153,7 +153,13 @@
             </div>
 
             <div class="transport-row">
-              <button id="playSegmentButton" class="icon-button" title="선택 구간 재생">▶</button>
+              <div class="button-set">
+                <button id="playSegmentButton" class="icon-button" title="선택한 구간만 재생 (IN에서 OUT까지)">
+                  <span aria-hidden="true">▶</span> 구간
+                </button>
+                <button id="playButton" class="icon-button" title="현재 위치에서 이어 재생">▶</button>
+                <button id="pauseButton" class="icon-button" title="일시정지">❚❚</button>
+              </div>
               <div class="button-set">
                 <button id="markStartButton" class="secondary">현재 위치 IN</button>
                 <button id="markEndButton" class="secondary">현재 위치 OUT</button>

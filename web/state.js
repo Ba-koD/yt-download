@@ -52,6 +52,8 @@ export const el = {
   segmentSummary: document.querySelector("#segmentSummary"),
   liveFromStart: document.querySelector("#liveFromStart"),
   playSegmentButton: document.querySelector("#playSegmentButton"),
+  playButton: document.querySelector("#playButton"),
+  pauseButton: document.querySelector("#pauseButton"),
   markStartButton: document.querySelector("#markStartButton"),
   markEndButton: document.querySelector("#markEndButton"),
   nudgeStartBack: document.querySelector("#nudgeStartBack"),

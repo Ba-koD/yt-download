@@ -229,12 +229,16 @@ export function markFromPlayer(which) {
   ensureVisible(current);
 }
 
+// 구간 재생: IN으로 옮겨 재생하다가 OUT에서 스스로 멈춘다.
+// 재생 중에 다시 누르면 멈춘다(버튼이 정지로 바뀐다).
 export function playSelectedSegment() {
-  if (!state.player || typeof state.player.seekTo !== "function") {
-    setMessage("미리보기를 먼저 불러오세요.", true);
+  if (!playerReady()) return;
+  if (state.segmentTimer) {
+    stopSegmentPlayback();
+    pausePlayback();
     return;
   }
-  stopSegmentPlayback();
+
   const start = state.range.start;
   const end = state.range.end;
   seekPlayerToUiTime(start);
@@ -253,6 +257,28 @@ export function playSelectedSegment() {
       stopSegmentPlayback();
     }
   }, 250);
+  updateTransportButtons();
+}
+
+// 일반 재생: 지금 위치에서 그냥 이어 재생한다. OUT에서 멈추지 않는다.
+export function playFromHere() {
+  if (!playerReady()) return;
+  stopSegmentPlayback();
+  if (typeof state.player.playVideo === "function") state.player.playVideo();
+}
+
+export function pausePlayback() {
+  if (!playerReady()) return;
+  stopSegmentPlayback();
+  if (typeof state.player.pauseVideo === "function") state.player.pauseVideo();
+}
+
+function playerReady() {
+  if (!state.player || typeof state.player.seekTo !== "function") {
+    setMessage("미리보기를 먼저 불러오세요.", true);
+    return false;
+  }
+  return true;
 }
 
 export function stopSegmentPlayback() {
@@ -260,4 +286,16 @@ export function stopSegmentPlayback() {
     clearInterval(state.segmentTimer);
     state.segmentTimer = null;
   }
+  updateTransportButtons();
+}
+
+// 구간 재생 중임을 버튼에서 알 수 있게 한다.
+export function updateTransportButtons() {
+  if (!el.playSegmentButton) return;
+  const playing = Boolean(state.segmentTimer);
+  el.playSegmentButton.classList.toggle("active", playing);
+  el.playSegmentButton.innerHTML = playing
+    ? '<span aria-hidden="true">■</span> 구간'
+    : '<span aria-hidden="true">▶</span> 구간';
+  el.playSegmentButton.title = playing ? "구간 재생 멈추기" : "선택한 구간만 재생 (IN에서 OUT까지)";
 }

@@ -65,9 +65,12 @@
   브라우저를 닫는 것 말고는 방법이 없으므로, 켜둔 채로 되는 앱 로그인을 먼저 안내한다.
 - 확장이 미디어를 받을 때 `failed to fetch` 로 끝나던 문제. content script 에서 하는
   교차 출처 요청이 막힌다. 미디어 요청만 배경 일꾼이 대신 하도록 옮겼다.
-- 그 뒤에 `HTTP 403` 이 나던 문제. 배경 일꾼의 요청에는 `Origin: chrome-extension://…` 이
-  붙는데 InnerTube 가 그런 요청을 거절한다. youtube.com 호출은 content script 에서
-  그대로 하고, googlevideo 만 배경 일꾼을 거치도록 나눴다.
+- 그 뒤에 `HTTP 403` 과 `sidx 박스를 찾지 못했습니다` 가 이어지던 문제.
+  배경 일꾼의 요청에는 `Origin: chrome-extension://…` 이 붙어 InnerTube 가 거절하고,
+  `chrome.runtime.sendMessage` 는 JSON 직렬화라 받은 바이트가 통째로 사라진다.
+  미디어는 페이지(MAIN) 쪽 작은 다리가 대신 받아오고 `postMessage` 로 넘긴다.
+  배경 일꾼과 host_permissions 는 없앴다(권한 없는 확장으로 되돌아왔다).
+- 고른 구간을 영상별로 기억한다. 다시 열면 지난번 구간이 되살아난다.
 - 확장 패널에 타임라인을 넣었다. 손잡이를 끌면 유튜브 영상이 그 지점으로 따라가서
   화면 자체가 미리보기가 된다. 시작·끝 찍기는 `[` `]` 버튼과 `I` `O` 단축키로 바꿨다.
 - 확장이 유튜브에서 아무것도 못 그리던 문제. 유튜브가 Trusted Types 를 강제해서

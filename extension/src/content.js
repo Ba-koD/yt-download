@@ -9,12 +9,12 @@
   const [{ downloadSection, getFormats, safeFileName, clockLabel }, { formatLabel }, net] =
     await Promise.all([load("download.js"), load("innertube.js"), load("net.js")]);
 
-  // 요청 종류에 따라 통로가 다르다.
-  // - youtube.com(InnerTube): 여기서 직접. 배경 일꾼으로 보내면 Origin 이 붙어 403 이 난다.
-  // - googlevideo(미디어): 배경 일꾼으로. 여기서 직접 부르면 교차 출처로 막힌다.
+  // 미디어는 페이지 쪽에서 받아온다. 여기서 곧바로 부르면 교차 출처로 막히고,
+  // 배경 일꾼으로 보내면 Origin 이 붙어 InnerTube 가 403 을 준다.
+  // youtube.com 은 여기가 동일 출처라 그대로 부른다.
   const direct = net.directTransport();
-  const viaWorker = net.backgroundTransport(chrome.runtime);
-  net.useTransport({ json: direct.json, text: direct.text, bytes: viaWorker.bytes });
+  const viaPage = net.pageTransport();
+  net.useTransport({ json: direct.json, text: direct.text, bytes: viaPage.bytes });
 
   const state = {
     videoId: null,
@@ -24,6 +24,7 @@
     busy: false,
     open: false,
     drag: null,
+    saveTimer: null,
   };
 
   const el = {};
@@ -39,6 +40,39 @@
     }
     node.append(...children);
     return node;
+  }
+
+  // 골라둔 구간을 영상별로 기억한다. 실수로 창을 닫거나 다른 영상에 갔다 와도 그대로 남는다.
+  const SAVED_KEY = "ytdl-sections";
+  const SAVED_LIMIT = 200;
+
+  function readSaved() {
+    try {
+      return JSON.parse(localStorage.getItem(SAVED_KEY) || "{}");
+    } catch {
+      return {};
+    }
+  }
+
+  function saveRange() {
+    if (!state.videoId) return;
+    try {
+      const all = readSaved();
+      all[state.videoId] = { start: state.start, end: state.end, at: Date.now() };
+      // 오래된 것부터 버려서 저장 공간이 넘치지 않게 한다.
+      const keys = Object.keys(all).sort((a, b) => (all[b].at || 0) - (all[a].at || 0));
+      const trimmed = {};
+      for (const key of keys.slice(0, SAVED_LIMIT)) trimmed[key] = all[key];
+      localStorage.setItem(SAVED_KEY, JSON.stringify(trimmed));
+    } catch {
+      // 저장 공간이 막혀 있어도 기능 자체는 계속 쓸 수 있어야 한다.
+    }
+  }
+
+  function savedRange(videoId) {
+    const saved = readSaved()[videoId];
+    if (!saved || !Number.isFinite(saved.start) || !Number.isFinite(saved.end)) return null;
+    return saved.end > saved.start ? saved : null;
   }
 
   function currentVideoId() {
@@ -255,6 +289,8 @@
     state.end = Math.max(0, Math.min(end, limit));
     if (state.end < state.start) [state.start, state.end] = [state.end, state.start];
     render();
+    clearTimeout(state.saveTimer);
+    state.saveTimer = setTimeout(saveRange, 400);
   }
 
   function render() {
@@ -309,8 +345,15 @@
           make("option", { value: String(format.itag), text: formatLabel(format) }),
         ),
       );
-      setRange(0, player()?.duration || formats.durationSeconds || 0);
-      setStatus("");
+      const saved = savedRange(videoId);
+      const whole = player()?.duration || formats.durationSeconds || 0;
+      if (saved) {
+        setRange(saved.start, saved.end);
+        setStatus("지난번에 골라둔 구간을 불러왔습니다");
+      } else {
+        setRange(0, whole);
+        setStatus("");
+      }
     } catch (error) {
       setStatus(error.message, "ytdl-bad");
       el.quality.replaceChildren(make("option", { text: "없음" }));

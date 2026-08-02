@@ -10,6 +10,17 @@
         "https://www.youtube.com/live/*"
       ],
       "js": [
+        "src/page-fetch.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://www.youtube.com/watch*",
+        "https://www.youtube.com/live/*"
+      ],
+      "js": [
         "src/content.js"
       ],
       "css": [
@@ -27,13 +38,5 @@
         "https://www.youtube.com/*"
       ]
     }
-  ],
-  "host_permissions": [
-    "https://www.youtube.com/*",
-    "https://*.googlevideo.com/*"
-  ],
-  "background": {
-    "service_worker": "src/background.js",
-    "type": "module"
-  }
+  ]
 }

@@ -37,28 +37,47 @@ export const request = {
 };
 
 /**
- * 배경 일꾼을 거치는 통로.
+ * 페이지(MAIN) 쪽에 요청을 대신 시키는 통로.
  *
- * 미디어(googlevideo)는 content script 에서 곧바로 부르면 교차 출처로 막히므로 이쪽을 써야 한다.
- * 반대로 youtube.com 은 이쪽으로 보내면 안 된다. 배경 일꾼의 요청에는
- * `Origin: chrome-extension://…` 이 붙는데, InnerTube 는 그런 요청을 403 으로 거절한다.
+ * content script 에서 곧바로 googlevideo 를 부르면 교차 출처로 막히고,
+ * 배경 일꾼으로 보내면 Origin 이 붙어 InnerTube 가 403 을 준다.
+ * 페이지 안에서 부르면 유튜브 자신이 부르는 것과 같아 둘 다 통과한다.
  */
-export function backgroundTransport(runtime) {
-  const ask = (message) =>
+export function pageTransport(target = window, timeoutMs = 120_000) {
+  let nextId = 1;
+  const waiting = new Map();
+
+  target.addEventListener("message", (event) => {
+    if (event.source !== target) return;
+    const message = event.data;
+    if (message?.ytdl !== "response") return;
+    const entry = waiting.get(message.id);
+    if (!entry) return;
+    waiting.delete(message.id);
+    if (message.ok) entry.resolve(message);
+    else entry.reject(new Error(message.error || `요청 실패 (HTTP ${message.status})`));
+  });
+
+  const ask = (payload) =>
     new Promise((resolve, reject) => {
-      runtime.sendMessage(message, (reply) => {
-        const failure = runtime.lastError;
-        if (failure) reject(new Error(failure.message));
-        else if (!reply?.ok) reject(new Error(reply?.error || "요청 실패"));
-        else resolve(reply);
-      });
+      const id = nextId++;
+      waiting.set(id, { resolve, reject });
+      target.postMessage({ ytdl: "request", id, ...payload }, "*");
+      setTimeout(() => {
+        if (waiting.delete(id)) reject(new Error("페이지가 응답하지 않습니다"));
+      }, timeoutMs);
     });
+
+  const decode = (buffer) => new TextDecoder().decode(new Uint8Array(buffer));
 
   return {
     json: async (url, init = {}) =>
-      (await ask({ type: "json", url, method: init.method, headers: init.headers, body: init.body }))
-        .json,
-    text: async (url) => (await ask({ type: "text", url })).text,
-    bytes: async (url, headers) => new Uint8Array((await ask({ type: "bytes", url, headers })).buffer),
+      JSON.parse(
+        decode(
+          (await ask({ url, method: init.method, headers: init.headers, body: init.body })).buffer,
+        ),
+      ),
+    text: async (url) => decode((await ask({ url })).buffer),
+    bytes: async (url, headers) => new Uint8Array((await ask({ url, headers })).buffer),
   };
 }

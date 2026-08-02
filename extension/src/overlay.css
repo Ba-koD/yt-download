@@ -1,0 +1,182 @@
+/* 유튜브 위에 얹는 패널. 페이지 스타일과 섞이지 않도록 값을 모두 직접 적는다. */
+
+.ytdl-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483000;
+  width: 320px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  color: #0f0f0f;
+  font: 13px/1.4 "Roboto", "Noto Sans KR", system-ui, sans-serif;
+}
+
+.ytdl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.ytdl-title {
+  font-weight: 600;
+}
+
+.ytdl-fold {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ytdl-fold:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.ytdl-body {
+  padding: 12px;
+}
+
+.ytdl-hidden {
+  display: none;
+}
+
+.ytdl-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.ytdl-sep {
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.ytdl-time {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.ytdl-mark,
+.ytdl-go {
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 6px;
+  background: #f2f2f2;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ytdl-mark {
+  padding: 5px 8px;
+}
+
+.ytdl-mark:hover {
+  background: #e8e8e8;
+}
+
+.ytdl-length {
+  flex: 1;
+  color: rgba(0, 0, 0, 0.6);
+  font-variant-numeric: tabular-nums;
+}
+
+.ytdl-quality {
+  max-width: 150px;
+  padding: 5px 6px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+}
+
+.ytdl-go {
+  width: 100%;
+  height: 34px;
+  margin-top: 2px;
+  background: #0f7b6c;
+  border-color: #0f7b6c;
+  color: #fff;
+  font-weight: 600;
+}
+
+.ytdl-go:hover:not(:disabled) {
+  background: #0c6a5d;
+}
+
+.ytdl-go:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ytdl-status {
+  margin-top: 8px;
+  min-height: 18px;
+  color: rgba(0, 0, 0, 0.6);
+  font-size: 12px;
+}
+
+.ytdl-status.ytdl-ok {
+  color: #0f7b6c;
+}
+
+.ytdl-status.ytdl-bad {
+  color: #c5221f;
+}
+
+/* 유튜브 어두운 테마에 맞춘다. */
+html[dark] .ytdl-panel {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: #212121;
+  color: #f1f1f1;
+}
+
+html[dark] .ytdl-head {
+  border-bottom-color: rgba(255, 255, 255, 0.12);
+}
+
+html[dark] .ytdl-fold:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+html[dark] .ytdl-time,
+html[dark] .ytdl-quality {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: #121212;
+  color: #f1f1f1;
+}
+
+html[dark] .ytdl-mark {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: #383838;
+}
+
+html[dark] .ytdl-mark:hover {
+  background: #4a4a4a;
+}
+
+html[dark] .ytdl-sep,
+html[dark] .ytdl-length,
+html[dark] .ytdl-status {
+  color: rgba(255, 255, 255, 0.6);
+}

@@ -132,6 +132,18 @@ GitHub Actions 가 Windows·Linux·macOS(Intel/Apple Silicon) 빌드를 만듭�
 
 이 구성 요소가 없어 앱 창을 못 만들면, 앱이 종료되지 않고 **기본 브라우저로 화면을 열어** 그대로 쓸 수 있게 합니다.
 
+## 크롬 확장 (실험 중)
+
+앱을 켜지 않고 유튜브 페이지에서 바로 구간을 받는 확장이 `extension/` 에 있습니다.
+브라우저 안에서 전부 처리하며 앱과 아무것도 공유하지 않습니다.
+
+```
+chrome://extensions → 개발자 모드 → 압축해제된 확장 프로그램을 로드 → extension 폴더
+```
+
+지금은 mp4 화질(H.264 · AV1 4K)만 되고 라이브와 비공개 영상은 아직 안 됩니다.
+자세한 내용과 한계는 [`extension/README.md`](extension/README.md) 를 보세요.
+
 ## 릴리스
 
 버전 번호의 단일 출처는 **`VERSION`** 파일입니다.

@@ -1,0 +1,20 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "responseHeaders": [
+        {
+          "header": "access-control-allow-origin",
+          "operation": "set",
+          "value": "https://www.youtube.com"
+        }
+      ]
+    },
+    "condition": {
+      "urlFilter": "||googlevideo.com/videoplayback",
+      "resourceTypes": ["xmlhttprequest"]
+    }
+  }
+]

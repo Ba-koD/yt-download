@@ -51,6 +51,15 @@ InnerTube(ANDROID_VR 클라이언트)에 물어보기 → 포맷별 직접 주�
 페이지 안에서 부르면 유튜브 자신이 부르는 것과 같아 둘 다 통과하고,
 `postMessage` 는 구조화 복제라 바이트가 그대로 넘어옵니다.
 
+### 리다이렉트와 CORS
+
+googlevideo 는 가끔 다른 호스트로 넘깁니다(`cms_redirect`). 그런데 **넘어간 쪽 응답에는
+`Access-Control-Allow-Origin` 이 없어서** 브라우저가 막아버립니다. 간헐적이라 더 헷갈립니다.
+
+그래서 `src/rules.json` 으로 googlevideo 응답에 그 헤더를 붙입니다
+(`declarativeNetRequest` 의 `modifyHeaders`). 이 규칙이 없으면 어떤 영상은 되고
+어떤 영상은 `failed to fetch` 로 끝납니다.
+
 웹 클라이언트로 물어보면 유튜브가 주소를 주지 않습니다(SABR 로 넘어갔습니다).
 `ANDROID_VR` 클라이언트는 아직 주소를 그대로 주고, 속도 제한용 `n` 파라미터도 붙지 않아
 서명 해독이 필요 없습니다. **여기가 가장 먼저 깨질 곳입니다** —

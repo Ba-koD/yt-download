@@ -25,6 +25,8 @@
     open: false,
     drag: null,
     saveTimer: null,
+    // 사용자가 구간을 직접 정했는지. 그 전에는 길이를 알게 될 때마다 전 구간으로 맞춰준다.
+    touched: false,
   };
 
   const el = {};
@@ -85,10 +87,31 @@
     return document.querySelector(".html5-main-video") || document.querySelector("video");
   }
 
-  function playerDuration() {
-    const known = Number(player()?.duration);
-    if (Number.isFinite(known) && known > 0) return known;
-    return state.formats?.durationSeconds || 0;
+  /**
+   * 타임라인이 다룰 구간. 대개 0~길이지만 라이브는 다르다.
+   *
+   * 진행 중인 라이브는 `duration` 이 Infinity 라서 길이를 알 수 없다.
+   * 대신 되감기 가능한 구간(seekable)이 실제로 고를 수 있는 범위다.
+   */
+  function bounds() {
+    const video = player();
+    const known = Number(video?.duration);
+    if (Number.isFinite(known) && known > 0) return { start: 0, end: known };
+
+    if (video?.seekable?.length) {
+      const last = video.seekable.length - 1;
+      const start = video.seekable.start(0);
+      const end = video.seekable.end(last);
+      if (end > start) return { start, end };
+    }
+
+    const fallback = Number(state.formats?.durationSeconds) || 0;
+    return { start: 0, end: fallback };
+  }
+
+  function boundsSpan() {
+    const { start, end } = bounds();
+    return Math.max(0, end - start);
   }
 
   function parseClock(text) {
@@ -135,10 +158,13 @@
     const seconds = (event) => {
       const box = el.track.getBoundingClientRect();
       const ratio = (event.clientX - box.left) / Math.max(1, box.width);
-      return Math.max(0, Math.min(1, ratio)) * (playerDuration() || 0);
+      const { start, end } = bounds();
+      return start + Math.max(0, Math.min(1, ratio)) * Math.max(0, end - start);
     };
 
     const startDrag = (what) => (event) => {
+      // 길이를 아직 모르면 아무 데나 눌러도 0초로 튀어버린다. 그 전에는 받지 않는다.
+      if (boundsSpan() <= 0) return;
       event.preventDefault();
       el.track.setPointerCapture(event.pointerId);
       state.drag = what;
@@ -171,9 +197,11 @@
     return el.track;
   }
 
+  // 영상 위치는 사용자가 타임라인을 직접 끌 때만 옮긴다.
+  // 시간 칸을 고치거나 목록을 불러오는 것만으로 재생 위치가 바뀌면 성가시다.
   function seek(seconds) {
     const video = player();
-    if (video && Number.isFinite(seconds)) video.currentTime = seconds;
+    if (video && Number.isFinite(seconds) && boundsSpan() > 0) video.currentTime = seconds;
   }
 
   function buildPanel() {
@@ -235,7 +263,6 @@
           return;
         }
         setRange(which === "start" ? value : state.start, which === "end" ? value : state.end);
-        seek(value);
       });
     }
 
@@ -282,12 +309,24 @@
     if (state.open && !state.formats) await loadFormats();
   }
 
+  /** 아직 손대지 않았으면 전 구간을 고른 상태로 둔다. */
+  function selectWhole() {
+    const edge = bounds();
+    if (edge.end <= edge.start) return false;
+    state.start = edge.start;
+    state.end = edge.end;
+    render();
+    return true;
+  }
+
   function setRange(start, end) {
-    const duration = playerDuration();
-    const limit = duration > 0 ? duration : Math.max(start, end);
-    state.start = Math.max(0, Math.min(start, limit));
-    state.end = Math.max(0, Math.min(end, limit));
+    const edge = bounds();
+    const low = edge.end > edge.start ? edge.start : 0;
+    const high = edge.end > edge.start ? edge.end : Math.max(start, end);
+    state.start = Math.max(low, Math.min(start, high));
+    state.end = Math.max(low, Math.min(end, high));
     if (state.end < state.start) [state.start, state.end] = [state.end, state.start];
+    state.touched = true;
     render();
     clearTimeout(state.saveTimer);
     state.saveTimer = setTimeout(saveRange, 400);
@@ -304,15 +343,17 @@
   }
 
   function renderTimeline() {
-    const duration = playerDuration();
-    el.total.textContent = duration ? showClock(duration) : "";
-    if (!duration) return;
-    const percent = (seconds) => `${(Math.max(0, Math.min(seconds, duration)) / duration) * 100}%`;
+    const edge = bounds();
+    const span = edge.end - edge.start;
+    el.total.textContent = span > 0 ? showClock(span) : "";
+    if (span <= 0) return;
+    const percent = (seconds) =>
+      `${(Math.max(0, Math.min(seconds - edge.start, span)) / span) * 100}%`;
     el.range.style.left = percent(state.start);
-    el.range.style.width = `${((state.end - state.start) / duration) * 100}%`;
+    el.range.style.width = `${((state.end - state.start) / span) * 100}%`;
     el.inHandle.style.left = percent(state.start);
     el.outHandle.style.left = percent(state.end);
-    el.headMark.style.left = percent(player()?.currentTime || 0);
+    el.headMark.style.left = percent(player()?.currentTime || edge.start);
   }
 
   function setStatus(text, kind = "") {
@@ -346,12 +387,12 @@
         ),
       );
       const saved = savedRange(videoId);
-      const whole = player()?.duration || formats.durationSeconds || 0;
       if (saved) {
+        state.touched = true;
         setRange(saved.start, saved.end);
         setStatus("지난번에 골라둔 구간을 불러왔습니다");
       } else {
-        setRange(0, whole);
+        selectWhole();
         setStatus("");
       }
     } catch (error) {
@@ -435,11 +476,14 @@
   let lastId = currentVideoId();
   setInterval(() => {
     mount();
+    // 영상 길이는 늦게 정해진다(특히 라이브). 손대기 전이라면 전 구간을 따라간다.
+    if (state.open && !state.touched) selectWhole();
     const id = currentVideoId();
     if (id && id !== lastId) {
       lastId = id;
       state.formats = null;
       state.videoId = id;
+      state.touched = false;
       // 열려 있으면 새 영상 목록으로 갈아끼우고, 닫혀 있으면 열 때 받는다.
       if (state.open) loadFormats();
       else render();

@@ -38,5 +38,20 @@
         "https://www.youtube.com/*"
       ]
     }
-  ]
+  ],
+  "permissions": [
+    "declarativeNetRequestWithHostAccess"
+  ],
+  "host_permissions": [
+    "https://*.googlevideo.com/*"
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "cors",
+        "enabled": true,
+        "path": "src/rules.json"
+      }
+    ]
+  }
 }

@@ -6,23 +6,24 @@
 /** 페이지에서 그대로 부르는 통로. youtube.com 은 동일 출처라 이걸 써야 한다. */
 export function directTransport() {
   return {
-  async json(url, init) {
-    // youtube.com 은 같은 출처라 쿠키가 함께 나간다.
-    // 내 비공개 영상이나 멤버 전용 영상은 로그인 상태여야 주소를 준다.
-    const response = await fetch(url, { credentials: "same-origin", ...init });
-    if (!response.ok) throw new Error(`요청 실패 (HTTP ${response.status})`);
-    return response.json();
-  },
-  async text(url) {
-    const response = await fetch(url, { credentials: "same-origin" });
-    if (!response.ok) throw new Error(`요청 실패 (HTTP ${response.status})`);
-    return response.text();
-  },
-  async bytes(url, headers) {
-    const response = await fetch(url, { headers, credentials: "omit" });
-    if (!response.ok) throw new Error(`조각을 받지 못했습니다 (HTTP ${response.status})`);
-    return new Uint8Array(await response.arrayBuffer());
-  },
+    async json(url, init) {
+      // youtube.com 은 같은 출처라 쿠키가 함께 나간다.
+      // 내 비공개 영상이나 멤버 전용 영상은 로그인 상태여야 주소를 준다.
+      const response = await fetch(url, { credentials: "same-origin", ...init });
+      if (!response.ok) throw new Error(`요청 실패 (HTTP ${response.status})`);
+      return response.json();
+    },
+    async text(url) {
+      const response = await fetch(url, { credentials: "same-origin" });
+      if (!response.ok) throw new Error(`요청 실패 (HTTP ${response.status})`);
+      return response.text();
+    },
+    async bytes(url, headers) {
+      // 미디어(googlevideo)는 쿠키가 필요 없고, 붙이면 오히려 거절당할 수 있다.
+      const response = await fetch(url, { headers, credentials: "omit" });
+      if (!response.ok) throw new Error(`조각을 받지 못했습니다 (HTTP ${response.status})`);
+      return new Uint8Array(await response.arrayBuffer());
+    },
   };
 }
 

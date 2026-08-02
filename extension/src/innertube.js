@@ -197,8 +197,9 @@ export function formatLabel(format) {
   if (format.mimeType.startsWith("audio/")) {
     return `${Math.round((format.bitrate || 0) / 1000)}kbps ${shortCodec(format.codec)}`;
   }
-  const fps = format.fps && format.fps > 30 ? format.fps : "";
-  return `${format.qualityLabel || `${format.height}p`}${fps ? "" : ""} ${shortCodec(format.codec)}`;
+  // qualityLabel 은 "2160p60" 처럼 주사율까지 담고 있다. 그게 없을 때만 직접 붙인다.
+  const fallback = `${format.height}p${format.fps > 30 ? format.fps : ""}`;
+  return `${format.qualityLabel || fallback} ${shortCodec(format.codec)}`;
 }
 
 export function shortCodec(codec) {

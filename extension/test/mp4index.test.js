@@ -214,3 +214,9 @@ Deno.test("SAPISIDHASH 해시가 유튜브 방식과 같다", async () => {
     "34f704ae8aa2cceb8d411121f5dd513207cbe18c",
   );
 });
+
+Deno.test("화질 이름이 없으면 높이와 주사율로 짓는다", () => {
+  const base = { mimeType: "video/mp4", codec: "av01.0.12M.08" };
+  assertEquals(formatLabel({ ...base, height: 1080, fps: 60 }), "1080p60 AV1");
+  assertEquals(formatLabel({ ...base, height: 1080, fps: 30 }), "1080p AV1");
+});

@@ -34,10 +34,26 @@ pub(crate) struct ExportedCookies {
     pub(crate) cookie_count: usize,
     pub(crate) youtube_cookie_count: usize,
     pub(crate) auth_cookie_count: usize,
+    /// youtube.com 도메인에 실제로 붙은 세션 쿠키 수.
+    /// 구글에만 로그인하고 유튜브를 한 번도 열지 않으면 0이 되고, 그러면 내 영상 목록이 비어 있다.
+    pub(crate) youtube_session_cookie_count: usize,
 }
 
+/// 로그인 여부를 가르는 쿠키들. 이 중 하나라도 youtube.com 에 있어야 내 계정으로 인정된다.
+const SESSION_COOKIE_NAMES: &[&str] = &[
+    "SID",
+    "HSID",
+    "SSID",
+    "APISID",
+    "SAPISID",
+    "__Secure-1PSID",
+    "__Secure-3PSID",
+    "__Secure-1PAPISID",
+    "__Secure-3PAPISID",
+    "LOGIN_INFO",
+];
+
 pub(crate) async fn start_app_login_browser(browser: &str) -> Result<LoginSession> {
-    let port = available_local_port()?;
     let profile_dir = dirs::data_local_dir()
         .or_else(dirs::home_dir)
         .unwrap_or_else(std::env::temp_dir)
@@ -47,14 +63,46 @@ pub(crate) async fn start_app_login_browser(browser: &str) -> Result<LoginSessio
     fs::create_dir_all(&profile_dir)
         .with_context(|| format!("could not create login profile {}", profile_dir.display()))?;
 
+    // 이 프로필로 이미 창이 떠 있으면 새로 띄울 수 없다(프로필을 먼저 잡은 쪽이 소유한다).
+    // 그때 다시 실행하면 디버깅 포트가 열리지 않아 "제시간에 시작되지 않았습니다"로 끝난다.
+    // 그래서 지난번 포트를 적어두고, 아직 살아 있으면 그 창에 그대로 붙는다.
+    let port_file = profile_dir.join("yt-download-cdp-port");
+    if let Some(port) = fs::read_to_string(&port_file)
+        .ok()
+        .and_then(|text| text.trim().parse::<u16>().ok())
+    {
+        if cdp_is_alive(port).await {
+            return Ok(LoginSession {
+                browser: browser.to_string(),
+                port,
+                profile_dir,
+            });
+        }
+    }
+
+    let port = available_local_port()?;
     launch_chromium_login(browser, port, &profile_dir)?;
     wait_for_cdp(port).await?;
+    let _ = fs::write(&port_file, port.to_string());
 
     Ok(LoginSession {
         browser: browser.to_string(),
         port,
         profile_dir,
     })
+}
+
+pub(crate) async fn cdp_is_alive(port: u16) -> bool {
+    let url = format!("http://127.0.0.1:{port}/json/version");
+    match reqwest::Client::new()
+        .get(&url)
+        .timeout(Duration::from_millis(800))
+        .send()
+        .await
+    {
+        Ok(response) => response.status().is_success(),
+        Err(_) => false,
+    }
 }
 
 pub(crate) fn available_local_port() -> Result<u16> {
@@ -77,7 +125,10 @@ pub(crate) async fn wait_for_cdp(port: u16) -> Result<()> {
 }
 
 pub(crate) async fn export_login_cookies(session: &LoginSession) -> Result<ExportedCookies> {
-    let cookies = read_cdp_cookies(session.port).await?;
+    // 구글에 로그인해도 유튜브를 한 번 열기 전에는 youtube.com 에 세션 쿠키가 생기지 않는다.
+    // 그 상태로 내보내면 "적용 완료"라고 나오지만 내 영상 목록은 계속 비어 있다.
+    // 그래서 로그인 창을 유튜브로 한 번 보내고, 세션 쿠키가 생길 때까지 기다렸다가 읽는다.
+    let cookies = cookies_after_visiting_youtube(session.port).await?;
     if cookies.is_empty() {
         return Err(anyhow!(
             "쿠키를 찾지 못했습니다. 앱 로그인 브라우저에서 YouTube 로그인을 완료한 뒤 다시 누르세요"
@@ -94,24 +145,10 @@ pub(crate) async fn export_login_cookies(session: &LoginSession) -> Result<Expor
                 .unwrap_or(false)
         })
         .count();
-    let auth_cookie_count = cookies
+    let auth_cookie_count = cookies.iter().filter(|c| is_session_cookie(c)).count();
+    let youtube_session_cookie_count = cookies
         .iter()
-        .filter(|cookie| {
-            let name = cookie.get("name").and_then(Value::as_str).unwrap_or("");
-            matches!(
-                name,
-                "SID"
-                    | "HSID"
-                    | "SSID"
-                    | "APISID"
-                    | "SAPISID"
-                    | "__Secure-1PSID"
-                    | "__Secure-3PSID"
-                    | "__Secure-1PAPISID"
-                    | "__Secure-3PAPISID"
-                    | "LOGIN_INFO"
-            )
-        })
+        .filter(|cookie| is_session_cookie(cookie) && is_youtube_domain(cookie))
         .count();
 
     let path = dirs::data_local_dir()
@@ -132,16 +169,104 @@ pub(crate) async fn export_login_cookies(session: &LoginSession) -> Result<Expor
         cookie_count: cookies.len(),
         youtube_cookie_count,
         auth_cookie_count,
+        youtube_session_cookie_count,
     })
 }
 
-pub(crate) async fn read_cdp_cookies(port: u16) -> Result<Vec<Value>> {
-    let version_url = format!("http://127.0.0.1:{port}/json/version");
-    let version: Value = reqwest::get(&version_url).await?.json().await?;
-    let ws_url = version
+pub(crate) fn is_session_cookie(cookie: &Value) -> bool {
+    cookie
+        .get("name")
+        .and_then(Value::as_str)
+        .map(|name| SESSION_COOKIE_NAMES.contains(&name))
+        .unwrap_or(false)
+}
+
+pub(crate) fn is_youtube_domain(cookie: &Value) -> bool {
+    cookie
+        .get("domain")
+        .and_then(Value::as_str)
+        .map(|domain| {
+            let domain = domain.trim_start_matches('.');
+            domain == "youtube.com" || domain.ends_with(".youtube.com")
+        })
+        .unwrap_or(false)
+}
+
+/// 로그인 창에 유튜브 탭을 하나 띄우고, youtube.com 세션 쿠키가 생길 때까지 기다린다.
+///
+/// 로그인이 이미 끝나 있으면 몇 초면 붙는다. 끝까지 안 생기면 있는 그대로 돌려주고,
+/// 부족하다는 판단은 부르는 쪽에서 한다(사용자에게 무엇을 더 해야 하는지 알려주기 위해).
+pub(crate) async fn cookies_after_visiting_youtube(port: u16) -> Result<Vec<Value>> {
+    let before = read_cdp_cookies(port).await?;
+    if before
+        .iter()
+        .any(|c| is_session_cookie(c) && is_youtube_domain(c))
+    {
+        return Ok(before);
+    }
+
+    if let Err(err) = open_cdp_tab(port, "https://www.youtube.com/").await {
+        eprintln!("login: could not open a YouTube tab in the login browser: {err:#}");
+        return Ok(before);
+    }
+
+    for _ in 0..24 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let cookies = read_cdp_cookies(port).await?;
+        if cookies
+            .iter()
+            .any(|c| is_session_cookie(c) && is_youtube_domain(c))
+        {
+            return Ok(cookies);
+        }
+    }
+    read_cdp_cookies(port).await
+}
+
+pub(crate) async fn open_cdp_tab(port: u16, url: &str) -> Result<()> {
+    let ws_url = cdp_browser_socket(port).await?;
+    let (mut socket, _) = connect_async(ws_url)
+        .await
+        .context("could not connect to app login browser")?;
+    socket
+        .send(Message::Text(
+            json!({ "id": 1, "method": "Target.createTarget", "params": { "url": url } })
+                .to_string()
+                .into(),
+        ))
+        .await?;
+
+    while let Some(message) = socket.next().await {
+        let message = message?;
+        if !message.is_text() {
+            continue;
+        }
+        let value: Value = serde_json::from_str(message.to_text()?)?;
+        if value.get("id").and_then(Value::as_i64) != Some(1) {
+            continue;
+        }
+        if let Some(error) = value.get("error") {
+            return Err(anyhow!("could not open a tab: {error}"));
+        }
+        return Ok(());
+    }
+    Err(anyhow!("opening a tab returned no response"))
+}
+
+pub(crate) async fn cdp_browser_socket(port: u16) -> Result<String> {
+    let version: Value = reqwest::get(format!("http://127.0.0.1:{port}/json/version"))
+        .await?
+        .json()
+        .await?;
+    version
         .get("webSocketDebuggerUrl")
         .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("DevTools websocket URL을 찾지 못했습니다"))?;
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| anyhow!("DevTools websocket URL을 찾지 못했습니다"))
+}
+
+pub(crate) async fn read_cdp_cookies(port: u16) -> Result<Vec<Value>> {
+    let ws_url = cdp_browser_socket(port).await?;
 
     let (mut socket, _) = connect_async(ws_url)
         .await

@@ -66,7 +66,18 @@ export async function applyAppLogin() {
       setMessage("쿠키 파일은 저장됐지만 Google 인증 쿠키를 찾지 못했습니다. 열린 창에서 로그인을 다시 확인하세요.", true);
       return;
     }
-    setMessage(`로그인 적용 완료: 쿠키 ${result.cookie_count}개 저장, 인증 쿠키 ${result.auth_cookie_count}개`);
+    // 구글에만 로그인하고 유튜브를 한 번도 열지 않으면 youtube.com 쪽 세션 쿠키가 없다.
+    // 이 상태로는 내 영상 목록도, 비공개 영상도 불러오지 못한다.
+    if (!result.youtube_session_cookie_count) {
+      setMessage(
+        "Google 로그인은 확인됐지만 YouTube 세션 쿠키가 없습니다. 열린 창에서 youtube.com 에 접속해 내 계정으로 보이는지 확인한 뒤 다시 적용하세요.",
+        true,
+      );
+      return;
+    }
+    setMessage(
+      `로그인 적용 완료: 쿠키 ${result.cookie_count}개 저장, YouTube 세션 쿠키 ${result.youtube_session_cookie_count}개`,
+    );
   } catch (error) {
     setMessage(error.message, true);
   }

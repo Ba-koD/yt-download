@@ -25,6 +25,8 @@ pub(crate) struct LibraryItem {
     pub(crate) duration: Option<f64>,
     pub(crate) thumbnail: Option<String>,
     pub(crate) live_status: Option<String>,
+    /// 올린 시각(유닉스 초). 목록에서는 날짜까지만 정확한 근사값이다.
+    pub(crate) timestamp: Option<f64>,
 }
 
 pub(crate) async fn load_channel_library(
@@ -123,6 +125,8 @@ pub(crate) async fn load_library_playlist(
     ]);
     // 유튜브는 요즘 목록을 읽을 때도 자바스크립트 실행을 요구한다.
     add_js_runtime(&mut cmd);
+    // 목록에는 원래 날짜가 없다. 이 옵션을 켜야 대략의 올린 날짜가 함께 온다(속도 차이는 거의 없다).
+    cmd.args(["--extractor-args", "youtubetab:approximate_date"]);
     add_cookie_args(
         &mut cmd,
         browser,
@@ -448,6 +452,10 @@ pub(crate) fn library_item(value: &Value) -> Option<LibraryItem> {
         duration: value.get("duration").and_then(Value::as_f64),
         thumbnail: value_str(value, "thumbnail").or_else(|| thumbnail_from_array(value)),
         live_status: value_str(value, "live_status"),
+        timestamp: value
+            .get("timestamp")
+            .or_else(|| value.get("release_timestamp"))
+            .and_then(Value::as_f64),
     })
 }
 

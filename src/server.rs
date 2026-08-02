@@ -107,6 +107,14 @@ pub(crate) struct MetadataResponse {
     // 진행 중인 라이브에서 실제로 받을 수 있는 가장 최신 지점(초).
     // 유튜브가 조각을 내주기까지 몇 분 걸려서 "지금"보다 뒤처져 있다.
     pub(crate) live_edge: Option<f64>,
+    // 화면에 보여줄 기본 정보.
+    pub(crate) channel: Option<String>,
+    pub(crate) upload_timestamp: Option<f64>,
+    pub(crate) view_count: Option<f64>,
+    pub(crate) like_count: Option<f64>,
+    pub(crate) fps: Option<f64>,
+    /// public / unlisted / private / needs_auth 등. 비공개 영상인지 알려준다.
+    pub(crate) availability: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -528,6 +536,16 @@ pub(crate) async fn metadata(
         width: value.get("width").and_then(Value::as_f64),
         height: value.get("height").and_then(Value::as_f64),
         live_edge: live_edge_seconds(&value).await,
+        channel: value_str(&value, "channel").or_else(|| value_str(&value, "uploader")),
+        // 라이브는 release_timestamp 가 방송 시작이고, 일반 영상은 timestamp 가 업로드 시각이다.
+        upload_timestamp: value
+            .get("timestamp")
+            .or_else(|| value.get("release_timestamp"))
+            .and_then(Value::as_f64),
+        view_count: value.get("view_count").and_then(Value::as_f64),
+        like_count: value.get("like_count").and_then(Value::as_f64),
+        fps: value.get("fps").and_then(Value::as_f64),
+        availability: value_str(&value, "availability"),
         release_timestamp: value
             .get("release_timestamp")
             .or_else(|| value.get("timestamp"))

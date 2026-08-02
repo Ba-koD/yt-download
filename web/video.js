@@ -1,7 +1,14 @@
 // 영상 정보 불러오기와 화면 반영.
 
 import { api, baseRequest } from "./api.js";
-import { extractYouTubeId, formatClock, resolutionLabel } from "./format.js";
+import {
+  extractYouTubeId,
+  formatClock,
+  formatCount,
+  formatDate,
+  formatSince,
+  resolutionLabel,
+} from "./format.js";
 import { loadPlayer, resetLivePreviewState, stopSegmentPlayback } from "./player.js";
 import { saveSettings } from "./settings.js";
 import { el, state } from "./state.js";
@@ -62,21 +69,14 @@ export function renderMetadata(data) {
   resetLivePreviewState();
   el.videoTitle.textContent = data.title || "제목 없음";
 
-  const bits = [];
-  if (data.uploader) bits.push(data.uploader);
-  const status = liveStatusLabel(data.live_status);
-  if (status) bits.push(status);
-  if (data.duration) bits.push(formatClock(data.duration));
-  if (data.max_height) bits.push(`최대 ${resolutionLabel(data.max_height)}`);
-  el.videoMeta.textContent = bits.join(" · ") || "메타데이터 로드됨";
+  // 한 줄 요약은 "누가 · 언제" 정도만. 나머지는 아래 표로 내려 눈이 덜 피곤하게 한다.
+  const summary = [data.channel || data.uploader, formatSince(data.upload_timestamp)].filter(
+    Boolean,
+  );
+  el.videoMeta.textContent = summary.join(" · ") || "메타데이터 로드됨";
+  renderMetaFacts(data);
   applyPreviewRatio(data);
   updateQualityOptions(data);
-
-  if (data.thumbnail) {
-    el.thumbnail.src = data.thumbnail;
-  } else {
-    el.thumbnail.removeAttribute("src");
-  }
 
   const videoId = data.id || extractYouTubeId(el.urlInput.value);
   if (videoId) {
@@ -106,8 +106,47 @@ export function renderMetadata(data) {
   updateLiveHint();
 }
 
-// 세로 영상(Shorts)이나 4:3 영상도 검은 여백 없이 보이도록 미리보기 비율을 맞춘다.
+// 값이 있는 것만 알약 모양으로 늘어놓는다. 이름표 없이도 읽히는 것들이라 값만 적는다.
+function renderMetaFacts(data) {
+  const quality = [
+    data.max_height ? resolutionLabel(data.max_height) : "",
+    data.fps ? `${Math.round(data.fps)}fps` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const facts = [
+    formatDate(data.upload_timestamp),
+    data.duration ? formatClock(data.duration) : "",
+    quality,
+    data.view_count ? `조회 ${formatCount(data.view_count)}` : "",
+    data.like_count ? `좋아요 ${formatCount(data.like_count)}` : "",
+    availabilityLabel(data.availability),
+    liveStatusLabel(data.live_status),
+  ].filter(Boolean);
+
+  el.metaFacts.innerHTML = "";
+  for (const fact of facts) {
+    const chip = document.createElement("span");
+    chip.className = "meta-chip";
+    chip.textContent = fact;
+    el.metaFacts.append(chip);
+  }
+  el.metaFacts.hidden = facts.length === 0;
+}
+
 // yt-dlp가 주는 상태값을 그대로 보여주면 알아보기 어렵다.
+function availabilityLabel(availability) {
+  return {
+    public: "공개",
+    unlisted: "일부 공개",
+    private: "비공개",
+    premium_only: "멤버 전용",
+    subscriber_only: "구독자 전용",
+    needs_auth: "로그인 필요",
+  }[availability] || "";
+}
+
 function liveStatusLabel(status) {
   return {
     is_live: "라이브 중",
@@ -117,6 +156,7 @@ function liveStatusLabel(status) {
   }[status] || "";
 }
 
+// 세로 영상(Shorts)이나 4:3 영상도 검은 여백 없이 보이도록 미리보기 비율을 맞춘다.
 export function applyPreviewRatio(data) {
   const width = Number(data?.width || 0);
   const height = Number(data?.height || 0);

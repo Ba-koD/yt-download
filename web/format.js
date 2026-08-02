@@ -45,6 +45,47 @@ export function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+// 큰 수는 한국식 단위로 줄여 읽는다. 23294157 -> "2329만"
+export function formatCount(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return "";
+  if (number >= 100_000_000) return `${trimZero(number / 100_000_000)}억`;
+  if (number >= 10_000) return `${trimZero(number / 10_000)}만`;
+  if (number >= 1_000) return number.toLocaleString("ko-KR");
+  return String(Math.round(number));
+}
+
+function trimZero(value) {
+  const rounded = value >= 100 ? Math.round(value) : Math.round(value * 10) / 10;
+  return String(rounded);
+}
+
+/** 유닉스 초 -> "2026. 8. 2." */
+export function formatDate(timestamp) {
+  const date = toDate(timestamp);
+  if (!date) return "";
+  return date.toLocaleDateString("ko-KR", { year: "numeric", month: "long", day: "numeric" });
+}
+
+/** 유닉스 초 -> "3일 전" 처럼 지금으로부터 얼마나 됐는지. */
+export function formatSince(timestamp) {
+  const date = toDate(timestamp);
+  if (!date) return "";
+  const days = Math.floor((Date.now() - date.getTime()) / 86_400_000);
+  if (days < 0) return "예정";
+  if (days === 0) return "오늘";
+  if (days === 1) return "어제";
+  if (days < 30) return `${days}일 전`;
+  if (days < 365) return `${Math.floor(days / 30)}개월 전`;
+  return `${Math.floor(days / 365)}년 전`;
+}
+
+export function toDate(timestamp) {
+  const seconds = Number(timestamp);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return new Date(seconds * 1000);
+}
+
 export function extractYouTubeId(url) {
   try {
     const parsed = new URL(url);

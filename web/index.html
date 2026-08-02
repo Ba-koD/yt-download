@@ -112,6 +112,29 @@
                 <button class="library-tab" data-library-tab="shorts">Shorts</button>
                 <button class="library-tab" data-library-tab="lives">라이브</button>
               </div>
+              <div class="library-filters">
+                <input
+                  id="librarySearch"
+                  class="library-search"
+                  type="search"
+                  placeholder="제목으로 검색"
+                  aria-label="제목으로 검색"
+                />
+                <select id="libraryPeriod" class="library-period" aria-label="기간">
+                  <option value="all">전체 기간</option>
+                  <option value="7">최근 1주</option>
+                  <option value="30">최근 1개월</option>
+                  <option value="90">최근 3개월</option>
+                  <option value="365">최근 1년</option>
+                  <option value="custom">직접 지정</option>
+                </select>
+              </div>
+              <div id="libraryRange" class="library-range" hidden>
+                <input id="libraryFrom" type="date" aria-label="시작 날짜" />
+                <span class="library-range-sep">~</span>
+                <input id="libraryTo" type="date" aria-label="끝 날짜" />
+              </div>
+              <p id="libraryCount" class="library-count" hidden></p>
               <div id="libraryList" class="library-list">
                 <div class="library-empty">불러오기를 누르면 내 채널의 영상이 여기에 나옵니다</div>
               </div>
@@ -143,6 +166,12 @@
           <div class="preview-frame">
             <div id="player"></div>
             <div id="previewEmpty" class="preview-empty">주소를 넣고 불러오면 여기에 미리보기가 열립니다</div>
+          </div>
+
+          <div class="meta-row">
+            <h2 id="videoTitle">영상 정보 없음</h2>
+            <p id="videoMeta">주소를 입력하면 미리보기가 표시됩니다.</p>
+            <div id="metaFacts" class="meta-facts" hidden></div>
           </div>
 
           <div class="editor-panel">
@@ -231,13 +260,6 @@
             </div>
           </div>
 
-          <div class="meta-row">
-            <div>
-              <h2 id="videoTitle">영상 정보 없음</h2>
-              <p id="videoMeta">주소를 입력하면 미리보기가 표시됩니다.</p>
-            </div>
-            <img id="thumbnail" alt="" />
-          </div>
         </section>
       </section>
     </main>

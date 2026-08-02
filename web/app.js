@@ -1,7 +1,7 @@
 // 시작점: 이벤트를 연결하고 첫 화면을 준비한다.
 
 import { cancelCurrentJob, openConsoleWindow, resetJobUi, startDownload } from "./jobs.js";
-import { loadLibrary, renderLibrary } from "./library.js";
+import { bindLibraryFilters, loadLibrary, renderLibrary } from "./library.js";
 import { applyAppLogin, closeSelectedBrowser, openAppLoginBrowser, refreshHealth } from "./login.js";
 import { markFromPlayer, pausePlayback, playFromHere, playSelectedSegment, syncPlayheadFromPlayer } from "./player.js";
 import { restoreSettings, saveSettings } from "./settings.js";
@@ -47,6 +47,7 @@ export function bindEvents() {
   el.cancelButton.addEventListener("click", cancelCurrentJob);
   el.openConsoleButton.addEventListener("click", openConsoleWindow);
   el.loadLibraryButton.addEventListener("click", loadLibrary);
+  bindLibraryFilters();
   el.zoomInButton.addEventListener("click", () => zoomBy(0.55));
   el.zoomOutButton.addEventListener("click", () => zoomBy(1.8));
   el.fitSelectionButton.addEventListener("click", fitViewToSelection);

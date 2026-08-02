@@ -31,7 +31,9 @@ flate2 = "1.0"
 # 배포용 빌드는 크기와 속도를 함께 챙긴다.
 [profile.release]
 opt-level = 3
+# 얇은 LTO 는 값이 싸다. 반면 codegen-units = 1 은 빌드를 크게 늦추면서
+# 이 앱에는 거의 도움이 되지 않는다(무거운 일은 yt-dlp 와 ffmpeg 가 한다).
+# 깨끗한 상태에서 재본 값 — 65초/6.0MB(=1) 대 49초/6.5MB(기본값).
 lto = "thin"
-codegen-units = 1
 strip = true
 panic = "unwind"

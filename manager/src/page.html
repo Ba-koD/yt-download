@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>yt-download 확장 관리자</title>
+    <style>
+      :root {
+        --bg: #f6f7f6;
+        --card: #ffffff;
+        --ink: #1c211e;
+        --muted: #65716c;
+        --line: #dde2df;
+        --teal: #2f8f7a;
+        --teal-soft: #e6f2ee;
+        --accent: #d73333;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #161a18;
+          --card: #1e2321;
+          --ink: #e8ece9;
+          --muted: #9aa5a0;
+          --line: #2e3532;
+          --teal: #4bbfa3;
+          --teal-soft: #1c2b27;
+          --accent: #ff6b6b;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 22px;
+        background: var(--bg);
+        color: var(--ink);
+        font: 14px/1.6 "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
+      }
+      h1 {
+        margin: 0 0 4px;
+        font-size: 19px;
+      }
+      .sub {
+        margin: 0 0 18px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 16px;
+        margin-bottom: 14px;
+      }
+      .versions {
+        display: flex;
+        gap: 10px;
+      }
+      .version {
+        flex: 1;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px 12px;
+      }
+      .version dt {
+        margin: 0 0 2px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .version dd {
+        margin: 0;
+        font-size: 17px;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+      .note {
+        margin: 14px 0 0;
+        border-left: 3px solid var(--teal);
+        background: var(--teal-soft);
+        border-radius: 0 6px 6px 0;
+        padding: 9px 11px;
+        font-size: 13px;
+        min-height: 40px;
+      }
+      .note.bad {
+        border-left-color: var(--accent);
+        background: transparent;
+        color: var(--accent);
+      }
+      .path {
+        width: 100%;
+        margin-top: 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted);
+        padding: 7px 9px;
+        font-size: 12px;
+        font-family: ui-monospace, Consolas, monospace;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      button {
+        font: inherit;
+        border-radius: 7px;
+        padding: 9px 15px;
+        border: 1px solid var(--line);
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+      }
+      button:hover:not(:disabled) {
+        background: rgba(127, 127, 127, 0.12);
+      }
+      button.primary {
+        background: var(--teal);
+        border-color: var(--teal);
+        color: #fff;
+        font-weight: 600;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      ol {
+        margin: 0;
+        padding-left: 20px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 2;
+      }
+      code {
+        background: rgba(127, 127, 127, 0.16);
+        border-radius: 4px;
+        padding: 1px 5px;
+        font-family: ui-monospace, Consolas, monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>크롬 확장 관리자</h1>
+    <p class="sub">
+      유튜브 영상 페이지에 <b>구간 받기</b> 버튼을 붙입니다. 크롬 웹 스토어에는 올릴 수 없어
+      폴더로 넣고, 갱신은 이 앱이 맡습니다.
+    </p>
+
+    <div class="card">
+      <div class="versions">
+        <dl class="version"><dt>설치됨</dt><dd id="installed">—</dd></dl>
+        <dl class="version"><dt>최신</dt><dd id="latest">—</dd></dl>
+      </div>
+      <p class="note" id="note">확인하는 중입니다</p>
+      <input class="path" id="path" readonly />
+      <div class="row">
+        <button class="primary" id="install">설치</button>
+        <button id="check">다시 확인</button>
+        <button id="open">폴더 열기</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <ol>
+        <li><code>chrome://extensions</code> 를 엽니다</li>
+        <li>오른쪽 위 <b>개발자 모드</b>를 켭니다</li>
+        <li><b>압축해제된 확장 프로그램을 로드</b>에 위 폴더를 고릅니다</li>
+        <li>업데이트한 뒤에는 확장 카드의 <b>새로고침</b>만 누르면 됩니다</li>
+      </ol>
+    </div>
+
+    <script>
+      const send = (action) => window.ipc.postMessage(action);
+      for (const id of ["install", "check", "open"]) {
+        document.getElementById(id).addEventListener("click", () => send(id));
+      }
+
+      // 러스트 쪽에서 상태가 바뀔 때마다 부른다.
+      window.show = (view) => {
+        document.getElementById("installed").textContent = view.installed || "없음";
+        document.getElementById("latest").textContent =
+          view.latest ? view.latest + (view.published ? ` (${view.published})` : "") : "—";
+        document.getElementById("path").value = view.path || "";
+
+        const note = document.getElementById("note");
+        note.textContent = view.note || "";
+        note.classList.toggle("bad", Boolean(view.failed));
+
+        const install = document.getElementById("install");
+        install.textContent = view.installed ? "업데이트" : "설치";
+        // 받을 것이 없으면 누를 수 없게 둔다. 눌러도 같은 걸 다시 받을 뿐이다.
+        install.disabled = view.busy || (!view.update && Boolean(view.installed));
+        document.getElementById("check").disabled = view.busy;
+      };
+    </script>
+  </body>
+</html>

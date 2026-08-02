@@ -1,3 +1,7 @@
+[workspace]
+# 확장 관리자는 앱과 따로 도는 작은 프로그램이라 별도 크레이트로 둔다.
+members = ["manager"]
+
 [package]
 name = "yt-download"
 version = "0.1.0"

@@ -32,9 +32,13 @@ fi
 echo "빌드 중 (도구를 압축해 실행 파일에 담습니다. 몇 분 걸립니다)"
 YT_DOWNLOAD_EMBED_TOOLS=1 cargo build --release
 
+# 확장 관리자는 도구를 담지 않아 금방 빌드된다.
+cargo build --release -p yt-download-extension-manager
+
 mkdir -p dist
 cp "target/release/yt-download" "dist/yt-download"
-chmod +x "dist/yt-download"
+cp "target/release/yt-download-extension-manager" "dist/yt-download-extension-manager"
+chmod +x "dist/yt-download" "dist/yt-download-extension-manager"
 
 if command -v shasum >/dev/null; then
   (cd dist && shasum -a 256 yt-download > yt-download.sha256)

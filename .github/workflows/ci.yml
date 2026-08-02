@@ -33,8 +33,8 @@ jobs:
         run: ./scripts/check-version.sh
 
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
 
       - name: Frontend timeline checks
         uses: denoland/setup-deno@v2

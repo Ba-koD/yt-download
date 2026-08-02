@@ -54,10 +54,12 @@ jobs:
           - os: ubuntu-22.04
             label: Linux (x64)
             artifact: yt-download-linux-x64
-          - os: macos-14
+          - os: macos-15
             label: macOS (Apple Silicon)
             artifact: yt-download-macos-arm64
-          - os: macos-13
+          # Intel 러너는 macos-13 이 사라지고 macos-15-intel 로 바뀌었다.
+          # 없어진 라벨을 쓰면 잡히지 않고 큐에서 계속 기다린다.
+          - os: macos-15-intel
             label: macOS (Intel)
             artifact: yt-download-macos-x64
 

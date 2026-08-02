@@ -515,3 +515,24 @@ function shiftDecodeTime(bytes, delta) {
     }
   }
 }
+
+/**
+ * 라이브 조각을 앞머리(ftyp+moov)와 본체(moof+mdat)로 가른다.
+ *
+ * 라이브는 조각마다 앞머리를 다시 붙여서 준다(중간부터 봐도 재생되도록).
+ * 파일로 묶을 때는 앞머리가 하나만 있어야 하므로 첫 조각의 것만 쓰고 나머지는 버린다.
+ */
+export function splitLiveSegment(bytes) {
+  const boxes = listBoxes(bytes);
+  const firstMoof = boxes.find((box) => box.type === "moof");
+  if (!firstMoof) return { init: null, media: bytes };
+
+  const headParts = boxes
+    .filter((box) => box.start < firstMoof.start && (box.type === "ftyp" || box.type === "moov"))
+    .map((box) => boxBytes(bytes, box));
+
+  return {
+    init: headParts.length ? concat(headParts) : null,
+    media: bytes.subarray(firstMoof.start),
+  };
+}

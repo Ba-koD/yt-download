@@ -9,6 +9,7 @@ import { request } from "./net.js";
 import {
   combineInit,
   concat,
+  splitLiveSegment,
   dropLeadingSamples,
   firstDecodeTime,
   mediaTimescaleOf,
@@ -28,6 +29,41 @@ export async function getFormats(videoId, visitorData) {
 
 async function fetchRange(url, start, end) {
   return request.bytes(url, { Range: `bytes=${start}-${end}` });
+}
+
+/**
+ * 라이브 조각을 번호로 받아 온다.
+ *
+ * 라이브에는 색인이 없다. 대신 조각이 일정한 길이(`targetDurationSec`)로 잘려 있고
+ * `&sq=N` 으로 N번째 조각을 바로 집어올 수 있다. 조각마다 앞머리가 붙어 오므로
+ * 첫 조각의 앞머리만 쓰고 나머지는 버린다.
+ */
+export async function fetchLiveSegments(format, start, end, onProgress) {
+  const step = format.segmentSeconds;
+  if (!(step > 0)) throw new Error("조각 길이를 알 수 없습니다");
+
+  const first = Math.max(0, Math.floor(Math.min(start, end) / step));
+  const last = Math.max(first, Math.floor(Math.max(start, end) / step));
+  const numbers = [];
+  for (let sq = first; sq <= last; sq += 1) numbers.push(sq);
+
+  let done = 0;
+  const chunks = await mapWithLimit(numbers, CONCURRENCY, async (sq) => {
+    const bytes = await request.bytes(`${format.url}&sq=${sq}`, {});
+    done += 1;
+    onProgress?.(done, numbers.length);
+    return { sq, bytes };
+  });
+
+  let init = null;
+  const segments = [];
+  for (const { sq, bytes } of chunks) {
+    const piece = splitLiveSegment(bytes);
+    if (!init && piece.init) init = piece.init;
+    segments.push({ time: sq * step, duration: step, bytes: piece.media });
+  }
+  if (!init) throw new Error("조각에서 앞머리를 찾지 못했습니다");
+  return { init, segments, firstTime: first * step };
 }
 
 /** 앞머리(init)와 조각 색인(sidx)을 한 번에 받아 온다. 둘이 파일 맨 앞에 붙어 있다. */
@@ -184,31 +220,43 @@ export function clockLabel(seconds) {
  * @param onProgress (받은 바이트, 전체 바이트, 단계 이름)
  */
 export async function downloadSection({ videoFormat, audioFormat, start, end, onProgress }) {
-  onProgress?.(0, 1, "색인 읽는 중");
-  const [videoIndex, audioIndex] = await Promise.all([
-    fetchIndex(videoFormat),
-    fetchIndex(audioFormat),
-  ]);
-
   // 두 트랙의 진행률을 하나로 합쳐 보여준다.
   const progress = { video: [0, 1], audio: [0, 1] };
-  const report = (kind) => (done, total) => {
-    progress[kind] = [done, total];
-    const received = progress.video[0] + progress.audio[0];
-    const expected = progress.video[1] + progress.audio[1];
-    onProgress?.(received, expected, "받는 중");
+  const report = (kind) => (received, expected) => {
+    progress[kind] = [received, expected];
+    onProgress?.(
+      progress.video[0] + progress.audio[0],
+      progress.video[1] + progress.audio[1],
+      "받는 중",
+    );
   };
 
-  const [video, audio] = await Promise.all([
-    fetchSegments(videoFormat, videoIndex, start, end, report("video")),
-    fetchSegments(audioFormat, audioIndex, start, end, report("audio")),
-  ]);
+  const live = videoFormat.segmentSeconds > 0 && !videoFormat.indexRange;
+  let video;
+  let audio;
+
+  if (live) {
+    onProgress?.(0, 1, "조각 받는 중");
+    [video, audio] = await Promise.all([
+      fetchLiveSegments(videoFormat, start, end, report("video")),
+      fetchLiveSegments(audioFormat, start, end, report("audio")),
+    ]);
+  } else {
+    onProgress?.(0, 1, "색인 읽는 중");
+    const [videoIndex, audioIndex] = await Promise.all([
+      fetchIndex(videoFormat),
+      fetchIndex(audioFormat),
+    ]);
+    const [videoParts, audioParts] = await Promise.all([
+      fetchSegments(videoFormat, videoIndex, start, end, report("video")),
+      fetchSegments(audioFormat, audioIndex, start, end, report("audio")),
+    ]);
+    video = { init: videoIndex.init, ...videoParts };
+    audio = { init: audioIndex.init, ...audioParts };
+  }
 
   onProgress?.(1, 1, "합치는 중");
-  const bytes = buildMp4(
-    { init: videoIndex.init, ...video },
-    { init: audioIndex.init, ...audio },
-    { start, end },
-  );
-  return { bytes };
+  const bytes = buildMp4(video, audio, { start, end });
+  // 조각을 통째로 받으므로 파일은 요청보다 조금 길다. 얼마나 긴지 함께 알려준다.
+  return { bytes, mediaSeconds: sectionSeconds(video.segments) };
 }

@@ -7,12 +7,14 @@
 export function directTransport() {
   return {
   async json(url, init) {
-    const response = await fetch(url, { credentials: "omit", ...init });
+    // youtube.com 은 같은 출처라 쿠키가 함께 나간다.
+    // 내 비공개 영상이나 멤버 전용 영상은 로그인 상태여야 주소를 준다.
+    const response = await fetch(url, { credentials: "same-origin", ...init });
     if (!response.ok) throw new Error(`요청 실패 (HTTP ${response.status})`);
     return response.json();
   },
   async text(url) {
-    const response = await fetch(url, { credentials: "omit" });
+    const response = await fetch(url, { credentials: "same-origin" });
     if (!response.ok) throw new Error(`요청 실패 (HTTP ${response.status})`);
     return response.text();
   },

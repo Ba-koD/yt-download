@@ -21,10 +21,10 @@ export const CLIENT = {
   gl: "US",
 };
 
-export function buildPlayerRequest(videoId, visitorData) {
+export function buildPlayerRequest(videoId, visitorData, client = CLIENT) {
   return {
     videoId,
-    context: { client: { ...CLIENT, visitorData: visitorData || "" } },
+    context: { client: { ...client, visitorData: visitorData || "" } },
     contentCheckOk: true,
     racyCheckOk: true,
   };
@@ -41,14 +41,42 @@ export function extractVisitorData(html) {
   return match ? match[1] : null;
 }
 
+/**
+ * 내 비공개 영상을 물어볼 때 쓰는 클라이언트.
+ *
+ * ANDROID_VR 은 로그인 정보를 받아주지 않아서 "Please sign in" 으로 끝난다.
+ * 창작자용 클라이언트는 쿠키를 인정하므로 내가 올린 비공개 영상도 주소를 준다.
+ */
+const CREATOR_CLIENT = {
+  clientName: "WEB_CREATOR",
+  clientVersion: "1.20250219.00.00",
+  hl: "ko",
+  gl: "KR",
+};
+
 export async function fetchPlayerResponse(videoId, visitorData) {
+  const first = await requestPlayer(videoId, visitorData, CLIENT);
+  const status = first?.playabilityStatus?.status;
+  // 로그인해야 볼 수 있는 영상이면 창작자용 클라이언트로 한 번 더 물어본다.
+  if (status && status !== "OK") {
+    try {
+      const second = await requestPlayer(videoId, visitorData, CREATOR_CLIENT);
+      if (second?.playabilityStatus?.status === "OK") return second;
+    } catch {
+      // 두 번째 시도는 실패해도 첫 번째 결과의 이유를 그대로 보여준다.
+    }
+  }
+  return first;
+}
+
+function requestPlayer(videoId, visitorData, client) {
   return request.json(PLAYER_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-Goog-Visitor-Id": visitorData || "",
     },
-    body: JSON.stringify(buildPlayerRequest(videoId, visitorData)),
+    body: JSON.stringify(buildPlayerRequest(videoId, visitorData, client)),
   });
 }
 
@@ -66,8 +94,14 @@ export function readFormats(playerResponse) {
   }
 
   const all = playerResponse?.streamingData?.adaptiveFormats || [];
+  // 두 가지 방식이 있다.
+  // - 일반 영상: 파일 하나에 색인(sidx)이 있어 필요한 바이트만 집어온다.
+  // - 라이브: 색인이 없고 조각 번호(`&sq=N`)로 하나씩 받는다. 조각 길이는 targetDurationSec.
   const usable = all.filter(
-    (format) => format.url && format.indexRange && format.initRange && isMp4(format),
+    (format) =>
+      format.url &&
+      isMp4(format) &&
+      ((format.indexRange && format.initRange) || format.targetDurationSec > 0),
   );
 
   const video = usable
@@ -112,11 +146,13 @@ function describe(format) {
     contentLength: Number(format.contentLength || 0),
     initRange: numericRange(format.initRange),
     indexRange: numericRange(format.indexRange),
+    // 라이브 조각 하나의 길이(초). 이 값이 있으면 조각 번호로 받아야 한다.
+    segmentSeconds: Number(format.targetDurationSec) || 0,
   };
 }
 
 function numericRange(range) {
-  return { start: Number(range.start), end: Number(range.end) };
+  return range ? { start: Number(range.start), end: Number(range.end) } : null;
 }
 
 /** 화면에 보여줄 짧은 이름. */

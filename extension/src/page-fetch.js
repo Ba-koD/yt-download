@@ -17,11 +17,14 @@ window.addEventListener("message", async (event) => {
     window.postMessage({ ytdl: "response", id: message.id, ...payload }, "*", transfer);
 
   try {
+    // youtube.com 은 로그인 상태로 물어봐야 내 비공개 영상 주소를 준다.
+    // 미디어(googlevideo)는 쿠키가 필요 없고, 붙이면 오히려 거절당할 수 있다.
+    const sameSite = new URL(message.url, location.href).hostname.endsWith("youtube.com");
     const response = await fetch(message.url, {
       method: message.method || "GET",
       headers: message.headers,
       body: message.body,
-      credentials: "omit",
+      credentials: sameSite ? "same-origin" : "omit",
     });
     // 바이트는 postMessage 로 그대로 넘어간다(여기는 JSON 직렬화가 아니다).
     const buffer = await response.arrayBuffer();

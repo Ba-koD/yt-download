@@ -380,11 +380,7 @@
       const formats = await getFormats(videoId);
       if (state.videoId !== videoId) return; // 그 사이 다른 영상으로 옮겼다
       if (!formats.video.length || !formats.audio.length) {
-        throw new Error(
-          formats.liveWithoutIndex
-            ? "라이브·지난 라이브는 아직 지원하지 않습니다. 데스크톱 앱을 써주세요."
-            : "받을 수 있는 mp4 화질이 없습니다",
-        );
+        throw new Error("받을 수 있는 mp4 화질이 없습니다");
       }
       state.formats = formats;
       el.quality.replaceChildren(
@@ -419,7 +415,7 @@
     const began = Date.now();
 
     try {
-      const { bytes } = await downloadSection({
+      const { bytes, mediaSeconds } = await downloadSection({
         videoFormat,
         audioFormat: state.formats.audio[0],
         start: state.start,
@@ -435,8 +431,15 @@
         `${safeFileName(state.formats.title)} ` +
           `[${clockLabel(state.start)}~${clockLabel(state.end)}].mp4`,
       );
-      const seconds = ((Date.now() - began) / 1000).toFixed(1);
-      setStatus(`저장했습니다 · ${(bytes.length / 1048576).toFixed(1)} MB · ${seconds}초`, "ytdl-ok");
+      const took = ((Date.now() - began) / 1000).toFixed(1);
+      const asked = state.end - state.start;
+      // 조각 단위로 받으므로 파일이 요청보다 몇 초 길다. 그 차이를 숨기지 않는다.
+      const extra = mediaSeconds && mediaSeconds - asked >= 1 ? ` → 파일 ${showClock(mediaSeconds)}` : "";
+      setStatus(
+        `저장했습니다 · ${showClock(state.start)}~${showClock(state.end)} ` +
+          `(${showClock(asked)}${extra}) · ${(bytes.length / 1048576).toFixed(1)} MB · ${took}초`,
+        "ytdl-ok",
+      );
     } catch (error) {
       setStatus(error.message, "ytdl-bad");
     } finally {

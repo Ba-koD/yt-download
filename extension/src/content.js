@@ -434,15 +434,12 @@
 
     try {
       // 로그인해야 볼 수 있는 영상은 주소의 `n` 을 풀어야 받을 수 있다.
-      const unlock = async (urls) => {
-        const config = await viaPage.ask({}, "config");
-        if (!config?.jsUrl) throw new Error("플레이어 주소를 찾지 못했습니다");
-        return nsig.solveUrls(urls, {
+      const unlock = (urls) =>
+        nsig.solveUrls(urls, {
           runtime: chrome.runtime,
-          playerUrl: new URL(config.jsUrl, location.origin).href,
+          ask: (payload) => viaPage.ask(payload, "solve"),
           onStep: (text) => setStatus(text),
         });
-      };
       const formats = await getFormats(videoId, null, unlock);
       if (state.videoId !== videoId) return; // 그 사이 다른 영상으로 옮겼다
       if (!formats.video.length || !formats.audio.length) {

@@ -34,19 +34,84 @@ function readProgress() {
 
 let progressTimer = null;
 
+// 플레이어(base.js)는 2~3MB 다. 한 번만 받아둔다.
+let playerSource = null;
+
+/**
+ * 미디어 주소에 붙은 `n` 을 푼다.
+ *
+ * 왜 여기(페이지 쪽)에서 하나:
+ *  - 해결기는 base.js 를 뜯어 새 코드를 만들어 돌린다. 확장 안에서는 그게 금지돼 있고,
+ *    유튜브 페이지는 CSP 가 `unsafe-eval` 을 허용해서 여기서는 된다.
+ *  - blob 일꾼은 못 쓴다. 유튜브 CSP 의 `script-src` 에 `blob:` 이 없어서 막힌다.
+ *
+ * 왜 빈 iframe 안에서 하나:
+ *  - 유튜브는 이 페이지의 내장 함수를 자기 것으로 바꿔치기해 뒀다. 그대로 돌리면
+ *    파서가 엉뚱한 데서 터진다("... 'attestationRequest' in null").
+ *    새로 만든 틀(iframe)은 손타지 않은 깨끗한 곳이다.
+ *  - 해결기가 준비 과정에서 `globalThis.location` 에 값을 넣는데, 창에서는 그게 곧
+ *    페이지 이동이다. 본 화면에서 하면 유튜브가 날아간다. 틀 안이라 안전하고,
+ *    답은 그전에 이미 나오므로(푸는 일은 동기다) 받자마자 틀을 치운다.
+ */
+async function solveChallenges({ lib, core, challenges }) {
+  if (!playerSource) {
+    const jsUrl = window.ytcfg?.get?.("PLAYER_JS_URL");
+    if (!jsUrl) throw new Error("플레이어 주소를 찾지 못했습니다");
+    playerSource = await (await fetch(jsUrl, { credentials: "same-origin" })).text();
+  }
+
+  const frame = document.createElement("iframe");
+  frame.style.display = "none";
+  document.documentElement.appendChild(frame);
+  try {
+    const realm = frame.contentWindow;
+    // 해결기는 자기 안에서도 코드를 만들어 돌린다. 우리 손을 거치지 않으므로
+    // 이 틀에만 기본 정책을 깔아 통과시킨다. 유튜브 본 화면은 그대로다.
+    const policy = realm.trustedTypes?.createPolicy("default", {
+      createScript: (text) => text,
+      createScriptURL: (url) => url,
+      createHTML: (html) => html,
+    });
+    const run = (source) => (policy ? realm.eval(policy.createScript(source)) : realm.eval(source));
+
+    // 전역을 더럽히지 않도록 파서를 인자로 넘긴다.
+    const parsers = run(`(function () {${lib};return lib; })`)();
+    const solve = run(`(function (meriyah, astring) {${core};return jsc; })`)(
+      parsers.meriyah,
+      parsers.astring,
+    );
+
+    const result = solve({
+      type: "player",
+      player: playerSource,
+      requests: [{ type: "n", challenges }],
+    });
+    if (result?.type === "error") throw new Error(result.error || "해결기 오류");
+    const first = result.responses?.[0];
+    if (first?.type !== "result") throw new Error(first?.error || "n 을 풀지 못했습니다");
+    return first.data;
+  } finally {
+    frame.remove();
+  }
+}
+
 window.addEventListener("message", async (event) => {
   if (event.source !== window) return;
   const message = event.data;
 
-  // 확장 쪽에서는 페이지의 설정값(ytcfg)을 읽을 수 없어서 여기서 넘겨준다.
-  if (message?.ytdl === "config") {
-    window.postMessage({
-      ytdl: "response",
-      id: message.id,
-      ok: true,
-      jsUrl: window.ytcfg?.get?.("PLAYER_JS_URL") || null,
-      sts: window.ytcfg?.get?.("STS") || null,
-    }, "*");
+  if (message?.ytdl === "solve") {
+    try {
+      const answers = await solveChallenges(message);
+      window.postMessage({ ytdl: "response", id: message.id, ok: true, answers }, "*");
+    } catch (error) {
+      window.postMessage({
+        ytdl: "response",
+        id: message.id,
+        ok: false,
+        status: 0,
+        error: String(error?.message || error),
+      }, "*");
+    }
     return;
   }
 

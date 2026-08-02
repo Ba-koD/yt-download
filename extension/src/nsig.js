@@ -6,65 +6,22 @@
 //
 // 공개 영상은 `ANDROID_VR` 이 `n` 없는 주소를 주므로 이 길로 오지 않는다.
 //
-// 푸는 일 자체는 유튜브 플레이어(base.js)를 뜯어야 해서 yt-dlp 쪽 해결기를 그대로 쓴다
-// (`vendor/` 참고). 그 코드는 일꾼(worker) 안에서 돌린다 — 이유는 solver-worker.js 참고.
+// 여기서는 해결기 코드를 읽어 넘기기만 한다. 실제로 푸는 곳은 페이지 쪽(page-fetch.js)이고,
+// 왜 거기여야 하는지는 그 파일에 적어뒀다.
 
-import { request } from "./net.js";
+const FILES = ["vendor/yt-solver-lib.js", "vendor/yt-solver-core.js"];
 
-const FILES = {
-  worker: "src/solver-worker.js",
-  lib: "vendor/yt-solver-lib.js",
-  core: "vendor/yt-solver-core.js",
-};
+let sources = null;
 
-let ready = null;
-
-/**
- * 일꾼을 띄우고 해결기 코드를 읽어둔다. 한 번만 한다.
- *
- * 일꾼은 여기(content script)에서 만든다. 페이지 쪽에서 만들면 유튜브의 CSP 가
- * blob 일꾼을 막아 조용히 실패한다. content script 는 그 규칙을 타지 않는다.
- */
-function boot(runtime) {
-  if (ready) return ready;
-  ready = (async () => {
-    const [worker, lib, core] = await Promise.all(
-      [FILES.worker, FILES.lib, FILES.core].map(async (name) =>
-        (await fetch(runtime.getURL(name))).text()
-      ),
+/** 해결기 원본을 한 번만 읽어둔다. 150KB 남짓이라 매번 읽을 이유가 없다. */
+async function loadSolver(runtime) {
+  if (!sources) {
+    const [lib, core] = await Promise.all(
+      FILES.map(async (name) => (await fetch(runtime.getURL(name))).text()),
     );
-    const blob = new Blob([worker], { type: "text/javascript" });
-    return { worker: new Worker(URL.createObjectURL(blob)), lib, core };
-  })();
-  return ready;
-}
-
-let nextId = 1;
-
-function askWorker(worker, payload, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    const id = nextId++;
-    const done = (fn, value) => {
-      worker.removeEventListener("message", onMessage);
-      worker.removeEventListener("error", onError);
-      clearTimeout(timer);
-      fn(value);
-    };
-    const onMessage = (event) => {
-      if (event.data?.id !== id) return;
-      if (event.data.ok) done(resolve, event.data.answers);
-      else done(reject, new Error(event.data.error || "n 을 풀지 못했습니다"));
-    };
-    const onError = (event) =>
-      done(reject, new Error(`해결기를 띄우지 못했습니다: ${event.message || "이유 없음"}`));
-    const timer = setTimeout(
-      () => done(reject, new Error("n 을 푸는 데 너무 오래 걸립니다")),
-      timeoutMs,
-    );
-    worker.addEventListener("message", onMessage);
-    worker.addEventListener("error", onError);
-    worker.postMessage({ id, ...payload });
-  });
+    sources = { lib, core };
+  }
+  return sources;
 }
 
 /**
@@ -72,15 +29,15 @@ function askWorker(worker, payload, timeoutMs) {
  *
  * `n` 이 없는 주소는 그대로 둔다.
  */
-export async function solveUrls(urls, { runtime, playerUrl, onStep }) {
+export async function solveUrls(urls, { runtime, ask, onStep }) {
   const challenges = [...new Set(urls.map(challengeOf).filter(Boolean))];
   if (!challenges.length) return urls;
 
   onStep?.("로그인 영상이라 주소를 푸는 중입니다");
-  const { worker, lib, core } = await boot(runtime);
-  // 플레이어는 2~3MB 다. 일꾼이 첫 번째에 손질해두고 그 뒤로는 다시 받지 않는다.
-  const player = await request.text(playerUrl);
-  const answers = await askWorker(worker, { lib, core, player, challenges }, 120_000);
+  const { lib, core } = await loadSolver(runtime);
+  const answered = await ask({ lib, core, challenges });
+  const answers = answered?.answers;
+  if (!answers) throw new Error("n 을 풀지 못했습니다");
 
   return urls.map((url) => {
     const raw = challengeOf(url);

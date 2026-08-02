@@ -12,3 +12,6 @@
 *.mp4
 *.webm
 *merge-*.txt
+
+# 크롬이 확장을 읽으면서 만드는 파일. 우리 것이 아니라 담아 보내면 안 된다.
+extension/_metadata/

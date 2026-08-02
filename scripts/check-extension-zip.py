@@ -13,7 +13,8 @@ import sys
 import zipfile
 from pathlib import Path
 
-SKIP_DIRS = {"test", "node_modules", ".git"}
+# `_metadata` 는 크롬이 확장을 읽으면서 만든다. 우리 것이 아니다.
+SKIP_DIRS = {"test", "node_modules", ".git", "_metadata"}
 SKIP_NAMES = {".DS_Store"}
 
 

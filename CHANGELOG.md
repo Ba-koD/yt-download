@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-03
+
 ### 고침
 
 - 업데이트한 뒤 **다시 켜기가 앱을 죽이던 문제**. 방금 나간 프로세스가 쓰던 포트를
@@ -210,7 +212,8 @@
   비교했는데, 압축을 풀어서 받은 파일은 아카이브의 옛 시각을 물려받는다.
   이제 크기와 시각을 함께 확인한다.
 
-[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/Ba-koD/yt-download/releases/tag/v0.3.1
 [0.3.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.1.0

@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-03
+
 ### 추가
 
 - **파이어폭스 확장.** 크롬 소스에서 매니페스트만 바꿔 뽑는다(`scripts/build-firefox.py`,
@@ -262,7 +264,8 @@
   비교했는데, 압축을 풀어서 받은 파일은 아카이브의 옛 시각을 물려받는다.
   이제 크기와 시각을 함께 확인한다.
 
-[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.4.0
 [0.3.1]: https://github.com/Ba-koD/yt-download/releases/tag/v0.3.1

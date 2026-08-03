@@ -53,9 +53,28 @@ echo "완성: dist/yt-download ($size)"
 if [[ "$(uname -s)" == "Darwin" ]]; then
   app="dist/yt-download.app"
   rm -rf "$app"
-  mkdir -p "$app/Contents/MacOS"
+  mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
   cp dist/yt-download "$app/Contents/MacOS/yt-download"
   version="$(tr -d '[:space:]' < VERSION)"
+
+  # 아이콘. 맥에 기본으로 있는 iconutil 로 PNG 들을 .icns 로 묶는다.
+  # 없으면 그냥 넘어간다(아이콘 없이도 앱은 돈다).
+  if command -v iconutil >/dev/null && [[ -f assets/icon-512.png ]]; then
+    iconset="$(mktemp -d)/yt-download.iconset"
+    mkdir -p "$iconset"
+    cp assets/icon-16.png   "$iconset/icon_16x16.png"
+    cp assets/icon-32.png   "$iconset/icon_16x16@2x.png"
+    cp assets/icon-32.png   "$iconset/icon_32x32.png"
+    cp assets/icon-64.png   "$iconset/icon_32x32@2x.png"
+    cp assets/icon-128.png  "$iconset/icon_128x128.png"
+    cp assets/icon-256.png  "$iconset/icon_128x128@2x.png"
+    cp assets/icon-256.png  "$iconset/icon_256x256.png"
+    cp assets/icon-512.png  "$iconset/icon_256x256@2x.png"
+    cp assets/icon-512.png  "$iconset/icon_512x512.png"
+    cp assets/icon-1024.png "$iconset/icon_512x512@2x.png"
+    iconutil -c icns "$iconset" -o "$app/Contents/Resources/icon.icns" ||
+      echo "경고: 아이콘을 만들지 못했습니다(앱은 그대로 씁니다)"
+  fi
   cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -68,6 +87,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   <key>CFBundleShortVersionString</key><string>$version</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>yt-download</string>
+  <key>CFBundleIconFile</key><string>icon</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict>

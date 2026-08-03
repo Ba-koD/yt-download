@@ -103,11 +103,21 @@ enum UserEvent {
     OpenConsole,
 }
 
+/// 창에 붙일 아이콘.
+///
+/// PNG 해독기를 들이지 않으려고 생 RGBA 로 담아둔다(`scripts/make-logo.py` 가 만든다).
+/// 64×64 × 4바이트 = 16KB 라 실행 파일에 담아도 부담이 없다.
+fn window_icon() -> Option<tao::window::Icon> {
+    const ICON: &[u8] = include_bytes!("../assets/icon-64.rgba");
+    tao::window::Icon::from_rgba(ICON.to_vec(), 64, 64).ok()
+}
+
 fn open_app_window(url: &str) -> Result<()> {
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
     let window = WindowBuilder::new()
         .with_title("yt-download")
+        .with_window_icon(window_icon())
         .with_inner_size(LogicalSize::new(1440.0, 920.0))
         .with_min_inner_size(LogicalSize::new(1040.0, 720.0))
         .build(&event_loop)
@@ -172,6 +182,7 @@ fn open_console_window(
 ) -> Result<(Window, WebView)> {
     let window = WindowBuilder::new()
         .with_title("yt-download 콘솔")
+        .with_window_icon(window_icon())
         .with_inner_size(LogicalSize::new(820.0, 560.0))
         .with_min_inner_size(LogicalSize::new(420.0, 260.0))
         .build(target)

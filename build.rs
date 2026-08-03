@@ -19,6 +19,7 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by Cargo"));
 
     check_version(&manifest_dir);
+    set_windows_icon();
 
     println!("cargo:rerun-if-env-changed=YT_DOWNLOAD_EMBED_TOOLS");
     println!("cargo:rerun-if-changed={}", tools_dir.display());
@@ -46,6 +47,21 @@ fn main() {
     }
 
     write_tools_module(&out_dir, &target, &entries);
+}
+
+/// 실행 파일에 아이콘을 박아 넣는다. 탐색기·작업 표시줄에서 보이는 그림이다.
+///
+/// 실패해도 빌드를 세우지 않는다. 아이콘 도구(rc.exe)가 없는 자리에서도 앱은 만들어져야 한다.
+fn set_windows_icon() {
+    #[cfg(windows)]
+    {
+        println!("cargo:rerun-if-changed=assets/icon.ico");
+        let mut resource = winresource::WindowsResource::new();
+        resource.set_icon("assets/icon.ico");
+        if let Err(err) = resource.compile() {
+            println!("cargo:warning=아이콘을 실행 파일에 넣지 못했습니다: {err}");
+        }
+    }
 }
 
 /// 버전의 단일 출처는 `VERSION` 파일이다. `Cargo.toml` 과 어긋나면 빌드를 세운다.

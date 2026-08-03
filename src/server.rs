@@ -47,6 +47,9 @@ pub(crate) const CONSOLE_HTML: &str = include_str!("../web/console.html");
 
 pub(crate) const APP_CSS: &str = include_str!("../web/app.css");
 
+/// 화면 탭에 보이는 아이콘. `scripts/make-logo.py` 가 만든다.
+pub(crate) const APP_ICON: &[u8] = include_bytes!("../assets/icon-128.png");
+
 /// 화면 스크립트. ES 모듈로 나뉘어 있어서 이름으로 찾아 내보낸다.
 const APP_SCRIPTS: &[(&str, &str)] = &[
     ("api.js", include_str!("../web/api.js")),
@@ -307,6 +310,9 @@ pub(crate) async fn latest_job(State(state): State<AppState>) -> Json<Value> {
 pub(crate) async fn static_file(AxumPath(file): AxumPath<String>) -> impl IntoResponse {
     if file == "app.css" {
         return HtmlResponse(APP_CSS, "text/css; charset=utf-8").into_response();
+    }
+    if file == "icon.png" {
+        return ([(header::CONTENT_TYPE, "image/png")], APP_ICON).into_response();
     }
     match APP_SCRIPTS.iter().find(|(name, _)| *name == file) {
         Some((_, body)) => {

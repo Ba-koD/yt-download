@@ -8,12 +8,18 @@ use std::{ffi::OsStr, process::Command};
 
 /// 창을 만들지 않고 프로그램을 띄울 준비를 한다.
 pub fn command(program: impl AsRef<OsStr>) -> Command {
-    let mut cmd = Command::new(program);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW. 콘솔 창을 만들지 않는다.
-        cmd.creation_flags(0x0800_0000);
-    }
+    hide(Command::new(program))
+}
+
+#[cfg(windows)]
+fn hide(mut cmd: Command) -> Command {
+    use std::os::windows::process::CommandExt;
+    // CREATE_NO_WINDOW. 콘솔 창을 만들지 않는다.
+    cmd.creation_flags(0x0800_0000);
+    cmd
+}
+
+#[cfg(not(windows))]
+fn hide(cmd: Command) -> Command {
     cmd
 }

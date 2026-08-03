@@ -15,7 +15,10 @@ pub(crate) fn hide(cmd: &mut tokio::process::Command) -> &mut tokio::process::Co
     cmd
 }
 
-/// 동기(std) 명령에 창 숨김을 건다(로그인 쪽에서 브라우저를 띄울 때 쓴다).
+/// 동기(std) 명령에 창 숨김을 건다(로그인·기본 브라우저 감지의 콘솔 명령에 쓴다).
+///
+/// 부르는 곳이 전부 `#[cfg(windows)]` 안이라 유닉스에서는 쓰이지 않는다. 그래도 신호를
+/// 맞추려고 양쪽에 둔다(유닉스에서는 죽은 코드지만 두어도 무해하다).
 #[cfg(windows)]
 pub(crate) fn hide_std(cmd: &mut std::process::Command) -> &mut std::process::Command {
     use std::os::windows::process::CommandExt;
@@ -24,6 +27,7 @@ pub(crate) fn hide_std(cmd: &mut std::process::Command) -> &mut std::process::Co
 }
 
 #[cfg(not(windows))]
+#[allow(dead_code)]
 pub(crate) fn hide_std(cmd: &mut std::process::Command) -> &mut std::process::Command {
     cmd
 }

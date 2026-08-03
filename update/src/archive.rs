@@ -12,16 +12,24 @@ use anyhow::{bail, Context, Result};
 pub enum Kind {
     Zip,
     TarGz,
+    /// 압축하지 않은 실행 파일 그 자체. 윈도우용 관리자가 이렇게 올라간다.
+    Raw,
 }
 
-/// 자산 이름 끝을 보고 어떤 압축인지 정한다.
+/// 자산 이름 끝을 보고 어떤 것인지 정한다.
+///
+/// 실행 파일 그 자체로 올라오는 것은 윈도우에서 `.exe`, 유닉스에서는 확장자가 없다.
+/// 그 둘만 원문으로 보고, **모르는 확장자는 거절한다.** 아무거나 "실행 파일이겠지" 하고
+/// 받아쓰면, 이름을 한쪽에서만 고쳤을 때 엉뚱한 것을 실행 파일 자리에 놓게 된다.
 pub fn kind_of(name: &str) -> Result<Kind> {
     if name.ends_with(".zip") {
         Ok(Kind::Zip)
     } else if name.ends_with(".tar.gz") {
         Ok(Kind::TarGz)
+    } else if name.ends_with(".exe") || !name.contains('.') {
+        Ok(Kind::Raw)
     } else {
-        bail!("모르는 압축 형식입니다: {name}")
+        bail!("모르는 자산 형식입니다: {name}")
     }
 }
 
@@ -34,6 +42,8 @@ pub fn extract(archive: &[u8], kind: Kind, into: &Path) -> Result<()> {
     match kind {
         Kind::Zip => extract_zip(archive, into),
         Kind::TarGz => extract_tar_gz(archive, into),
+        // 압축하지 않은 실행 파일은 풀 것이 없다. 부르는 쪽이 그대로 써야 한다.
+        Kind::Raw => bail!("압축본이 아닙니다"),
     }
 }
 
@@ -130,7 +140,13 @@ mod tests {
     fn 압축_형식은_이름_끝으로_가린다() {
         assert_eq!(kind_of("a-windows-x64.zip").unwrap(), Kind::Zip);
         assert_eq!(kind_of("a-linux-x64.tar.gz").unwrap(), Kind::TarGz);
+        // 압축하지 않고 올리는 것들 — 윈도우는 .exe, 유닉스는 확장자가 없다.
+        assert_eq!(kind_of("a-windows-x64.exe").unwrap(), Kind::Raw);
+        assert_eq!(kind_of("a-linux-x64").unwrap(), Kind::Raw);
+        assert_eq!(kind_of("a-macos-arm64").unwrap(), Kind::Raw);
+        // 모르는 확장자는 실행 파일 자리에 놓지 않는다.
         assert!(kind_of("a.7z").is_err());
+        assert!(kind_of("a.tar.bz2").is_err());
     }
 
     #[test]

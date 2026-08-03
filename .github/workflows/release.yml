@@ -105,10 +105,12 @@ jobs:
         shell: pwsh
         run: |
           $app = "${{ matrix.artifact }}"
-          $manager = $app -replace '^yt-download-', 'yt-download-manager-'
+          # 관리자는 실행 파일 하나뿐이라 압축하지 않고 그대로 올린다. 받아서 바로 실행할 수 있다.
+          # (앱은 165MB 대 170MB 차이가 나서 압축본으로 둔다.)
+          $manager = ($app -replace '^yt-download-', 'yt-download-manager-') + ".exe"
           Compress-Archive -Path dist\yt-download.exe -DestinationPath "$app.zip"
-          Compress-Archive -Path dist\yt-download-extension-manager.exe -DestinationPath "$manager.zip"
-          foreach ($name in @("$app.zip", "$manager.zip")) {
+          Copy-Item dist\yt-download-extension-manager.exe $manager
+          foreach ($name in @("$app.zip", $manager)) {
             $hash = (Get-FileHash $name -Algorithm SHA256).Hash.ToLower()
             "$hash  $name" | Set-Content "$name.sha256" -Encoding ascii
           }
@@ -124,8 +126,10 @@ jobs:
           else
             tar -czf "$app.tar.gz" -C dist yt-download
           fi
-          tar -czf "$manager.tar.gz" -C dist yt-download-extension-manager
-          for name in "$app.tar.gz" "$manager.tar.gz"; do
+          # 관리자는 실행 파일 하나뿐이라 묶지 않는다. 받은 사람은 chmod +x 를 한 번 해주면 된다
+          # (자동 업데이트는 스스로 권한을 주므로 영향받지 않는다).
+          cp dist/yt-download-extension-manager "$manager"
+          for name in "$app.tar.gz" "$manager"; do
             if command -v sha256sum >/dev/null; then
               sha256sum "$name" > "$name.sha256"
             else
@@ -160,7 +164,7 @@ jobs:
       # 담을 것을 하나씩 적는다(테스트 픽스처가 딸려 들어가지 않도록).
       - name: Package extension
         run: |
-          (cd extension && zip -qr ../yt-download-extension.zip manifest.json src vendor README.md)
+          (cd extension && zip -qr ../yt-download-extension.zip manifest.json icons src vendor README.md)
           sha256sum yt-download-extension.zip > yt-download-extension.zip.sha256
           unzip -l yt-download-extension.zip
           # 압축을 푼 자리에 manifest.json 이 바로 있어야 크롬이 폴더로 인식한다.
@@ -175,7 +179,9 @@ jobs:
       - name: Collect assets
         run: |
           mkdir -p release
-          find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec mv {} release/ \;
+          # 확장자로 고르지 않는다. 관리자는 압축하지 않고 올라가고 유닉스에서는 확장자도 없어서,
+          # 목록을 적어두면 조용히 빠진다. 체크섬 파일만 남기고 전부 옮긴다.
+          find artifacts -type f ! -name '*.sha256' -exec mv {} release/ \;
           mv yt-download-extension.zip release/
           {
             find artifacts -type f -name '*.sha256' -exec cat {} +

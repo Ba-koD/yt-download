@@ -36,12 +36,17 @@ macOS 는 서명이 없어 처음 열 때 우클릭 → 열기 를 한 번 해�
 
 크롬 확장을 설치·갱신·삭제하는 작은 프로그램입니다(4MB). 앱과 따로 올라갑니다.
 
+압축하지 않았습니다. 받아서 그대로 실행하면 됩니다.
+
 | 파일 | 대상 |
 | --- | --- |
-| `yt-download-manager-windows-x64.zip` | Windows 10/11 (x64) |
-| `yt-download-manager-linux-x64.tar.gz` | Linux (x64) |
-| `yt-download-manager-macos-arm64.tar.gz` | macOS (Apple Silicon) |
-| `yt-download-manager-macos-x64.tar.gz` | macOS (Intel) |
+| `yt-download-manager-windows-x64.exe` | Windows 10/11 (x64) |
+| `yt-download-manager-linux-x64` | Linux (x64) |
+| `yt-download-manager-macos-arm64` | macOS (Apple Silicon) |
+| `yt-download-manager-macos-x64` | macOS (Intel) |
+
+리눅스·macOS 는 받은 파일에 실행 권한이 없습니다(깃허브가 권한을 지워서 보냅니다).
+한 번만 `chmod +x yt-download-manager-*` 를 해주세요. 그 뒤의 갱신은 관리자가 알아서 합니다.
 
 ## 크롬 확장 받기 (`yt-download-extension.zip`)
 

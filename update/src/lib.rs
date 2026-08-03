@@ -46,13 +46,21 @@ pub enum Program {
 
 impl Program {
     /// 릴리스에서 받아야 할 자산 이름. 알 수 없는 플랫폼이면 `None`.
+    ///
+    /// **관리자는 어느 플랫폼에서도 압축하지 않는다.** 실행 파일 하나뿐이라 묶을 이유가 없다.
+    /// 유닉스에서 받은 사람은 `chmod +x` 를 한 번 해줘야 한다(깃허브 릴리스 자산은
+    /// 실행 권한을 잃는다). 자동 업데이트는 스스로 권한을 주므로 이 영향을 받지 않는다.
+    ///
+    /// 앱은 압축본으로 둔다(윈도우 165.8MB 대 170.2MB). macOS 는 `.app` 폴더라 묶어야만 한다.
     pub fn asset_name(self) -> Option<String> {
         let slug = platform_slug()?;
-        let stem = match self {
-            Program::App => "yt-download",
-            Program::Manager => "yt-download-manager",
-        };
-        Some(format!("{stem}-{slug}{}", archive_suffix()))
+        match self {
+            Program::App => Some(format!("yt-download-{slug}{}", archive_suffix())),
+            Program::Manager => Some(format!(
+                "yt-download-manager-{slug}{}",
+                if cfg!(windows) { ".exe" } else { "" }
+            )),
+        }
     }
 
     /// 압축 안에 들어 있는 실행 파일 이름.
@@ -251,6 +259,9 @@ pub fn replace_directory(
     require: Option<&str>,
 ) -> Result<()> {
     let kind = archive::kind_of(asset_name)?;
+    if kind == archive::Kind::Raw {
+        bail!("{asset_name} 은 폴더로 풀 수 있는 것이 아닙니다");
+    }
     let staging = into.with_extension("new");
     let _ = fs::remove_dir_all(&staging);
 
@@ -280,14 +291,11 @@ pub fn replace_directory(
 /// 그 성질을 써서 옛것을 옆으로 치우고 새것을 그 이름에 놓는다. 도우미 프로세스가 필요 없다.
 /// 바꾼 뒤에도 지금 프로세스는 옛 코드로 계속 돈다. 다시 켜야 새 버전이 뜬다.
 pub fn update_self(bytes: &[u8], asset_name: &str, binary: &str) -> Result<()> {
-    let kind = archive::kind_of(asset_name)?;
     let staging = staging_dir();
     let _ = fs::remove_dir_all(&staging);
 
     let outcome = (|| -> Result<()> {
-        archive::extract(bytes, kind, &staging)?;
-        let new_exe = archive::find_file(&staging, binary)
-            .ok_or_else(|| anyhow!("압축 안에 {binary} 이 없습니다"))?;
+        let new_exe = stage_new_binary(bytes, asset_name, binary, &staging)?;
 
         // 받다 만 파일로 바꿔 끼우면 다시는 켜지지 않는다. 마지막으로 한 번 더 본다.
         let size = fs::metadata(&new_exe)?.len();
@@ -303,6 +311,29 @@ pub fn update_self(bytes: &[u8], asset_name: &str, binary: &str) -> Result<()> {
 
     let _ = fs::remove_dir_all(&staging);
     outcome
+}
+
+/// 받은 자산에서 새 실행 파일을 꺼내 임시 자리에 놓고 그 경로를 준다.
+///
+/// 압축본이면 풀어서 찾고, 실행 파일이 그대로 올라온 자산(윈도우용 관리자)이면
+/// 받은 바이트가 곧 그 파일이다. 압축이 필요 없는 것까지 굳이 묶지 않는다.
+fn stage_new_binary(
+    bytes: &[u8],
+    asset_name: &str,
+    binary: &str,
+    staging: &Path,
+) -> Result<PathBuf> {
+    let kind = archive::kind_of(asset_name)?;
+    if kind == archive::Kind::Raw {
+        fs::create_dir_all(staging)?;
+        let target = staging.join(binary);
+        fs::write(&target, bytes)
+            .with_context(|| format!("파일을 쓰지 못했습니다: {}", target.display()))?;
+        return Ok(target);
+    }
+
+    archive::extract(bytes, kind, staging)?;
+    archive::find_file(staging, binary).ok_or_else(|| anyhow!("압축 안에 {binary} 이 없습니다"))
 }
 
 /// 새 실행 파일을 띄운다. 부른 쪽은 곧바로 자기를 끝내야 한다.
@@ -457,6 +488,37 @@ cccc  yt-download-extension.zip.sig
         // 앱 이름이 관리자 자산까지 함께 잡아버리면 안 된다.
         assert_ne!(app, manager);
         assert!(app.ends_with(archive_suffix()));
+
+        // 관리자는 어디서든 압축하지 않고 실행 파일 그대로 올린다.
+        if cfg!(windows) {
+            assert!(manager.ends_with(".exe"), "{manager}");
+        } else {
+            assert!(!manager.contains('.'), "{manager}");
+        }
+        // 이름만 보고 어떻게 다룰지 정할 수 있어야 한다.
+        assert_eq!(archive::kind_of(&manager).unwrap(), archive::Kind::Raw);
+        assert_ne!(archive::kind_of(&app).unwrap(), archive::Kind::Raw);
+    }
+
+    #[test]
+    fn 압축하지_않은_자산은_그대로_실행_파일이다() {
+        let staging = std::env::temp_dir().join("ytdl-update-stage-raw");
+        let _ = fs::remove_dir_all(&staging);
+
+        let staged = stage_new_binary(b"binary", "a-windows-x64.exe", "app.exe", &staging).unwrap();
+        assert_eq!(fs::read(&staged).unwrap(), b"binary");
+        assert!(staged.ends_with("app.exe"), "{staged:?}");
+
+        // 압축본이면 풀어서 찾는다.
+        let _ = fs::remove_dir_all(&staging);
+        let archive = zip_of(&[("app.exe", b"zipped")]);
+        let staged = stage_new_binary(&archive, "a-windows-x64.zip", "app.exe", &staging).unwrap();
+        assert_eq!(fs::read(&staged).unwrap(), b"zipped");
+
+        // 모르는 이름은 실행 파일 자리에 놓지 않는다.
+        assert!(stage_new_binary(b"x", "a.7z", "app.exe", &staging).is_err());
+
+        let _ = fs::remove_dir_all(&staging);
     }
 
     #[test]

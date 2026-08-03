@@ -6,7 +6,10 @@
 //! 페이지를 우리가 대신 열어줄 수는 없다. 크로미움은 명령줄로 넘긴 `chrome://` 주소를
 //! 무시한다(직접 확인했다 — 새 탭이 열린다). 그래서 주소를 복사해 주는 데까지만 한다.
 
-use std::process::{Command, Stdio};
+use std::{
+    path::PathBuf,
+    process::{Command, Stdio},
+};
 
 use serde::Serialize;
 
@@ -61,6 +64,100 @@ pub fn default_key() -> Option<&'static str> {
         .iter()
         .find(|browser| raw.contains(browser.key))
         .map(|browser| browser.key)
+}
+
+/// 주소를 연다. 고른 브라우저가 있으면 그 브라우저로, 없으면 기본 브라우저로.
+///
+/// 확장이 그 브라우저에 들어 있으므로 changelog 도 같은 브라우저로 보여주는 편이 자연스럽다.
+/// 실행 파일을 못 찾으면 OS 기본 열기로 넘어간다(적어도 뜨긴 한다).
+pub fn open_url(url: &str, prefer: Option<&str>) {
+    if let Some(exe) = prefer.and_then(browser_executable) {
+        if Command::new(&exe).arg(url).spawn().is_ok() {
+            return;
+        }
+    }
+    open_with_os(url);
+}
+
+fn open_with_os(url: &str) {
+    let mut command = if cfg!(windows) {
+        let mut command = Command::new("cmd");
+        command.args(["/c", "start", ""]);
+        command
+    } else if cfg!(target_os = "macos") {
+        Command::new("open")
+    } else {
+        Command::new("xdg-open")
+    };
+    let _ = command.arg(url).spawn();
+}
+
+/// 고른 브라우저의 실행 파일 자리. 못 찾으면 `None`(기본 열기로 넘어간다).
+#[cfg(windows)]
+fn browser_executable(key: &str) -> Option<PathBuf> {
+    // 설치된 브라우저의 실행 파일 자리는 App Paths 에 적혀 있다.
+    let app = match key {
+        "chrome" => "chrome.exe",
+        "edge" => "msedge.exe",
+        "brave" => "brave.exe",
+        "whale" => "whale.exe",
+        "vivaldi" => "vivaldi.exe",
+        "opera" => "launcher.exe",
+        _ => return None,
+    };
+    for root in ["HKCU", "HKLM"] {
+        let key_path = format!(r"{root}\Software\Microsoft\Windows\CurrentVersion\App Paths\{app}");
+        let output = Command::new("reg")
+            .args(["query", &key_path, "/ve"])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        // "    (기본값)    REG_SZ    C:\...\chrome.exe" 에서 경로만 꺼낸다.
+        if let Some(path) = text.lines().find_map(|line| {
+            line.find("REG_SZ")
+                .map(|at| line[at + "REG_SZ".len()..].trim().to_string())
+        }) {
+            let path = PathBuf::from(path);
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn browser_executable(key: &str) -> Option<PathBuf> {
+    // macOS 는 앱 번들이라 open -a 로 여는 편이 낫다. 여기서는 기본 열기에 맡긴다.
+    let _ = key;
+    None
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn browser_executable(key: &str) -> Option<PathBuf> {
+    // PATH 에서 흔한 실행 파일 이름을 찾는다.
+    let candidates: &[&str] = match key {
+        "chrome" => &["google-chrome", "google-chrome-stable", "chromium"],
+        "edge" => &["microsoft-edge", "microsoft-edge-stable"],
+        "brave" => &["brave-browser", "brave"],
+        "vivaldi" => &["vivaldi", "vivaldi-stable"],
+        "opera" => &["opera"],
+        _ => return None,
+    };
+    for name in candidates {
+        if let Ok(output) = Command::new("which").arg(name).output() {
+            if output.status.success() {
+                let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+                if path.is_file() {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
 }
 
 #[cfg(windows)]

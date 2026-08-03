@@ -46,3 +46,8 @@ pub fn update_manager(release: &Release) -> Result<()> {
 pub fn manager_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
+
+/// 그 버전의 릴리스 페이지. 무엇이 바뀌었는지(릴리스 노트=changelog)를 여기서 보여준다.
+pub fn changelog_url(version: &str) -> String {
+    format!("https://github.com/{REPO}/releases/tag/v{version}")
+}

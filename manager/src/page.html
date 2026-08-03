@@ -146,6 +146,31 @@
         padding: 1px 5px;
         font-family: ui-monospace, Consolas, monospace;
       }
+      .check {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        cursor: pointer;
+      }
+      .check input {
+        margin-top: 3px;
+        width: 16px;
+        height: 16px;
+        flex: none;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      select {
+        font: inherit;
+        border-radius: 7px;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        background: transparent;
+        color: inherit;
+      }
     </style>
   </head>
   <body>
@@ -194,6 +219,19 @@
       </p>
     </div>
 
+    <div class="card">
+      <label class="check">
+        <input type="checkbox" id="auto-update" />
+        <span>
+          <b>로그인할 때 자동으로 업데이트 확인</b><br />
+          <span class="hint">
+            창 없이 조용히 확인하고, 새 버전이 있으면 폴더를 갈아 끼웁니다(확장이 스스로 적용).
+            바뀐 내용은 브라우저로 열어 보여줍니다. 관리자 권한은 필요 없습니다.
+          </span>
+        </span>
+      </label>
+    </div>
+
     <script>
       const send = (action) => window.ipc.postMessage(action);
       for (const id of ["install", "check", "open", "update-self", "restart"]) {
@@ -225,13 +263,20 @@
       const pageFor = () => browserSelect.value || "chrome://extensions";
       browserSelect.addEventListener("change", () => {
         pageUrl.textContent = pageFor();
+        // 고른 브라우저를 기억해 둔다. 자동 확인이 창 없이 돌 때 changelog 를 그 브라우저로 연다.
+        const key = browserSelect.selectedOptions[0]?.dataset.key || "";
+        send("browser:" + key);
       });
+
+      // 로그인 시 자동 확인 토글.
+      const autoUpdate = document.getElementById("auto-update");
+      autoUpdate.addEventListener("change", () => send(autoUpdate.checked ? "auto-on" : "auto-off"));
       document.getElementById("copy-page").addEventListener("click", () => send("copy:" + pageFor()));
       document.getElementById("copy-path").addEventListener("click", () => send("copy:" + installPath));
 
       // 러스트 쪽에서 상태가 바뀔 때마다 부른다.
       window.show = (view) => {
-        // 브라우저 목록은 한 번만 채우고, 기본 브라우저를 처음 선택으로 둔다.
+        // 브라우저 목록은 한 번만 채우고, 지난번에 고른(없으면 기본) 브라우저를 선택으로 둔다.
         if (view.browsers && !browserSelect.options.length) {
           for (const browser of view.browsers) {
             const option = document.createElement("option");
@@ -240,11 +285,12 @@
             option.dataset.key = browser.key;
             browserSelect.append(option);
           }
-          const chosen = [...browserSelect.options].find((o) => o.dataset.key === view.default_browser);
+          const chosen = [...browserSelect.options].find((o) => o.dataset.key === view.chosen_browser);
           if (chosen) chosen.selected = true;
           pageUrl.textContent = pageFor();
         }
         installPath = view.path || "";
+        autoUpdate.checked = Boolean(view.auto_update);
 
         document.getElementById("installed").textContent = view.installed || "없음";
         document.getElementById("latest").textContent =

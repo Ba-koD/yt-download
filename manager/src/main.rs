@@ -26,8 +26,12 @@ use tao::{
 };
 use wry::WebViewBuilder;
 
+mod autostart;
 mod browser;
+mod config;
 mod github;
+
+use config::Config;
 
 /// 확장을 풀어 놓는 자리. 크롬에 이 폴더를 골라준다.
 fn install_dir() -> PathBuf {
@@ -43,6 +47,36 @@ fn installed_version() -> Option<String> {
     let bytes = fs::read(install_dir().join("manifest.json")).ok()?;
     let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     value.get("version")?.as_str().map(str::to_string)
+}
+
+/// 로그인 시 창 없이 도는 자동 확인.
+///
+/// 확장이 최신이면 아무것도 하지 않고 조용히 나간다(창도, 소리도 없다).
+/// 새 버전이면 폴더를 갈아 끼우고(확장이 스스로 갈아탄다) 무엇이 바뀌었는지
+/// changelog 페이지를 브라우저로 열어 보여준다.
+fn run_auto() {
+    // 아직 설치도 안 했으면 자동으로 할 일이 없다. 처음 설치는 사람이 창에서 한다.
+    let Some(installed) = installed_version() else {
+        return;
+    };
+    let Ok(release) = github::latest_release() else {
+        return; // 인터넷이 없거나 깃허브가 막혔다. 다음 로그인에 다시 본다.
+    };
+    if !release.is_newer_than(&installed) {
+        return; // 최신이다. 조용히 나간다.
+    }
+
+    // 다 받아 검사한 뒤 폴더를 갈아 끼운다. 실패하면 쓰던 확장이 그대로 남는다.
+    if github::install_extension(&release, &install_dir()).is_err() {
+        return;
+    }
+
+    // 무엇이 바뀌었는지 보여준다. 확장이 들어 있는 브라우저로 연다.
+    let config = Config::load();
+    browser::open_url(
+        &github::changelog_url(&release.version),
+        config.browser.as_deref(),
+    );
 }
 
 /// 화면에 그대로 넘겨주는 상태.
@@ -63,21 +97,27 @@ struct View {
     manager_update: bool,
     /// 관리자를 바꿔 끼운 뒤. 다시 켜야 새것이 뜬다.
     restart: bool,
-    /// 넣을 수 있는 브라우저들과, 이 컴퓨터의 기본 브라우저.
+    /// 넣을 수 있는 브라우저들과, 지금 고른 브라우저.
     browsers: &'static [browser::Browser],
-    default_browser: Option<&'static str>,
+    chosen_browser: Option<String>,
+    /// 로그인 시 자동으로 업데이트를 확인하도록 등록돼 있는지.
+    auto_update: bool,
 }
 
 impl View {
     fn base() -> Self {
+        let config = Config::load();
         View {
             installed: installed_version(),
             path: install_dir().to_string_lossy().to_string(),
             manager: github::manager_version(),
             browsers: browser::BROWSERS,
-            // 기본 브라우저를 처음 선택으로 둔다. 파이어폭스처럼 목록에 없는 것이 기본이면
-            // 고르지 않은 상태로 두고 사용자가 직접 고르게 한다.
-            default_browser: browser::default_key(),
+            // 지난번에 고른 브라우저가 있으면 그것, 없으면 이 컴퓨터의 기본 브라우저.
+            // 파이어폭스처럼 목록에 없는 것이 기본이면 고르지 않은 채로 둔다.
+            chosen_browser: config
+                .browser
+                .or_else(|| browser::default_key().map(str::to_string)),
+            auto_update: autostart::is_enabled(),
             ..Default::default()
         }
     }
@@ -88,6 +128,12 @@ enum Message {
 }
 
 fn main() -> Result<()> {
+    // 로그인 시 시작 항목이 `--auto` 로 띄운다. 창 없이 업데이트만 확인하고 나간다.
+    if std::env::args().skip(1).any(|arg| arg == "--auto") {
+        run_auto();
+        return Ok(());
+    }
+
     let event_loop = EventLoopBuilder::<Message>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
@@ -195,6 +241,33 @@ fn handle(action: &str, proxy: EventLoopProxy<Message>) {
             };
             let _ = proxy.send_event(Message::Show(view));
         }
+        // 브라우저를 골랐다. 자동 확인이 창 없이 돌 때도 알 수 있도록 파일에 적어둔다.
+        other if other.starts_with("browser:") => {
+            let key = other.trim_start_matches("browser:").trim().to_string();
+            let mut config = Config::load();
+            config.browser = (!key.is_empty()).then_some(key);
+            let _ = config.save();
+        }
+        // 로그인 시 자동 확인 켜기/끄기. 시작 항목을 등록하거나 지운다.
+        "auto-on" | "auto-off" => {
+            let on = action == "auto-on";
+            let mut view = View::base();
+            match autostart::set(on) {
+                Ok(()) => {
+                    view.auto_update = on;
+                    view.note = if on {
+                        "로그인할 때마다 조용히 업데이트를 확인합니다".into()
+                    } else {
+                        "자동 확인을 껐습니다".into()
+                    };
+                }
+                Err(err) => {
+                    view.failed = true;
+                    view.note = format!("설정하지 못했습니다: {err}");
+                }
+            }
+            let _ = proxy.send_event(Message::Show(view));
+        }
         _ => {}
     }
 }
@@ -247,8 +320,15 @@ fn install_in_background(proxy: EventLoopProxy<Message>) {
         let mut view = View::base();
         match outcome {
             Ok(release) => {
+                // 처음 설치하면 로그인 자동 확인을 켜 둔다. "설치하고 잊기"가 되도록.
+                // 사용자가 끈 적이 있으면(설정에 흔적) 다시 켜지 않는다.
+                if !view.auto_update && autostart::set(true).is_ok() {
+                    view.auto_update = true;
+                }
                 view.installed = installed_version();
-                view.note = "설치했습니다 · 크롬에서 새로고침하면 반영됩니다".into();
+                view.note =
+                    "설치했습니다 · 크롬에서 새로고침하면 반영됩니다. 이후 갱신은 자동입니다"
+                        .into();
                 view.manager_update = release.is_newer_than(github::manager_version());
                 view.latest = Some(release.version);
                 view.update = false;

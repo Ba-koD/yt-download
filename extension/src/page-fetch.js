@@ -14,9 +14,19 @@
 // 그 값으로 막대를 그리면 라이브를 보고 있는데도 막대가 중간에 놓인다.
 // 플레이어의 `getProgressState()` 는 정확하다. 다만 그 함수는 페이지 쪽에만 있어서
 // 확장(격리된 세계)에서는 부를 수 없다. 그래서 여기서 읽어 넘긴다.
-function readProgress() {
-  const api = document.querySelector("#movie_player");
-  if (!api || typeof api.getProgressState !== "function") return null;
+// 플레이어 요소는 화면마다 이름이 다르다(일반 #movie_player, 숏츠 #shorts-player).
+//
+// 숏츠 화면에는 **둘 다 있다.** 그런데 거기서 `#movie_player` 는 값이 전부 0 인
+// 빈 껍데기다(직접 확인함). 하나만 골라 보고 끝내면 길이를 0 으로 읽는다.
+// 그래서 후보를 차례로 읽어보고 쓸 만한 값을 주는 첫 번째를 쓴다.
+function playerApis() {
+  const found = ["#shorts-player", "#movie_player", ".html5-video-player"]
+    .map((selector) => document.querySelector(selector))
+    .filter((node) => node && typeof node.getProgressState === "function");
+  return [...new Set(found)];
+}
+
+function readProgressFrom(api) {
   let state;
   try {
     state = api.getProgressState();
@@ -30,6 +40,14 @@ function readProgress() {
   const end = Number(state.seekableEnd) - offset;
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
   return { start, end, current: Number(state.current) - offset, live: Boolean(state.ingestionTime) };
+}
+
+function readProgress() {
+  for (const api of playerApis()) {
+    const progress = readProgressFrom(api);
+    if (progress) return progress;
+  }
+  return null;
 }
 
 let progressTimer = null;

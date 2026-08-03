@@ -1,6 +1,9 @@
 // 유튜브 영상 페이지의 좋아요·공유 줄에 "구간 받기" 버튼을 넣고,
 // 누르면 영상 아래에 구간 편집 패널을 펼친다.
 //
+// 숏츠도 같은 방식으로 받는다. 화면 생김새만 달라서(오른쪽 세로 버튼 줄, 아래 정보칸 없음)
+// 버튼은 그 세로 줄에 넣고 패널은 화면 아래에 띄운다. 받는 일 자체는 똑같다.
+//
 // content script 는 확장의 격리된 세계에서 돌지만 네트워크는 페이지(youtube.com) 몫으로 나간다.
 // 덕분에 InnerTube 는 동일 출처로, 미디어는 Range 를 허용하는 CORS 로 그대로 받을 수 있다.
 
@@ -53,6 +56,13 @@
     control: null,
     // 끝점을 "끝까지"로 둔 상태. 라이브면 방송이 진행되는 만큼 따라간다.
     toEnd: false,
+    // 지금 붙어 있는 화면 종류("watch" 또는 "shorts"). 바뀌면 붙일 자리를 다시 잡는다.
+    mode: null,
+    // 띄운 패널을 끌고 있는 중인지, 그리고 사용자가 한 번이라도 직접 옮겼는지.
+    panelDrag: null,
+    panelMoved: false,
+    // 구간 손잡이를 놓았을 때 영상을 옮겨줄 지점.
+    dropAt: null,
   };
 
   // 패널이 열려 있는 동안만 페이지에게 재생 상태를 받아온다.
@@ -128,11 +138,41 @@
 
   function currentVideoId() {
     const url = new URL(location.href);
-    if (url.pathname.startsWith("/live/")) return url.pathname.split("/")[2] || null;
+    // /live/<id> 와 /shorts/<id> 는 주소 자체가 영상 ID 다.
+    if (url.pathname.startsWith("/live/") || url.pathname.startsWith("/shorts/")) {
+      return url.pathname.split("/")[2] || null;
+    }
     return url.searchParams.get("v");
   }
 
+  function isShorts() {
+    return location.pathname.startsWith("/shorts/");
+  }
+
+  /**
+   * 지금 보고 있는 숏츠 한 편.
+   *
+   * 편을 넘겨도 `ytd-reel-video-renderer` 는 하나뿐이고 유튜브가 그 안을 갈아 끼운다.
+   * 표시용 속성(`is-active` 같은 것)은 이 버전에 없어서, 플레이어가 들어 있는 쪽을
+   * 지금 보는 편으로 본다. 이름이 바뀌어도 플레이어는 하나라 이 방법이 오래 간다.
+   */
+  function activeReel() {
+    const shortsPlayer = document.querySelector("#shorts-player");
+    return (
+      shortsPlayer?.closest("ytd-reel-video-renderer") ||
+      document.querySelector("ytd-reel-video-renderer")
+    );
+  }
+
+  // 숏츠는 다음 편을 미리 붙여 두기 때문에 <video> 가 여러 개 있다.
+  // 아무거나 집으면 보고 있지 않은 영상의 시간을 읽게 된다.
   function player() {
+    if (isShorts()) {
+      const inPlayer = document.querySelector("#shorts-player video");
+      if (inPlayer) return inPlayer;
+      const inReel = activeReel()?.querySelector("video");
+      if (inReel) return inReel;
+    }
     return document.querySelector(".html5-main-video") || document.querySelector("video");
   }
 
@@ -181,13 +221,19 @@
   }
 
   // 유튜브의 좋아요·공유 버튼과 나란히 설 버튼.
-  function buildButton() {
+  // 숏츠에서는 오른쪽 세로 줄에 들어가므로 아이콘만 있는 동그란 모양으로 바꾼다.
+  function buildButton(shorts) {
     const icon = make("span", { class: "ytdl-open-icon", text: "↧" });
     icon.setAttribute("aria-hidden", "true");
     const button = make(
       "button",
-      { id: "ytdl-open", class: "ytdl-open", type: "button", title: "이 영상의 원하는 구간만 받기" },
-      [icon, make("span", { text: "구간 받기" })],
+      {
+        id: "ytdl-open",
+        class: shorts ? "ytdl-open ytdl-open-reel" : "ytdl-open",
+        type: "button",
+        title: "이 영상의 원하는 구간만 받기",
+      },
+      [icon, make("span", { class: "ytdl-open-label", text: shorts ? "구간" : "구간 받기" })],
     );
     button.addEventListener("click", togglePanel);
     return button;
@@ -228,8 +274,21 @@
       const value = seconds(event);
       if (state.drag === "in") setRange(value, state.end);
       else if (state.drag === "out") setRange(state.start, value);
-      // 끄는 지점을 영상에서 바로 보여준다.
-      seek(value);
+
+      if (state.drag === "seek") {
+        // 재생 위치를 끄는 중이라면 영상이 곧바로 따라가야 한다.
+        seek(value);
+      } else {
+        // 구간 손잡이는 놓을 때 한 번만 옮긴다. 끄는 내내 영상이 따라다니면
+        // 되감기가 이어지면서 화면이 어지럽고, 어디를 잡았는지도 잘 안 보인다.
+        state.dropAt = value;
+      }
+    };
+
+    const dropDrag = () => {
+      if (state.drag && state.drag !== "seek" && state.dropAt !== null) seek(state.dropAt);
+      state.drag = null;
+      state.dropAt = null;
     };
 
     el.inHandle.addEventListener("pointerdown", startDrag("in"));
@@ -239,12 +298,8 @@
       startDrag("seek")(event);
     });
     el.track.addEventListener("pointermove", onDrag);
-    el.track.addEventListener("pointerup", () => {
-      state.drag = null;
-    });
-    el.track.addEventListener("pointercancel", () => {
-      state.drag = null;
-    });
+    el.track.addEventListener("pointerup", dropDrag);
+    el.track.addEventListener("pointercancel", dropDrag);
 
     return el.track;
   }
@@ -256,7 +311,7 @@
     if (video && Number.isFinite(seconds) && boundsSpan() > 0) video.currentTime = seconds;
   }
 
-  function buildPanel() {
+  function buildPanel(floating) {
     el.inputs = {
       start: make("input", { class: "ytdl-time", value: "0:00", dataset: { time: "start" } }),
       end: make("input", { class: "ytdl-time", value: "0:00", dataset: { time: "end" } }),
@@ -269,6 +324,16 @@
     const markOut = make("button", {
       class: "ytdl-mark", type: "button", text: "]", title: "지금 위치를 끝점으로 (O)",
       dataset: { mark: "end" },
+    });
+    // 양 끝으로 보내는 버튼. 안쪽 대괄호가 "지금 위치", 바깥 화살표가 "맨 끝"이라
+    // 줄만 봐도 어느 쪽이 더 멀리 가는지 알 수 있다.
+    const toStart = make("button", {
+      class: "ytdl-mark", type: "button", text: "⇤", title: "시작점을 맨 앞으로 (Home)",
+      dataset: { edge: "start" },
+    });
+    const toEnd = make("button", {
+      class: "ytdl-mark", type: "button", text: "⇥", title: "끝점을 맨 끝으로 (End)",
+      dataset: { edge: "end" },
     });
 
     el.length = make("span", { class: "ytdl-length" });
@@ -283,20 +348,26 @@
     const close = make("button", { class: "ytdl-close", type: "button", title: "닫기", text: "✕" });
     close.addEventListener("click", togglePanel);
 
-    const panel = make("div", { class: "ytdl-panel", hidden: true }, [
-      make("div", { class: "ytdl-head" }, [
-        make("span", { class: "ytdl-title", text: "구간 받기" }),
-        el.total,
-        close,
-      ]),
+    const head = make("div", { class: "ytdl-head" }, [
+      make("span", { class: "ytdl-title", text: "구간 받기" }),
+      el.total,
+      close,
+    ]);
+    if (floating) bindPanelDrag(head);
+
+    // 숏츠에는 영상 아래에 끼워 넣을 자리가 없다. 화면 위에 띄운다.
+    const panel = make("div", { class: floating ? "ytdl-panel ytdl-float" : "ytdl-panel", hidden: true }, [
+      head,
       make("div", { class: "ytdl-body" }, [
         buildTimeline(),
         make("div", { class: "ytdl-row" }, [
+          toStart,
           markIn,
           el.inputs.start,
           make("span", { class: "ytdl-sep", text: "~" }),
           el.inputs.end,
           markOut,
+          toEnd,
           el.length,
           el.quality,
           el.go,
@@ -310,6 +381,9 @@
 
     for (const button of [markIn, markOut]) {
       button.addEventListener("click", () => markHere(button.dataset.mark));
+    }
+    for (const button of [toStart, toEnd]) {
+      button.addEventListener("click", () => markEdge(button.dataset.edge));
     }
 
     for (const [which, input] of Object.entries(el.inputs)) {
@@ -346,33 +420,166 @@
     setRange(which === "start" ? now : state.start, which === "end" ? now : state.end);
   }
 
-  function actionRow() {
+  /** 시작점을 맨 앞으로, 또는 끝점을 맨 끝으로. 라이브면 "끝"은 지금 받을 수 있는 데까지다. */
+  function markEdge(which) {
+    const edge = bounds();
+    if (edge.end <= edge.start) return;
+    if (which === "start") setRange(edge.start, state.end);
+    else setRange(state.start, edge.end);
+  }
+
+  /**
+   * 버튼을 넣을 자리. 숏츠는 좋아요·댓글이 있는 오른쪽 세로 줄이다.
+   *
+   * 그 줄은 `reel-action-bar-view-model` 이다. 일반 화면의 `#actions` 는 숏츠에도
+   * 빈 껍데기로 남아 있어서 그걸 찾으면 크기 0인 자리에 버튼을 붙이게 된다(실제로 그랬다).
+   */
+  function buttonHost() {
+    if (isShorts()) {
+      const reel = activeReel();
+      return (
+        reel?.querySelector("reel-action-bar-view-model") ||
+        reel?.querySelector(".ytReelPlayerOverlayViewModelActionsContainer") ||
+        document.querySelector("reel-action-bar-view-model")
+      );
+    }
     return (
       document.querySelector("#actions #top-level-buttons-computed") ||
       document.querySelector("ytd-watch-metadata #actions-inner")
     );
   }
 
+  /** 패널을 끼워 넣을 자리. 숏츠는 끼울 데가 없어서 화면 위에 띄운다(그때는 null). */
+  function panelAnchor() {
+    if (isShorts()) return null;
+    return document.querySelector("ytd-watch-metadata") || document.querySelector("#below");
+  }
+
+  /** 띄운 패널이 설 가로 자리. 필요한 최소 너비. */
+  const FLOAT_MIN_WIDTH = 320;
+  const FLOAT_MAX_WIDTH = 430;
+  const FLOAT_GAP = 16;
+
+  /**
+   * 숏츠에서 패널을 세로 버튼 줄 오른쪽 빈자리에 세운다.
+   *
+   * 고정된 `right` 값으로 두면 안 된다 — 세로 버튼 줄이 영상 바로 옆에 붙어 있어서
+   * 창 크기에 따라 그 버튼들을 덮어버린다(재보니 실제로 덮었다).
+   * 자리가 모자라면 화면 아래에 눕힌다.
+   */
+  /**
+   * 제목 줄을 잡아 패널을 옮긴다.
+   *
+   * 한 번이라도 직접 옮겼으면 그 뒤로는 자동 배치를 하지 않는다. 놓아둔 자리가
+   * 매 초 원래대로 돌아가면 옮기는 의미가 없다.
+   */
+  function bindPanelDrag(head) {
+    head.addEventListener("pointerdown", (event) => {
+      // 닫기 단추를 누른 것은 끌기가 아니다.
+      if (event.target.closest(".ytdl-close")) return;
+      const rect = el.panel.getBoundingClientRect();
+      state.panelDrag = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      state.panelMoved = true;
+      // 지금 보이는 그 자리에서 시작하도록 좌표를 굳힌다(가운데 맞춤을 풀어준다).
+      el.panel.classList.remove("ytdl-float-bottom");
+      el.panel.style.transform = "none";
+      el.panel.style.bottom = "auto";
+      el.panel.style.width = `${Math.round(rect.width)}px`;
+      moveFloatingPanel(rect.left, rect.top);
+      try {
+        head.setPointerCapture(event.pointerId);
+      } catch {
+        // 잡아두지 못해도 끄는 것 자체는 된다(포인터가 밖으로 나가면 멈출 뿐).
+      }
+      event.preventDefault();
+    });
+
+    head.addEventListener("pointermove", (event) => {
+      if (!state.panelDrag) return;
+      moveFloatingPanel(event.clientX - state.panelDrag.x, event.clientY - state.panelDrag.y);
+    });
+
+    const drop = () => {
+      state.panelDrag = null;
+    };
+    head.addEventListener("pointerup", drop);
+    head.addEventListener("pointercancel", drop);
+  }
+
+  /** 화면 밖으로 나가지 않게 잡아두고 옮긴다. */
+  function moveFloatingPanel(left, top) {
+    const width = el.panel.offsetWidth;
+    const height = el.panel.offsetHeight;
+    const limit = (value, high) => Math.max(8, Math.min(value, Math.max(8, high)));
+    el.panel.style.left = `${Math.round(limit(left, window.innerWidth - width - 8))}px`;
+    el.panel.style.top = `${Math.round(limit(top, window.innerHeight - height - 8))}px`;
+  }
+
+  function placeFloatingPanel() {
+    if (state.mode !== "shorts" || !el.panel || el.panel.hidden) return;
+    // 사용자가 직접 옮겼으면 화면 밖으로 나가지 않게만 봐준다.
+    if (state.panelMoved) {
+      const rect = el.panel.getBoundingClientRect();
+      moveFloatingPanel(rect.left, rect.top);
+      return;
+    }
+    const bar = buttonHost()?.getBoundingClientRect();
+    const room = bar ? window.innerWidth - bar.right - FLOAT_GAP * 2 : 0;
+    if (bar && room >= FLOAT_MIN_WIDTH) {
+      el.panel.classList.remove("ytdl-float-bottom");
+      el.panel.style.left = `${Math.round(bar.right + FLOAT_GAP)}px`;
+      el.panel.style.width = `${Math.round(Math.min(room, FLOAT_MAX_WIDTH))}px`;
+    } else {
+      el.panel.classList.add("ytdl-float-bottom");
+      el.panel.style.left = "";
+      el.panel.style.width = "";
+    }
+  }
+
   // 유튜브는 화면을 통째로 다시 그리는 일이 잦다. 사라졌으면 다시 붙인다.
   function mount() {
-    const row = actionRow();
-    if (row && !row.querySelector("#ytdl-open")) {
-      el.button = buildButton();
-      row.append(el.button);
+    const mode = isShorts() ? "shorts" : "watch";
+    // 숏츠와 일반 화면 사이를 오갈 때 유튜브는 문서를 새로 만들지 않는다.
+    // 붙일 자리도 모양도 달라지므로 떼어내고 새로 만든다.
+    if (state.mode !== mode) {
+      state.mode = mode;
+      el.button?.remove();
+      el.button = null;
+      el.panel?.remove();
+      el.panel = null;
+      // 옮겨둔 자리는 그 화면에서만 뜻이 있다.
+      state.panelMoved = false;
+      state.panelDrag = null;
     }
 
-    const below = document.querySelector("ytd-watch-metadata") || document.querySelector("#below");
-    if (below && (!el.panel || !el.panel.isConnected)) {
-      const panel = buildPanel();
-      below.insertAdjacentElement("afterend", panel);
-      panel.hidden = !state.open;
-      render();
+    const host = buttonHost();
+    // 숏츠는 한 편 넘길 때마다 버튼 줄이 통째로 갈린다. 그러면 새 줄로 옮겨 붙인다.
+    if (host && el.button?.parentElement !== host) {
+      el.button = el.button || buildButton(mode === "shorts");
+      el.button.classList.toggle("ytdl-open-active", state.open);
+      // 숏츠에서는 좋아요 위에 둔다. 아래에 붙이면 창이 조금만 낮아도 화면 밖으로 밀린다.
+      if (mode === "shorts") host.prepend(el.button);
+      else host.append(el.button);
+    }
+
+    if (!el.panel || !el.panel.isConnected) {
+      const anchor = panelAnchor();
+      if (mode === "shorts" || anchor) {
+        const panel = buildPanel(mode === "shorts");
+        if (anchor) anchor.insertAdjacentElement("afterend", panel);
+        else document.body.append(panel);
+        panel.hidden = !state.open;
+        // 새로 만든 패널은 화질칸이 비어 있다. 이미 받아둔 목록이 있으면 그대로 채운다.
+        fillQuality();
+        render();
+      }
     }
   }
 
   async function togglePanel() {
     state.open = !state.open;
     if (el.panel) el.panel.hidden = !state.open;
+    placeFloatingPanel();
     el.button?.classList.toggle("ytdl-open-active", state.open);
     // 열려 있는 동안만 재생 상태를 받아온다.
     watchProgress(state.open);
@@ -441,6 +648,16 @@
     el.status.className = `ytdl-status ${kind}`;
   }
 
+  /** 받아둔 화질 목록을 화질칸에 채운다. 패널을 다시 만들었을 때도 쓴다. */
+  function fillQuality() {
+    if (!el.quality || !state.formats) return;
+    el.quality.replaceChildren(
+      ...state.formats.video.map((format) =>
+        make("option", { value: String(format.itag), text: formatLabel(format) }),
+      ),
+    );
+  }
+
   async function loadFormats() {
     const videoId = currentVideoId();
     if (!videoId) return;
@@ -463,11 +680,7 @@
         throw new Error("받을 수 있는 mp4 화질이 없습니다");
       }
       state.formats = formats;
-      el.quality.replaceChildren(
-        ...formats.video.map((format) =>
-          make("option", { value: String(format.itag), text: formatLabel(format) }),
-        ),
-      );
+      fillQuality();
       const saved = savedRange(videoId);
       if (saved) {
         state.touched = true;
@@ -571,15 +784,22 @@
     if (tag === "INPUT" || tag === "TEXTAREA" || document.activeElement?.isContentEditable) return;
     if (event.key === "i" || event.key === "I") markHere("start");
     else if (event.key === "o" || event.key === "O") markHere("end");
+    // 양 끝으로 보내기. 편집 프로그램에서 Home/End 가 하는 일과 같다.
+    else if (event.key === "Home") markEdge("start");
+    else if (event.key === "End") markEdge("end");
     else return;
     event.preventDefault();
     event.stopPropagation();
   });
 
   // 유튜브는 페이지를 새로 그리지 않고 영상만 갈아끼운다.
+  // 창 크기가 바뀌면 띄운 패널이 설 자리도 달라진다.
+  window.addEventListener("resize", placeFloatingPanel);
+
   let lastId = currentVideoId();
   setInterval(() => {
     mount();
+    placeFloatingPanel();
     // 영상 길이는 늦게 정해진다(특히 라이브). 손대기 전이라면 전 구간을 따라간다.
     if (state.open && !state.touched) selectWhole();
     // "끝까지"로 둔 상태면 라이브가 나아가는 만큼 끝점도 함께 민다.

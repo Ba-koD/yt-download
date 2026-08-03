@@ -35,6 +35,60 @@
   line-height: 1;
 }
 
+/* 숏츠의 오른쪽 세로 줄에 서는 모양.
+   유튜브의 좋아요 칸과 똑같이 만든다 — 48px 동그라미 + 그 아래 글자, 전체 78px, 여백 0.
+   그 줄은 gap 도 margin 도 없이 칸 높이로만 간격을 만든다(재서 확인함).
+   여백을 따로 주면 우리 것만 어긋난다. */
+.ytdl-open-reel {
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 0;
+  width: 48px;
+  height: 78px;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.ytdl-open-reel:hover {
+  background: transparent;
+}
+
+.ytdl-open-reel .ytdl-open-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.05);
+  font-size: 21px;
+}
+
+.ytdl-open-reel:hover .ytdl-open-icon {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.ytdl-open-reel .ytdl-open-label {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+/* 눌린 상태는 동그라미만 반전한다(칸 전체를 칠하면 유튜브 버튼들과 따로 논다). */
+.ytdl-open-reel.ytdl-open-active,
+.ytdl-open-reel.ytdl-open-active:hover {
+  background: transparent;
+  color: inherit;
+}
+
+.ytdl-open-reel.ytdl-open-active .ytdl-open-icon {
+  background: #0f0f0f;
+  color: #fff;
+}
+
 /* 영상 정보 바로 아래에 끼어드는 패널. */
 .ytdl-panel {
   margin: 12px 0 16px;
@@ -45,12 +99,54 @@
   font: 14px/1.4 "Roboto", "Noto Sans KR", system-ui, sans-serif;
 }
 
+/* 숏츠에는 영상 아래에 끼워 넣을 자리가 없다. 화면 위에 띄운다.
+   숏츠 UI 는 z-index 를 2000 대까지 쓰므로 그보다 위에 놓는다.
+
+   가운데 모달로 띄우지 않는 이유: 손잡이를 끌면 유튜브 영상이 그 지점으로 따라가서
+   화면 자체가 미리보기다. 영상을 가리면 그 미리보기를 잃는다.
+   그래서 숏츠(세로 영상) 옆의 빈자리에 세운다.
+
+   가로 자리(left·width)는 화면마다 달라서 content.js 가 재서 넣는다. 세로 버튼 줄이
+   영상 바로 오른쪽에 붙어 있어서, 고정값으로 두면 그 버튼들을 덮는다(실제로 덮었다). */
+.ytdl-panel.ytdl-float {
+  position: fixed;
+  top: 50%;
+  right: auto;
+  transform: translateY(-50%);
+  max-height: 82vh;
+  overflow-y: auto;
+  margin: 0;
+  z-index: 2500;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
+  background: #fff;
+}
+
+/* 옆에 설 자리가 없을 만큼 창이 좁으면 화면 아래에 눕힌다. */
+.ytdl-panel.ytdl-float.ytdl-float-bottom {
+  top: auto;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(760px, calc(100vw - 32px));
+  max-height: 60vh;
+}
+
 .ytdl-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+/* 띄운 패널은 제목 줄을 잡아 끌어 옮길 수 있다. */
+.ytdl-float .ytdl-head {
+  cursor: grab;
+  user-select: none;
+}
+
+.ytdl-float .ytdl-head:active {
+  cursor: grabbing;
 }
 
 .ytdl-title {
@@ -268,10 +364,34 @@ html[dark] .ytdl-open-active:hover {
   background: #d9d9d9;
 }
 
+html[dark] .ytdl-open-reel,
+html[dark] .ytdl-open-reel:hover,
+html[dark] .ytdl-open-reel.ytdl-open-active {
+  background: transparent;
+  color: #f1f1f1;
+}
+
+html[dark] .ytdl-open-reel .ytdl-open-icon {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+html[dark] .ytdl-open-reel:hover .ytdl-open-icon {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+html[dark] .ytdl-open-reel.ytdl-open-active .ytdl-open-icon {
+  background: #f1f1f1;
+  color: #0f0f0f;
+}
+
 html[dark] .ytdl-panel {
   border-color: rgba(255, 255, 255, 0.15);
   background: #212121;
   color: #f1f1f1;
+}
+
+html[dark] .ytdl-panel.ytdl-float {
+  background: #212121;
 }
 
 html[dark] .ytdl-head {

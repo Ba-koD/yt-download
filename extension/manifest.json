@@ -7,7 +7,8 @@
     {
       "matches": [
         "https://www.youtube.com/watch*",
-        "https://www.youtube.com/live/*"
+        "https://www.youtube.com/live/*",
+        "https://www.youtube.com/shorts/*"
       ],
       "js": [
         "src/page-fetch.js"
@@ -18,7 +19,8 @@
     {
       "matches": [
         "https://www.youtube.com/watch*",
-        "https://www.youtube.com/live/*"
+        "https://www.youtube.com/live/*",
+        "https://www.youtube.com/shorts/*"
       ],
       "js": [
         "src/content.js"

@@ -3,7 +3,7 @@
   버전을 올리고 릴리스 태그를 만든다.
 
 .DESCRIPTION
-  VERSION, Cargo.toml, Cargo.lock, CHANGELOG.md 를 한꺼번에 맞추고
+  VERSION, Cargo.toml, manager/Cargo.toml, extension/manifest.json, Cargo.lock, CHANGELOG.md 를 한꺼번에 맞추고
   커밋과 v<버전> 태그를 만든다. 태그를 밀면 GitHub Actions 가 빌드해서 릴리스로 올린다.
 
 .PARAMETER Bump
@@ -86,6 +86,13 @@ $versionLine = New-Object Text.RegularExpressions.Regex '(?m)^version = "[^"]+"\
 if (-not $versionLine.IsMatch($manifest)) { throw "Cargo.toml 에서 version 줄을 찾지 못했습니다." }
 Write-Utf8 $manifestPath $versionLine.Replace($manifest, "version = `"$next`"", 1)
 
+# 2-1) 확장 관리자도 같은 버전으로 나간다(check-version.sh 가 어긋나면 릴리스를 세운다).
+#      관리자는 이 번호로 자기 갱신 여부를 판단하므로 틀리면 갱신이 조용히 어긋난다.
+$managerPath = Join-Path $root "manager\Cargo.toml"
+$manager = [IO.File]::ReadAllText($managerPath)
+if (-not $versionLine.IsMatch($manager)) { throw "manager/Cargo.toml 에서 version 줄을 찾지 못했습니다." }
+Write-Utf8 $managerPath $versionLine.Replace($manager, "version = `"$next`"", 1)
+
 # 3) 확장 매니페스트도 같은 버전을 달아야 한다.
 $extensionPath = Join-Path $root "extension\manifest.json"
 $extension = [IO.File]::ReadAllText($extensionPath)
@@ -119,7 +126,7 @@ $ErrorActionPreference = "Continue"
 if ($LASTEXITCODE -ne 0) { Write-Warning "Cargo.lock 갱신 실패 — cargo check 를 한 번 돌려주세요." }
 $ErrorActionPreference = $previous
 
-Invoke-Git @("add", "VERSION", "Cargo.toml", "Cargo.lock", "CHANGELOG.md", "extension/manifest.json") | Out-Null
+Invoke-Git @("add", "VERSION", "Cargo.toml", "Cargo.lock", "CHANGELOG.md", "extension/manifest.json", "manager/Cargo.toml") | Out-Null
 Invoke-Git @("commit", "-m", "release: $tag") | Out-Null
 Invoke-Git @("tag", "-a", $tag, "-m", "yt-download $tag") | Out-Null
 

@@ -1,0 +1,21 @@
+[package]
+name = "yt-download-update"
+# 이 크레이트는 따로 배포되지 않는다(앱과 관리자 안에 들어간다).
+# 그래서 릴리스 버전(VERSION 파일)을 따라가지 않는다. 지금 도는 버전은 부르는 쪽이 넘겨준다.
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1.0"
+flate2 = "1.0"
+reqwest = { version = "0.12", default-features = false, features = [
+  "blocking",
+  "json",
+  "rustls-tls",
+] }
+self-replace = "1.5"
+serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10"
+tar = "0.4"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }

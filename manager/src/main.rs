@@ -56,6 +56,12 @@ struct View {
     update: bool,
     busy: bool,
     failed: bool,
+    /// 지금 도는 관리자 버전. 확장 버전과 헷갈리지 않게 따로 보여준다.
+    manager: &'static str,
+    /// 관리자 자신에게도 새 버전이 있는지.
+    manager_update: bool,
+    /// 관리자를 바꿔 끼운 뒤. 다시 켜야 새것이 뜬다.
+    restart: bool,
 }
 
 impl View {
@@ -63,6 +69,7 @@ impl View {
         View {
             installed: installed_version(),
             path: install_dir().to_string_lossy().to_string(),
+            manager: github::manager_version(),
             ..Default::default()
         }
     }
@@ -115,6 +122,21 @@ fn handle(action: &str, proxy: EventLoopProxy<Message>) {
     match action {
         "check" => check_in_background(proxy),
         "install" => install_in_background(proxy),
+        "update-self" => update_self_in_background(proxy),
+        "restart" => {
+            // 바꿔 끼운 새 실행 파일을 띄우고 이 프로세스는 나간다.
+            // 실패하면 창을 그대로 두고 이유를 적는다(적어도 쓰던 것은 멀쩡하다).
+            match yt_download_update::restart_self() {
+                Ok(()) => std::process::exit(0),
+                Err(err) => {
+                    let mut view = View::base();
+                    view.failed = true;
+                    view.restart = true;
+                    view.note = format!("{err}");
+                    let _ = proxy.send_event(Message::Show(view));
+                }
+            }
+        }
         "remove" => {
             let dir = install_dir();
             let mut view = View::base();
@@ -159,14 +181,18 @@ fn check_in_background(proxy: EventLoopProxy<Message>) {
         let mut view = View::base();
         match github::latest_release() {
             Ok(release) => {
-                let latest = release.tag.trim_start_matches('v').to_string();
+                let latest = release.version.clone();
                 view.update = view.installed.as_deref() != Some(latest.as_str());
+                view.manager_update = release.is_newer_than(github::manager_version());
                 view.note = match &view.installed {
                     None => "아직 설치하지 않았습니다".into(),
                     Some(installed) if *installed == latest => "최신입니다".into(),
                     Some(installed) => format!("{installed} → {latest} 업데이트가 있습니다"),
                 };
-                view.published = release.published.map(|when| when[..10].to_string());
+                if view.manager_update {
+                    view.note.push_str(" · 관리자 자신도 새 버전이 있습니다");
+                }
+                view.published = release.published_day();
                 view.latest = Some(latest);
             }
             Err(err) => {
@@ -185,17 +211,46 @@ fn install_in_background(proxy: EventLoopProxy<Message>) {
     let _ = proxy.send_event(Message::Show(busy));
 
     std::thread::spawn(move || {
-        let outcome = github::latest_release()
-            .and_then(|release| github::install(&release, &install_dir()).map(|()| release.tag));
+        let outcome = github::latest_release().and_then(|release| {
+            github::install_extension(&release, &install_dir()).map(|()| release)
+        });
 
         let mut view = View::base();
         match outcome {
-            Ok(tag) => {
-                let latest = tag.trim_start_matches('v').to_string();
+            Ok(release) => {
                 view.installed = installed_version();
                 view.note = "설치했습니다 · 크롬에서 새로고침하면 반영됩니다".into();
-                view.latest = Some(latest);
+                view.manager_update = release.is_newer_than(github::manager_version());
+                view.latest = Some(release.version);
                 view.update = false;
+            }
+            Err(err) => {
+                view.failed = true;
+                view.note = format!("{err}");
+            }
+        }
+        let _ = proxy.send_event(Message::Show(view));
+    });
+}
+
+/// 관리자 자신을 갱신한다. 확장과 달리 돌고 있는 실행 파일을 바꿔 끼우는 일이다.
+fn update_self_in_background(proxy: EventLoopProxy<Message>) {
+    let mut busy = View::base();
+    busy.busy = true;
+    busy.note = "관리자를 받아서 바꿔 끼우는 중입니다".into();
+    let _ = proxy.send_event(Message::Show(busy));
+
+    std::thread::spawn(move || {
+        let outcome = github::latest_release()
+            .and_then(|release| github::update_manager(&release).map(|()| release));
+
+        let mut view = View::base();
+        match outcome {
+            Ok(release) => {
+                // 지금 프로세스는 여전히 옛 코드로 돈다. 다시 켜야 새것이 뜬다.
+                view.note = format!("{} 로 바꿨습니다 · 다시 켜면 적용됩니다", release.version);
+                view.latest = Some(release.version);
+                view.restart = true;
             }
             Err(err) => {
                 view.failed = true;

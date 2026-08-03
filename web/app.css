@@ -417,6 +417,14 @@ h1 {
   font-size: 12px;
 }
 
+/* 받을 것이 있을 때만 눈에 띄게 둔다. 평소에는 조용한 단추다. */
+.compact-button.update-ready {
+  border-color: var(--teal);
+  background: rgba(15, 118, 110, 0.1);
+  color: var(--teal);
+  font-weight: 600;
+}
+
 .icon-button {
   width: 42px;
   min-width: 42px;

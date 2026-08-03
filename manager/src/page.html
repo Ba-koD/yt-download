@@ -157,8 +157,9 @@
 
     <div class="card">
       <div class="versions">
-        <dl class="version"><dt>설치됨</dt><dd id="installed">—</dd></dl>
+        <dl class="version"><dt>설치된 확장</dt><dd id="installed">—</dd></dl>
         <dl class="version"><dt>최신</dt><dd id="latest">—</dd></dl>
+        <dl class="version"><dt>관리자</dt><dd id="manager">—</dd></dl>
       </div>
       <p class="note" id="note">확인하는 중입니다</p>
       <input class="path" id="path" readonly />
@@ -167,6 +168,11 @@
         <button id="check">다시 확인</button>
         <button id="open">폴더 열기</button>
         <button id="remove" class="danger">삭제</button>
+      </div>
+      <!-- 관리자 자신의 갱신. 받을 것이 있을 때만 보인다. -->
+      <div class="row" id="self-row" hidden>
+        <button class="primary" id="update-self">관리자 업데이트</button>
+        <button id="restart" hidden>다시 켜기</button>
       </div>
     </div>
 
@@ -181,7 +187,7 @@
 
     <script>
       const send = (action) => window.ipc.postMessage(action);
-      for (const id of ["install", "check", "open"]) {
+      for (const id of ["install", "check", "open", "update-self", "restart"]) {
         document.getElementById(id).addEventListener("click", () => send(id));
       }
 
@@ -221,6 +227,16 @@
         document.getElementById("check").disabled = view.busy;
         removeButton.disabled = view.busy || !view.installed;
         if (removeButton.disabled) disarm();
+
+        // 관리자 자신의 갱신. 받을 것이 있거나 바꿔 끼운 직후에만 보여준다.
+        document.getElementById("manager").textContent = view.manager || "—";
+        const selfRow = document.getElementById("self-row");
+        const restart = document.getElementById("restart");
+        selfRow.hidden = !view.manager_update && !view.restart;
+        const updateSelf = document.getElementById("update-self");
+        updateSelf.disabled = view.busy || view.restart;
+        updateSelf.hidden = view.restart;
+        restart.hidden = !view.restart;
       };
     </script>
   </body>

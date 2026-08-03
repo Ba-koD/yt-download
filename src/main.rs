@@ -25,6 +25,7 @@ mod media;
 mod progress;
 mod server;
 mod tools;
+mod update;
 mod youtube;
 
 fn main() -> Result<()> {

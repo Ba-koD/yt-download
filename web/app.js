@@ -12,6 +12,7 @@ import {
 import { restoreSettings, saveSettings } from "./settings.js";
 import { el, state } from "./state.js";
 import { bindTimeline, fitViewToSelection, nudgeTime, resetView, setRangeValues, updateFromText, zoomBy } from "./timeline.js";
+import { bindUpdate, checkUpdate } from "./update.js";
 import { loadMetadata, watchUrlInput } from "./video.js";
 
 // 유튜브 iframe API가 준비되면 부르는 전역 콜백(플레이어는 필요할 때 만든다).
@@ -24,6 +25,8 @@ export function boot() {
   setRangeValues(0, state.duration);
   resetView();
   resetJobUi();
+  // 새 버전이 있는지는 조용히 본다. 인터넷이 없어도 앱은 그대로 쓸 수 있어야 한다.
+  checkUpdate({ quiet: true });
   setInterval(syncPlayheadFromPlayer, 500);
 }
 
@@ -50,6 +53,7 @@ export function bindEvents() {
   el.downloadButton.addEventListener("click", startDownload);
   el.cancelButton.addEventListener("click", cancelCurrentJob);
   el.openConsoleButton.addEventListener("click", openConsoleWindow);
+  bindUpdate();
   el.loadLibraryButton.addEventListener("click", loadLibrary);
   bindLibraryFilters();
   el.zoomInButton.addEventListener("click", () => zoomBy(0.55));

@@ -60,6 +60,7 @@ const APP_SCRIPTS: &[(&str, &str)] = &[
     ("state.js", include_str!("../web/state.js")),
     ("timeline.js", include_str!("../web/timeline.js")),
     ("ui.js", include_str!("../web/ui.js")),
+    ("update.js", include_str!("../web/update.js")),
     ("video.js", include_str!("../web/video.js")),
 ];
 
@@ -213,6 +214,9 @@ pub(crate) async fn serve_app(
         .route("/api/download", post(start_download))
         .route("/api/jobs/:id", get(job_status))
         .route("/api/jobs/:id/cancel", post(cancel_job))
+        .route("/api/update/check", post(update_check))
+        .route("/api/update/apply", post(update_apply))
+        .route("/api/update/restart", post(update_restart))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -241,13 +245,27 @@ pub(crate) async fn serve_app(
 pub(crate) async fn bind_listener() -> Result<TcpListener> {
     let bind_addr =
         std::env::var("YT_DOWNLOAD_ADDR").unwrap_or_else(|_| "127.0.0.1:8765".to_string());
-    match TcpListener::bind(&bind_addr).await {
-        Ok(listener) => Ok(listener),
-        Err(err) if bind_addr == "127.0.0.1:8765" => {
-            eprintln!("Could not bind {bind_addr}: {err}. Falling back to an available port.");
-            Ok(TcpListener::bind("127.0.0.1:0").await?)
+    // 업데이트로 다시 켜진 직후에는 방금 나간 프로세스가 아직 포트를 쥐고 있다.
+    // 그때만 몇 번 더 두드려 본다. 평소에는 한 번 보고 바로 다른 포트로 넘어간다.
+    let mut attempts = if crate::update::restarted() { 20 } else { 1 };
+    loop {
+        match TcpListener::bind(&bind_addr).await {
+            Ok(listener) => return Ok(listener),
+            Err(err) => {
+                attempts -= 1;
+                if attempts > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                    continue;
+                }
+                if bind_addr == "127.0.0.1:8765" {
+                    eprintln!(
+                        "Could not bind {bind_addr}: {err}. Falling back to an available port."
+                    );
+                    return Ok(TcpListener::bind("127.0.0.1:0").await?);
+                }
+                return Err(err.into());
+            }
         }
-        Err(err) => Err(err.into()),
     }
 }
 
@@ -291,6 +309,27 @@ pub(crate) async fn health() -> Json<HealthResponse> {
         default_output_dir: default_output_dir().to_string_lossy().to_string(),
         default_browser: detect_default_browser(),
     })
+}
+
+/// 새 버전이 있는지 본다.
+pub(crate) async fn update_check() -> Result<Json<crate::update::UpdateStatus>, AppError> {
+    Ok(Json(crate::update::check().await?))
+}
+
+/// 받아서 바꿔 끼운다. 여기서 성공해도 지금 프로세스는 옛 코드로 계속 돈다.
+pub(crate) async fn update_apply() -> Result<Json<crate::update::UpdateStatus>, AppError> {
+    Ok(Json(crate::update::apply().await?))
+}
+
+/// 새 실행 파일로 다시 켠다. 답을 보낸 뒤에 나가야 화면이 이유를 알 수 있다.
+pub(crate) async fn update_restart() -> Result<Json<Value>, AppError> {
+    crate::update::restart()?;
+    tokio::spawn(async {
+        // 답이 나갈 틈만 준다. 오래 잡고 있으면 새로 뜬 쪽이 포트를 못 잡는다.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        std::process::exit(0);
+    });
+    Ok(Json(json!({ "restarting": true })))
 }
 
 pub(crate) async fn open_login(

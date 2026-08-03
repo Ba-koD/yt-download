@@ -6,14 +6,10 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0"
 dirs = "5.0"
-reqwest = { version = "0.12", default-features = false, features = [
-  "blocking",
-  "json",
-  "rustls-tls",
-] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sha2 = "0.10"
 tao = "0.35"
 wry = "0.55"
-zip = { version = "2.2", default-features = false, features = ["deflate"] }
+# 릴리스 조회·SHA256 대조·압축 풀기·실행 파일 바꿔 끼우기는 앱과 하는 일이 같다.
+# 공용 크레이트로 빼서 둘이 함께 쓴다.
+yt-download-update = { path = "../update" }

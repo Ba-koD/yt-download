@@ -95,36 +95,50 @@ jobs:
       - name: Test
         run: cargo test --release
 
+      # 앱과 관리자를 따로 묶는다. 둘이 한 압축본에 들어 있던 시절에는
+      # 4MB 짜리 관리자만 고쳐도 167MB 를 다시 받아야 했다(자동 업데이트가 이걸 매번 한다).
+      # 버전은 여전히 함께 간다 — VERSION 하나가 앱·관리자·확장을 다 정한다.
+      #
       # 업로드되는 아티팩트는 실행 권한을 잃는다. 유닉스는 tar 로 묶어 권한을 지킨다.
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $name = "${{ matrix.artifact }}"
-          Compress-Archive -Path dist\yt-download.exe, dist\yt-download-extension-manager.exe -DestinationPath "$name.zip"
-          $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower()
-          "$hash  $name.zip" | Set-Content "$name.zip.sha256" -Encoding ascii
+          $app = "${{ matrix.artifact }}"
+          $manager = $app -replace '^yt-download-', 'yt-download-manager-'
+          Compress-Archive -Path dist\yt-download.exe -DestinationPath "$app.zip"
+          Compress-Archive -Path dist\yt-download-extension-manager.exe -DestinationPath "$manager.zip"
+          foreach ($name in @("$app.zip", "$manager.zip")) {
+            $hash = (Get-FileHash $name -Algorithm SHA256).Hash.ToLower()
+            "$hash  $name" | Set-Content "$name.sha256" -Encoding ascii
+          }
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
-          name="${{ matrix.artifact }}"
+          app="${{ matrix.artifact }}"
+          manager="${app/#yt-download-/yt-download-manager-}"
           # macOS 는 앱 번들만 담는다(번들 안에 같은 실행 파일이 들어 있다).
           if [ -d dist/yt-download.app ]; then
-            tar -czf "$name.tar.gz" -C dist yt-download.app yt-download-extension-manager
+            tar -czf "$app.tar.gz" -C dist yt-download.app
           else
-            tar -czf "$name.tar.gz" -C dist yt-download yt-download-extension-manager
+            tar -czf "$app.tar.gz" -C dist yt-download
           fi
-          if command -v sha256sum >/dev/null; then
-            sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
-          else
-            shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
-          fi
+          tar -czf "$manager.tar.gz" -C dist yt-download-extension-manager
+          for name in "$app.tar.gz" "$manager.tar.gz"; do
+            if command -v sha256sum >/dev/null; then
+              sha256sum "$name" > "$name.sha256"
+            else
+              shasum -a 256 "$name" > "$name.sha256"
+            fi
+          done
 
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}.*
+          path: |
+            ${{ matrix.artifact }}.*
+            yt-download-manager-*
           if-no-files-found: error
           retention-days: 7
 

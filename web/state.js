@@ -34,6 +34,8 @@ export const el = {
   appVersion: document.querySelector("#appVersion"),
   ytDlpStatus: document.querySelector("#ytDlpStatus"),
   ffmpegStatus: document.querySelector("#ffmpegStatus"),
+  updateStatus: document.querySelector("#updateStatus"),
+  updateButton: document.querySelector("#updateButton"),
   urlInput: document.querySelector("#urlInput"),
   loadButton: document.querySelector("#loadButton"),
   cookieBrowser: document.querySelector("#cookieBrowser"),

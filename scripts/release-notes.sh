@@ -28,6 +28,21 @@ cat <<'NOTES'
 
 macOS 는 서명이 없어 처음 열 때 우클릭 → 열기 를 한 번 해줘야 합니다.
 
+한 번 받아두면 다음부터는 앱이 스스로 갱신합니다. 오른쪽 위 **업데이트 확인** 을 누르면
+새 버전을 받아 실행 파일을 바꿔 끼우고, **다시 켜기** 로 새 버전이 뜹니다.
+관리자 권한은 필요 없고, 받다가 실패해도 쓰던 실행 파일은 그대로 남습니다.
+
+## 확장 관리자 받기 (`yt-download-manager-<플랫폼>`)
+
+크롬 확장을 설치·갱신·삭제하는 작은 프로그램입니다(4MB). 앱과 따로 올라갑니다.
+
+| 파일 | 대상 |
+| --- | --- |
+| `yt-download-manager-windows-x64.zip` | Windows 10/11 (x64) |
+| `yt-download-manager-linux-x64.tar.gz` | Linux (x64) |
+| `yt-download-manager-macos-arm64.tar.gz` | macOS (Apple Silicon) |
+| `yt-download-manager-macos-x64.tar.gz` | macOS (Intel) |
+
 ## 크롬 확장 받기 (`yt-download-extension.zip`)
 
 앱을 켜지 않고 유튜브 페이지에서 바로 구간을 받는 확장입니다. 앱과 아무것도 공유하지 않습니다.

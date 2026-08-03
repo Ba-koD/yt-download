@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-03
+
 ### 추가
 
 - **자동 업데이트**. 앱과 확장 관리자가 스스로 최신 릴리스를 확인하고 갱신한다.
@@ -200,6 +202,7 @@
   비교했는데, 압축을 풀어서 받은 파일은 아카이브의 옛 시각을 물려받는다.
   이제 크기와 시각을 함께 확인한다.
 
-[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.1.0

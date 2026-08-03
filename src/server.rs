@@ -242,12 +242,27 @@ pub(crate) async fn serve_app(
     Ok(())
 }
 
+pub(crate) const DEFAULT_ADDR: &str = "127.0.0.1:8765";
+
+/// 서버가 들을 자리를 잡는다.
+///
+/// 업데이트로 다시 켜진 직후에는 방금 나간 프로세스가 쓰던 자리를 잡지 못할 때가 많다.
+/// 윈도우가 끊긴 연결의 자리를 2분쯤 붙들고 있기 때문이다(TIME_WAIT). 재봤다 —
+///
+/// - 그냥 다시 잡기: `os error 10048` (이미 쓰는 자리)
+/// - SO_REUSEADDR 로 잡기: `os error 10013` (권한 없음).
+///   윈도우는 먼저 잡은 소켓이 배타적이면(그게 기본값이다) 재사용 요청을 거절한다.
+///   먼저 잡는 쪽도 함께 SO_REUSEADDR 를 써야 통하는데, 그러면 두 번째로 켠 앱이
+///   첫 번째 것의 자리를 조용히 빼앗을 수 있게 된다. 그 대가가 더 크다.
+///
+/// 그래서 자리를 지키는 것은 포기하고, **앱이 반드시 뜨는 것**을 지킨다.
+/// 잠깐 두드려 보고 안 되면 빈 자리를 잡는다. 앱 창은 자기가 잡은 주소를 열기 때문에
+/// 사용자 눈에는 달라지는 것이 없다(브라우저로 쓰는 경우에만 주소가 바뀐다).
 pub(crate) async fn bind_listener() -> Result<TcpListener> {
-    let bind_addr =
-        std::env::var("YT_DOWNLOAD_ADDR").unwrap_or_else(|_| "127.0.0.1:8765".to_string());
-    // 업데이트로 다시 켜진 직후에는 방금 나간 프로세스가 아직 포트를 쥐고 있다.
-    // 그때만 몇 번 더 두드려 본다. 평소에는 한 번 보고 바로 다른 포트로 넘어간다.
-    let mut attempts = if crate::update::restarted() { 20 } else { 1 };
+    let bind_addr = std::env::var("YT_DOWNLOAD_ADDR").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
+    // 다시 켜진 길에서는 앞선 프로세스가 나가는 데 잠깐 걸린다. 그때만 몇 번 더 두드린다.
+    let restarted = crate::update::restarted();
+    let mut attempts = if restarted { 10 } else { 1 };
     loop {
         match TcpListener::bind(&bind_addr).await {
             Ok(listener) => return Ok(listener),
@@ -257,7 +272,9 @@ pub(crate) async fn bind_listener() -> Result<TcpListener> {
                     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
                     continue;
                 }
-                if bind_addr == "127.0.0.1:8765" {
+                // 자리를 못 잡았다고 앱이 아예 안 뜨면 안 된다. 특히 업데이트로 다시 켜지는
+                // 길에서 그러면 사용자는 갱신하고 나서 앱을 잃는다(실제로 그랬다).
+                if bind_addr == DEFAULT_ADDR || restarted {
                     eprintln!(
                         "Could not bind {bind_addr}: {err}. Falling back to an available port."
                     );

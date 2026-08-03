@@ -26,6 +26,7 @@ use tao::{
 };
 use wry::WebViewBuilder;
 
+mod browser;
 mod github;
 
 /// 확장을 풀어 놓는 자리. 크롬에 이 폴더를 골라준다.
@@ -62,6 +63,9 @@ struct View {
     manager_update: bool,
     /// 관리자를 바꿔 끼운 뒤. 다시 켜야 새것이 뜬다.
     restart: bool,
+    /// 넣을 수 있는 브라우저들과, 이 컴퓨터의 기본 브라우저.
+    browsers: &'static [browser::Browser],
+    default_browser: Option<&'static str>,
 }
 
 impl View {
@@ -70,6 +74,10 @@ impl View {
             installed: installed_version(),
             path: install_dir().to_string_lossy().to_string(),
             manager: github::manager_version(),
+            browsers: browser::BROWSERS,
+            // 기본 브라우저를 처음 선택으로 둔다. 파이어폭스처럼 목록에 없는 것이 기본이면
+            // 고르지 않은 상태로 두고 사용자가 직접 고르게 한다.
+            default_browser: browser::default_key(),
             ..Default::default()
         }
     }
@@ -85,6 +93,15 @@ fn main() -> Result<()> {
 
     let window = WindowBuilder::new()
         .with_title("yt-download 확장 관리자")
+        // 앱과 같은 아이콘. 생 RGBA 라 해독기가 필요 없다(scripts/make-logo.py 가 만든다).
+        .with_window_icon(
+            tao::window::Icon::from_rgba(
+                include_bytes!("../../assets/icon-64.rgba").to_vec(),
+                64,
+                64,
+            )
+            .ok(),
+        )
         .with_inner_size(LogicalSize::new(640.0, 660.0))
         .with_min_inner_size(LogicalSize::new(520.0, 560.0))
         .build(&event_loop)?;
@@ -165,6 +182,18 @@ fn handle(action: &str, proxy: EventLoopProxy<Message>) {
                 view.note = "아직 설치하지 않았습니다".into();
                 let _ = proxy.send_event(Message::Show(view));
             }
+        }
+        // 화면이 "copy:<붙여넣을 것>" 으로 보낸다. 확장 페이지 주소와 폴더 경로를 나른다.
+        // 크로미움은 명령줄로 넘긴 chrome:// 주소를 무시해서, 열어주는 대신 복사해 준다.
+        other if other.starts_with("copy:") => {
+            let text = other.trim_start_matches("copy:").trim();
+            let mut view = View::base();
+            view.note = if browser::copy_to_clipboard(text) {
+                format!("복사했습니다: {text}")
+            } else {
+                format!("복사하지 못했습니다. 직접 입력해 주세요: {text}")
+            };
+            let _ = proxy.send_event(Message::Show(view));
         }
         _ => {}
     }

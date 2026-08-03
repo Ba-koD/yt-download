@@ -177,12 +177,21 @@
     </div>
 
     <div class="card">
+      <div class="row" style="margin-top: 0">
+        <select id="browser" aria-label="브라우저"></select>
+        <button id="copy-page">확장 페이지 주소 복사</button>
+        <button id="copy-path">폴더 경로 복사</button>
+      </div>
       <ol>
-        <li><code>chrome://extensions</code> 를 엽니다</li>
+        <li><code id="page-url">chrome://extensions</code> 를 주소창에 붙여넣어 엽니다</li>
         <li>오른쪽 위 <b>개발자 모드</b>를 켭니다</li>
-        <li><b>압축해제된 확장 프로그램을 로드</b>에 위 폴더를 고릅니다</li>
-        <li>업데이트한 뒤에는 확장 카드의 <b>새로고침</b>만 누르면 됩니다</li>
+        <li><b>압축해제된 확장 프로그램을 로드</b>에 위 폴더를 고릅니다(경로를 붙여넣으면 빠릅니다)</li>
+        <li>여기까지는 처음 한 번만 합니다. <b>그 뒤의 갱신은 확장이 스스로 적용합니다</b></li>
       </ol>
+      <p class="note" style="margin-top: 10px">
+        크로미움 계열(Chrome·Edge·Brave·Whale·Vivaldi·Opera)에서 같은 폴더를 그대로 씁니다.
+        파이어폭스는 확장 구조가 달라 아직 되지 않습니다.
+      </p>
     </div>
 
     <script>
@@ -209,8 +218,34 @@
         send("remove");
       });
 
+      // 브라우저 고르기. 고른 것에 따라 확장 페이지 주소가 달라진다.
+      const browserSelect = document.getElementById("browser");
+      const pageUrl = document.getElementById("page-url");
+      let installPath = "";
+      const pageFor = () => browserSelect.value || "chrome://extensions";
+      browserSelect.addEventListener("change", () => {
+        pageUrl.textContent = pageFor();
+      });
+      document.getElementById("copy-page").addEventListener("click", () => send("copy:" + pageFor()));
+      document.getElementById("copy-path").addEventListener("click", () => send("copy:" + installPath));
+
       // 러스트 쪽에서 상태가 바뀔 때마다 부른다.
       window.show = (view) => {
+        // 브라우저 목록은 한 번만 채우고, 기본 브라우저를 처음 선택으로 둔다.
+        if (view.browsers && !browserSelect.options.length) {
+          for (const browser of view.browsers) {
+            const option = document.createElement("option");
+            option.value = browser.page;
+            option.textContent = browser.label;
+            option.dataset.key = browser.key;
+            browserSelect.append(option);
+          }
+          const chosen = [...browserSelect.options].find((o) => o.dataset.key === view.default_browser);
+          if (chosen) chosen.selected = true;
+          pageUrl.textContent = pageFor();
+        }
+        installPath = view.path || "";
+
         document.getElementById("installed").textContent = view.installed || "없음";
         document.getElementById("latest").textContent =
           view.latest ? view.latest + (view.published ? ` (${view.published})` : "") : "—";

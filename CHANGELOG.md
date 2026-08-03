@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-03
+
 ### 추가
 
 - **로고**. 앱과 관리자 창, 확장, 윈도우 실행 파일, 화면 탭에 같은 아이콘이 붙는다.
@@ -233,7 +235,8 @@
   비교했는데, 압축을 풀어서 받은 파일은 아카이브의 옛 시각을 물려받는다.
   이제 크기와 시각을 함께 확인한다.
 
-[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.4.0
 [0.3.1]: https://github.com/Ba-koD/yt-download/releases/tag/v0.3.1
 [0.3.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.2.0

@@ -8,6 +8,20 @@
 
 ## [Unreleased]
 
+### 추가
+
+- **파이어폭스 확장.** 크롬 소스에서 매니페스트만 바꿔 뽑는다(`scripts/build-firefox.py`,
+  릴리스에 `yt-download-extension-firefox.zip` 으로 함께 올라간다). 배경이 이벤트 페이지이고
+  확장 ID 를 못박는다. 파이어폭스 128+ 필요. **파이어폭스 153 에서 일반 영상·숏츠 다운로드 확인.**
+- **사파리 빌드 도구**(`scripts/build-safari.sh`). macOS + Xcode 에서만 된다. 아직 검증 못 함.
+
+### 고침
+
+- 파이어폭스에서 다운로드가 `Permission denied to access property "constructor"` 로 죽던 문제.
+  파이어폭스는 페이지(MAIN)와 content script 가 다른 realm 이라, 페이지에서 넘어온 버퍼로
+  뷰를 만든 뒤 `DataView` 를 얹을 때 막힌다. 바이트를 content script realm 으로 복사해 쓴다
+  (`net.js`). 크롬에도 안전하다.
+
 ## [0.5.0] - 2026-08-03
 
 ### 추가

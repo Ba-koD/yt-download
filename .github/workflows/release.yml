@@ -175,6 +175,14 @@ jobs:
       - name: Extension archive is complete
         run: python3 scripts/check-extension-zip.py yt-download-extension.zip extension
 
+      # 파이어폭스용은 매니페스트만 바꿔 담는다(배경 방식·확장 ID 가 다르다).
+      # 크롬 소스에서 뽑으므로 두 브라우저가 갈라져 관리되지 않는다.
+      - name: Package Firefox extension
+        run: |
+          python3 scripts/build-firefox.py
+          mv dist/yt-download-extension-firefox.zip .
+          sha256sum yt-download-extension-firefox.zip > yt-download-extension-firefox.zip.sha256
+
       # 아티팩트는 이름별 폴더로 내려온다. 한곳에 모으고 체크섬은 한 파일로 합친다.
       - name: Collect assets
         run: |
@@ -183,9 +191,11 @@ jobs:
           # 목록을 적어두면 조용히 빠진다. 체크섬 파일만 남기고 전부 옮긴다.
           find artifacts -type f ! -name '*.sha256' -exec mv {} release/ \;
           mv yt-download-extension.zip release/
+          mv yt-download-extension-firefox.zip release/
           {
             find artifacts -type f -name '*.sha256' -exec cat {} +
             cat yt-download-extension.zip.sha256
+            cat yt-download-extension-firefox.zip.sha256
           } | sort -k2 > release/SHA256SUMS.txt
           ls -l release
           cat release/SHA256SUMS.txt

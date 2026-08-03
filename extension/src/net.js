@@ -72,7 +72,25 @@ export function pageTransport(target = window, timeoutMs = 120_000) {
       }, timeoutMs);
     });
 
-  const decode = (buffer) => new TextDecoder().decode(new Uint8Array(buffer));
+  // 페이지(MAIN) 쪽에서 넘어온 ArrayBuffer 를 이 realm 의 버퍼로 복사해 온다.
+  //
+  // 파이어폭스에서는 MAIN 세계와 content script 가 **다른 realm** 이다. 넘어온 버퍼로
+  // `new Uint8Array(buffer)` 는 되지만 그 뷰의 `.buffer` 가 여전히 외래 realm 이라,
+  // 나중에 `new DataView(bytes.buffer)`(색인·먹싱에서 쓴다)를 만들 때 종족(constructor)
+  // 조회에서 막힌다(`Permission denied to access property "constructor"`). 그래서 바이트를
+  // 이 realm 의 새 버퍼로 실제 복사한다. 크롬은 같은 realm 이라 값만 한 번 더 복사될 뿐이다.
+  const adopt = (buffer) => {
+    let foreign;
+    try {
+      foreign = new Uint8Array(buffer);
+    } catch {
+      foreign = new Uint8Array(structuredClone(buffer));
+    }
+    const local = new Uint8Array(foreign.length); // 숫자로 만들어 이 realm 버퍼를 갖는다
+    local.set(foreign); // 바이트만 읽어 복사한다(외래 뷰의 원소 접근은 허용된다)
+    return local;
+  };
+  const decode = (buffer) => new TextDecoder().decode(adopt(buffer));
 
   return {
     json: async (url, init = {}) =>
@@ -82,7 +100,7 @@ export function pageTransport(target = window, timeoutMs = 120_000) {
         ),
       ),
     text: async (url) => decode((await ask({ url })).buffer),
-    bytes: async (url, headers) => new Uint8Array((await ask({ url, headers })).buffer),
+    bytes: async (url, headers) => adopt((await ask({ url, headers })).buffer),
     // 받아오기 말고 다른 일(예: n 풀기)을 시킬 때 쓴다.
     ask,
   };

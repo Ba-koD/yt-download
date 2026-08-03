@@ -15,15 +15,17 @@ Chrome 웹 스토어에는 올릴 수 없습니다(유튜브 이용약관이 다
 
 일반 영상(`/watch`), 라이브(`/live/`), 숏츠(`/shorts/`)에서 됩니다.
 Chrome 과 Edge 에서 확인했습니다. Brave·Whale·Vivaldi·Opera 도 같은 계열이라 같은 방법으로 됩니다.
+파이어폭스도 별도 빌드로 됩니다(아래 참고).
 
 **갱신은 저절로 됩니다.** 관리자가 폴더를 갈아 끼우면 확장이 그걸 알아채고 스스로 다시 켜며,
 열려 있던 유튜브 탭에도 새 판을 넣습니다. `chrome://extensions` 새로고침도 F5 도 필요 없습니다
 (스스로 갈아타지 못하는 자리라면 패널이 그렇다고 알려줍니다).
 
-### 파이어폭스 (실험 · 검증 전)
+### 파이어폭스
 
 파이어폭스는 확장 구조가 조금 달라(배경이 service_worker 가 아니라 이벤트 페이지, 확장 ID 를
-못박아야 함) 매니페스트를 바꿔 담은 별도 빌드를 씁니다.
+못박아야 함) 매니페스트를 바꿔 담은 별도 빌드를 씁니다. 릴리스에
+`yt-download-extension-firefox.zip` 으로 함께 올라갑니다(직접 만들려면 아래).
 
 ```bash
 python scripts/build-firefox.py     # dist/firefox/ 와 dist/yt-download-extension-firefox.zip
@@ -31,13 +33,19 @@ python scripts/build-firefox.py     # dist/firefox/ 와 dist/yt-download-extensi
 
 `about:debugging` → **이 Firefox** → **임시 부가 기능 로드** → `dist/firefox/manifest.json` 을 고릅니다.
 (임시 로드는 파이어폭스를 껐다 켜면 사라집니다. 영구 설치는 서명(AMO)이 필요합니다.)
-
 파이어폭스 **128 이상**이 필요합니다(`world: "MAIN"` 이 그때부터 됩니다).
-아직 실제로 얹어 확인하지 못했습니다 — 확인할 곳:
 
-- 좋아요 줄에 **구간 받기** 버튼이 붙는지
-- 화질 목록이 뜨는지(안 뜨면 배경 이벤트 페이지나 `world: "MAIN"` 문제)
-- 실제로 받아지는지(막히면 `declarativeNetRequest` 대신 배경 예비 통로로 넘어갔는지 콘솔 확인)
+**파이어폭스 153 에서 확인했습니다** — 일반 영상·숏츠에서 버튼·화질 목록·구간 다운로드가
+그대로 됩니다. 파이어폭스는 MAIN 세계와 content script 가 다른 realm 이라, 페이지 쪽에서
+넘어온 버퍼를 그대로 쓰면 `Permission denied to access property "constructor"` 로 막힙니다.
+그래서 바이트를 content script realm 으로 복사해서 씁니다(`net.js` 의 `adopt`).
+
+아직 파이어폭스에서 확인하지 못한 것:
+
+- **비공개·멤버 전용 영상**(`n` 해제기를 빈 iframe 에서 `eval` 로 돌리는 경로).
+- **진행 중인 라이브**.
+- **자동 갱신**(관리자의 폴더 교체 + 스스로 다시 켜기는 크롬에 맞춰 만들었다).
+  파이어폭스에서는 `about:debugging` 에서 다시 로드해야 한다.
 
 ### 사파리 (macOS·Xcode 필요)
 

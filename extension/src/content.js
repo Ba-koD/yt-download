@@ -12,6 +12,30 @@
   // 이게 안 보이면 확장이 이 페이지에 붙지 않은 것이다(새로고침이나 재로드가 필요하다).
   const say = (...parts) => console.info("[yt-download]", ...parts);
 
+  // 이 판을 걷어낼 때 할 일들.
+  //
+  // 확장이 스스로 갱신하면 배경 일꾼이 열려 있는 탭에 새 판을 곧바로 넣는다(F5 가 필요 없게).
+  // 그때 옛 판이 그대로 남아 있으면 버튼과 패널이 둘씩 생기고 타이머도 두 벌 돈다.
+  // 그래서 새 판은 들어오자마자 옛 판에게 물러나라고 한다.
+  //
+  // 알리는 길이 둘인 이유: 다시 켜진 확장은 **격리된 세계가 새로 만들어져서** 옛 판의
+  // 전역 변수가 보이지 않는다(실제로 그래서 버튼이 둘 생겼다). DOM 은 두 세계가 함께 보므로
+  // 이벤트로 알린다. 같은 세계에 다시 얹히는 경우를 위해 전역 표시도 함께 둔다.
+  const STAND_DOWN = "ytdl-stand-down";
+  const cleanup = [];
+  window.dispatchEvent(new Event(STAND_DOWN));
+  window.__ytdlTeardown?.();
+  window.__ytdlTeardown = () => {
+    window.__ytdlTeardown = null;
+    for (const undo of cleanup.splice(0)) {
+      try {
+        undo();
+      } catch {
+        // 걷어내다 하나가 실패해도 나머지는 걷어내야 한다.
+      }
+    }
+  };
+
   const load = (name) => import(chrome.runtime.getURL(`src/${name}`));
   const [
     { downloadSection, getFormats, safeFileName, clockLabel, createControl, Stopped },
@@ -63,10 +87,21 @@
     panelMoved: false,
     // 구간 손잡이를 놓았을 때 영상을 옮겨줄 지점.
     dropAt: null,
+    // 새 판이 폴더에 와 있는데 스스로 갈아타지 못했을 때, 사람에게 알릴 버전.
+    needsManualReload: null,
   };
 
+  /** 걷어낼 때 같이 떼어내도록 붙여둔다. */
+  function listen(target, type, handler, options) {
+    target.addEventListener(type, handler, options);
+    cleanup.push(() => target.removeEventListener(type, handler, options));
+  }
+
+  // 나중에 들어온 판이 물러나라고 하면 물러난다.
+  listen(window, STAND_DOWN, () => window.__ytdlTeardown?.());
+
   // 패널이 열려 있는 동안만 페이지에게 재생 상태를 받아온다.
-  window.addEventListener("message", (event) => {
+  listen(window, "message", (event) => {
     if (event.source !== window || event.data?.ytdl !== "progress") return;
     const before = state.progress;
     state.progress = {
@@ -625,6 +660,13 @@
     el.hold.hidden = !state.busy;
     el.halt.hidden = !state.busy;
     el.hold.textContent = state.control?.paused ? "이어받기" : "일시정지";
+    // 새 판이 폴더에 와 있는데 스스로 갈아타지 못한 경우에만 알린다.
+    if (state.needsManualReload && !state.busy) {
+      setStatus(
+        `새 확장 ${state.needsManualReload} 이 준비됐습니다 · ` +
+          `chrome://extensions 에서 이 확장의 새로고침을 한 번 눌러주세요`,
+      );
+    }
     renderTimeline();
   }
 
@@ -706,6 +748,8 @@
       state.formats.video[0];
 
     state.busy = true;
+    // 받는 중에 확장이 스스로 다시 켜지면 이 작업이 통째로 날아간다. 배경 일꾼에게 알려둔다.
+    tellBusy(true);
     state.control = createControl();
     render();
     const began = Date.now();
@@ -750,8 +794,17 @@
       }
     } finally {
       state.busy = false;
+      tellBusy(false);
       state.control = null;
       render();
+    }
+  }
+
+  function tellBusy(on) {
+    try {
+      chrome.runtime.sendMessage({ type: "busy", on });
+    } catch {
+      // 통로가 닫혀 있어도 받는 일 자체는 계속돼야 한다.
     }
   }
 
@@ -768,8 +821,30 @@
   mount();
   say("준비됨 · 좋아요 옆 '구간 받기' 버튼을 눌러주세요");
 
+  // 걷어낼 때는 화면에 얹은 것을 모두 치운다. 남겨두면 새 판의 것과 겹쳐 보인다.
+  cleanup.push(() => {
+    el.button?.remove();
+    el.panel?.remove();
+    watchProgress(false);
+  });
+
+  // 폴더가 갈렸는지 배경 일꾼에게 한 번 보게 한다. 알람만 믿으면 몇 분을 기다리게 된다.
+  // 스스로 갈아타지 못했다면(그럴 수 있다) 사람에게 한 번만 알려준다.
+  try {
+    chrome.runtime.sendMessage({ type: "check-folder" }, (answer) => {
+      void chrome.runtime.lastError; // 답이 없어도 그만이다
+      if (answer?.needsManualReload) {
+        state.needsManualReload = answer.needsManualReload;
+        render();
+      }
+    });
+  } catch {
+    // 옛 판이 걷히는 중이면 통로가 이미 닫혀 있다. 그래도 이 판은 그냥 돈다.
+  }
+
   // 재생 위치 표시가 영상을 따라가게 한다.
-  document.addEventListener(
+  listen(
+    document,
     "timeupdate",
     (event) => {
       if (state.open && event.target?.tagName === "VIDEO") renderTimeline();
@@ -778,7 +853,7 @@
   );
 
   // 편집 프로그램처럼 I / O 로 시작점·끝점을 찍는다.
-  document.addEventListener("keydown", (event) => {
+  listen(document, "keydown", (event) => {
     if (!state.open || event.ctrlKey || event.altKey || event.metaKey) return;
     const tag = document.activeElement?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || document.activeElement?.isContentEditable) return;
@@ -794,10 +869,10 @@
 
   // 유튜브는 페이지를 새로 그리지 않고 영상만 갈아끼운다.
   // 창 크기가 바뀌면 띄운 패널이 설 자리도 달라진다.
-  window.addEventListener("resize", placeFloatingPanel);
+  listen(window, "resize", placeFloatingPanel);
 
   let lastId = currentVideoId();
-  setInterval(() => {
+  const ticker = setInterval(() => {
     mount();
     placeFloatingPanel();
     // 영상 길이는 늦게 정해진다(특히 라이브). 손대기 전이라면 전 구간을 따라간다.
@@ -823,6 +898,7 @@
       else render();
     }
   }, 1000);
+  cleanup.push(() => clearInterval(ticker));
 })().catch((error) => {
   console.error("[yt-download] 시작하지 못했습니다:", error);
 });

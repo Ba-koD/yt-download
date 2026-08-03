@@ -50,10 +50,13 @@ function readProgress() {
   return null;
 }
 
-let progressTimer = null;
+// `let` 이 아니라 `var` 인 이유: 이 다리는 같은 페이지에 다시 놓일 수 있다
+// (확장이 스스로 갱신하면 열려 있는 탭에 새 판을 넣는다). 같은 전역에서 `let` 을 두 번
+// 선언하면 그 자리에서 터진다. `var` 는 다시 선언해도 된다.
+var progressTimer = null;
 
 // 플레이어(base.js)는 2~3MB 다. 한 번만 받아둔다.
-let playerSource = null;
+var playerSource = null;
 
 /**
  * 미디어 주소에 붙은 `n` 을 푼다.
@@ -113,7 +116,11 @@ async function solveChallenges({ lib, core, challenges }) {
   }
 }
 
-window.addEventListener("message", async (event) => {
+// 확장이 스스로 갱신하면 이 다리도 다시 놓인다(열린 탭에 새 판이 들어온다).
+// 옛 다리가 남아 있으면 요청 하나에 두 번 답해서 같은 것을 두 번 받아온다.
+window.__ytdlPageTeardown?.();
+
+async function onMessage(event) {
   if (event.source !== window) return;
   const message = event.data;
 
@@ -167,4 +174,13 @@ window.addEventListener("message", async (event) => {
   } catch (error) {
     reply({ ok: false, status: 0, error: String(error?.message || error) });
   }
-});
+}
+
+window.addEventListener("message", onMessage);
+
+window.__ytdlPageTeardown = () => {
+  window.__ytdlPageTeardown = null;
+  window.removeEventListener("message", onMessage);
+  clearInterval(progressTimer);
+  progressTimer = null;
+};

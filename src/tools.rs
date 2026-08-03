@@ -33,6 +33,7 @@ pub(crate) fn app_temp_dir() -> PathBuf {
 
 pub(crate) fn yt_dlp_command(exe: &Path) -> Command {
     let mut cmd = Command::new(exe);
+    crate::proc::hide(&mut cmd);
     // Windows에서 yt-dlp가 파이프 출력을 콘솔 코드페이지(CP949)로 인코딩해 한글이 깨진다.
     // 패키징된 yt-dlp는 PYTHONUTF8 같은 환경변수를 무시하므로 --encoding 옵션으로 강제해야 한다.
     cmd.args(["--encoding", "utf-8"]);
@@ -251,7 +252,9 @@ pub(crate) fn add_cookie_args(
 
 pub(crate) async fn tool_version(exe: PathBuf, args: &[&str]) -> ToolStatus {
     let path = exe.to_string_lossy().to_string();
-    match Command::new(&exe).args(args).output().await {
+    let mut cmd = Command::new(&exe);
+    crate::proc::hide(&mut cmd);
+    match cmd.args(args).output().await {
         Ok(output) if output.status.success() => {
             let text = if output.stdout.is_empty() {
                 String::from_utf8_lossy(&output.stderr).to_string()

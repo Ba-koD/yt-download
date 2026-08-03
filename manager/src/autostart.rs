@@ -31,13 +31,12 @@ pub fn set(on: bool) -> Result<()> {
 #[cfg(windows)]
 mod imp {
     use super::*;
-    use std::process::Command;
 
     // reg.exe 로 다룬다. 작은 값 하나라 별도 크레이트를 들일 것 없다.
     const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 
     pub fn is_enabled() -> bool {
-        Command::new("reg")
+        crate::proc::command("reg")
             .args(["query", KEY, "/v", LABEL])
             .output()
             .map(|out| out.status.success())
@@ -47,7 +46,7 @@ mod imp {
     pub fn enable(exe: &std::path::Path) -> Result<()> {
         // 값은 따옴표로 감싼 경로 + 인자. 경로에 공백이 있어도 깨지지 않는다.
         let value = format!("\"{}\" --auto", exe.display());
-        let status = Command::new("reg")
+        let status = crate::proc::command("reg")
             .args(["add", KEY, "/v", LABEL, "/t", "REG_SZ", "/d", &value, "/f"])
             .status()
             .context("시작 항목을 등록하지 못했습니다")?;
@@ -59,7 +58,7 @@ mod imp {
 
     pub fn disable() -> Result<()> {
         // 이미 없으면 reg 가 1을 주는데, 그건 실패로 보지 않는다.
-        let _ = Command::new("reg")
+        let _ = crate::proc::command("reg")
             .args(["delete", KEY, "/v", LABEL, "/f"])
             .status();
         Ok(())

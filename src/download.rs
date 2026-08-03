@@ -642,7 +642,9 @@ pub(crate) async fn run_download_attempt(
 pub(crate) async fn stop_child_process(child: &mut tokio::process::Child) {
     #[cfg(windows)]
     if let Some(pid) = child.id() {
-        let _ = Command::new("taskkill")
+        let mut cmd = Command::new("taskkill");
+        crate::proc::hide(&mut cmd);
+        let _ = cmd
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())

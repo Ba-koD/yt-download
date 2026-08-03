@@ -13,7 +13,6 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use anyhow::Result;
@@ -30,6 +29,7 @@ mod autostart;
 mod browser;
 mod config;
 mod github;
+mod proc;
 
 use config::Config;
 
@@ -379,5 +379,5 @@ fn open_folder(path: &Path) {
         "xdg-open"
     };
     // 탐색기는 폴더를 열어주고도 0이 아닌 값을 돌려줄 때가 있어서 결과를 따지지 않는다.
-    let _ = Command::new(program).arg(path).spawn();
+    let _ = crate::proc::command(program).arg(path).spawn();
 }

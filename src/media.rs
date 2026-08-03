@@ -11,6 +11,7 @@ use crate::tools::resolve_tool;
 pub(crate) async fn probe_capture_stream(path: PathBuf) -> Option<CaptureStream> {
     let exe = resolve_tool(None, "ffprobe");
     let mut cmd = Command::new(exe);
+    crate::proc::hide(&mut cmd);
     cmd.args([
         "-v",
         "error",
@@ -96,6 +97,7 @@ pub(crate) async fn cut_media_inputs(
 
     let exe = resolve_tool(None, "ffmpeg");
     let mut cmd = Command::new(exe);
+    crate::proc::hide(&mut cmd);
     cmd.args(["-hide_banner", "-y"]);
     for (input, offset) in inputs {
         // 입력 쪽 -ss/-to를 쓰면 필요한 구간만 읽어서 빠르다.
@@ -152,6 +154,7 @@ pub(crate) async fn cut_media_inputs(
 pub(crate) async fn probe_video_quality(path: &str) -> Option<String> {
     let exe = resolve_tool(None, "ffprobe");
     let mut cmd = Command::new(exe);
+    crate::proc::hide(&mut cmd);
     cmd.args([
         "-v",
         "error",
@@ -207,6 +210,7 @@ pub(crate) async fn probe_media_duration(path: &str) -> Option<f64> {
 pub(crate) async fn probe_duration_value(path: &str, selector: &[&str]) -> Option<f64> {
     let exe = resolve_tool(None, "ffprobe");
     let mut cmd = Command::new(exe);
+    crate::proc::hide(&mut cmd);
     cmd.args(["-v", "error"]);
     cmd.args(selector);
     cmd.args(["-of", "csv=p=0", path]);

@@ -6,10 +6,7 @@
 //! 페이지를 우리가 대신 열어줄 수는 없다. 크로미움은 명령줄로 넘긴 `chrome://` 주소를
 //! 무시한다(직접 확인했다 — 새 탭이 열린다). 그래서 주소를 복사해 주는 데까지만 한다.
 
-use std::{
-    path::PathBuf,
-    process::{Command, Stdio},
-};
+use std::{path::PathBuf, process::Stdio};
 
 use serde::Serialize;
 
@@ -72,7 +69,7 @@ pub fn default_key() -> Option<&'static str> {
 /// 실행 파일을 못 찾으면 OS 기본 열기로 넘어간다(적어도 뜨긴 한다).
 pub fn open_url(url: &str, prefer: Option<&str>) {
     if let Some(exe) = prefer.and_then(browser_executable) {
-        if Command::new(&exe).arg(url).spawn().is_ok() {
+        if crate::proc::command(&exe).arg(url).spawn().is_ok() {
             return;
         }
     }
@@ -81,13 +78,13 @@ pub fn open_url(url: &str, prefer: Option<&str>) {
 
 fn open_with_os(url: &str) {
     let mut command = if cfg!(windows) {
-        let mut command = Command::new("cmd");
+        let mut command = crate::proc::command("cmd");
         command.args(["/c", "start", ""]);
         command
     } else if cfg!(target_os = "macos") {
-        Command::new("open")
+        crate::proc::command("open")
     } else {
-        Command::new("xdg-open")
+        crate::proc::command("xdg-open")
     };
     let _ = command.arg(url).spawn();
 }
@@ -107,7 +104,7 @@ fn browser_executable(key: &str) -> Option<PathBuf> {
     };
     for root in ["HKCU", "HKLM"] {
         let key_path = format!(r"{root}\Software\Microsoft\Windows\CurrentVersion\App Paths\{app}");
-        let output = Command::new("reg")
+        let output = crate::proc::command("reg")
             .args(["query", &key_path, "/ve"])
             .output()
             .ok()?;
@@ -148,7 +145,7 @@ fn browser_executable(key: &str) -> Option<PathBuf> {
         _ => return None,
     };
     for name in candidates {
-        if let Ok(output) = Command::new("which").arg(name).output() {
+        if let Ok(output) = crate::proc::command("which").arg(name).output() {
             if output.status.success() {
                 let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
                 if path.is_file() {
@@ -163,7 +160,7 @@ fn browser_executable(key: &str) -> Option<PathBuf> {
 #[cfg(windows)]
 fn default_browser_id() -> Option<String> {
     // https 를 여는 프로그램이 곧 기본 브라우저다.
-    let output = Command::new("reg")
+    let output = crate::proc::command("reg")
         .args([
             "query",
             r"HKCU\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice",
@@ -182,7 +179,7 @@ fn default_browser_id() -> Option<String> {
 
 #[cfg(target_os = "macos")]
 fn default_browser_id() -> Option<String> {
-    let output = Command::new("defaults")
+    let output = crate::proc::command("defaults")
         .args([
             "read",
             "com.apple.LaunchServices/com.apple.launchservices.secure",
@@ -205,7 +202,7 @@ fn default_browser_id() -> Option<String> {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn default_browser_id() -> Option<String> {
-    let output = Command::new("xdg-settings")
+    let output = crate::proc::command("xdg-settings")
         .args(["get", "default-web-browser"])
         .output()
         .ok()?;
@@ -216,13 +213,13 @@ fn default_browser_id() -> Option<String> {
 /// 복사만 해줘도 손이 많이 준다.
 pub fn copy_to_clipboard(text: &str) -> bool {
     let mut command = if cfg!(windows) {
-        let mut command = Command::new("cmd");
+        let mut command = crate::proc::command("cmd");
         command.args(["/c", "clip"]);
         command
     } else if cfg!(target_os = "macos") {
-        Command::new("pbcopy")
+        crate::proc::command("pbcopy")
     } else {
-        let mut command = Command::new("xclip");
+        let mut command = crate::proc::command("xclip");
         command.args(["-selection", "clipboard"]);
         command
     };

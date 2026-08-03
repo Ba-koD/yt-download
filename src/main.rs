@@ -4,6 +4,10 @@
 //! - 기본: 앱 창(webview)을 띄우고 그 안에서 로컬 서버 화면을 연다.
 //! - `--browser`: 서버만 띄우고 기본 브라우저로 연다.
 
+// 배포 빌드는 창 없는 GUI 로 만든다. 안 그러면 실행할 때 검은 콘솔 창이 함께 뜬다.
+// 개발 빌드는 그대로 둬서 로그를 콘솔에서 본다.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::{sync::mpsc, thread, time::Duration};
 
 use anyhow::{anyhow, Context, Result};
@@ -22,6 +26,7 @@ mod jobs;
 mod live;
 mod login;
 mod media;
+mod proc;
 mod progress;
 mod server;
 mod tools;

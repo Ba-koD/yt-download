@@ -166,10 +166,27 @@
       select {
         font: inherit;
         border-radius: 7px;
-        padding: 8px 10px;
+        /* 오른쪽은 화살표 자리라 넉넉히 비운다(margin 부족 문제). */
+        padding: 8px 34px 8px 12px;
         border: 1px solid var(--line);
-        background: transparent;
-        color: inherit;
+        /* 바탕을 카드색으로 못박아 둔다. 펼친 목록 항목도 이 색을 따르게 해서
+           다크 모드에서 흰 배경에 흰 글자로 보이던 것을 막는다. */
+        background: var(--card);
+        color: var(--ink);
+        /* 화살표를 직접 그린다. OS 기본 화살표는 자리·색이 제각각이다. */
+        appearance: none;
+        -webkit-appearance: none;
+        background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+          linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+        background-position: right 15px center, right 10px center;
+        background-size: 5px 5px, 5px 5px;
+        background-repeat: no-repeat;
+        cursor: pointer;
+      }
+      /* 펼친 목록의 항목. 다크 모드에서 흰 배경에 흰 글자로 보이던 것을 못박는다. */
+      select option {
+        background: var(--card);
+        color: var(--ink);
       }
     </style>
   </head>

@@ -523,9 +523,9 @@ pub(crate) fn close_browser_processes(browser: &str) -> Result<()> {
     };
 
     for name in names {
-        let _ = std::process::Command::new("taskkill")
-            .args(["/IM", name, "/F", "/T"])
-            .output();
+        let mut cmd = std::process::Command::new("taskkill");
+        crate::proc::hide_std(&mut cmd);
+        let _ = cmd.args(["/IM", name, "/F", "/T"]).output();
     }
     Ok(())
 }
@@ -584,8 +584,9 @@ pub(crate) fn close_browser_processes(browser: &str) -> Result<()> {
 #[cfg(windows)]
 pub(crate) fn open_specific_browser(browser: &str, url: &str) -> Result<()> {
     if browser == "edge" {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", &format!("microsoft-edge:{url}")])
+        let mut cmd = std::process::Command::new("cmd");
+        crate::proc::hide_std(&mut cmd);
+        cmd.args(["/C", "start", "", &format!("microsoft-edge:{url}")])
             .spawn()
             .with_context(|| format!("could not open {browser}"))?;
         return Ok(());
@@ -691,7 +692,9 @@ pub(crate) fn detect_default_browser() -> Option<String> {
 #[cfg(windows)]
 fn default_browser_id() -> Option<String> {
     // https 를 여는 프로그램이 곧 기본 브라우저다.
-    let output = std::process::Command::new("reg")
+    let mut cmd = std::process::Command::new("reg");
+    crate::proc::hide_std(&mut cmd);
+    let output = cmd
         .args([
             "query",
             r"HKCU\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice",

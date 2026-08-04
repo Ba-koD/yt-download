@@ -421,7 +421,7 @@ Deno.test("일부만 받아뒀으면 없는 조각만 받는다", async () => {
 });
 
 // --- 소리 조각 뒤 잘라내기 ---
-import { concat, dropTrailingSamples, listBoxes, makeBox } from "../src/mp4mux.js";
+import { concat, dropLeadingSamples, dropTrailingSamples, listBoxes, makeBox } from "../src/mp4mux.js";
 
 const beU32 = (value) => {
   const bytes = new Uint8Array(4);
@@ -430,9 +430,9 @@ const beU32 = (value) => {
 };
 
 /** 유튜브 소리 조각과 같은 뼈대의 작은 조각. 샘플마다 3바이트, 길이는 전부 같다. */
-function fakeAudioFragment({ samples = 10, size = 3, sampleDuration = 1024 } = {}) {
+function fakeAudioFragment({ samples = 10, size = 3, sampleDuration = 1024, base = 1000 } = {}) {
   const tfhd = makeBox("tfhd", beU32(0x000008), beU32(2), beU32(sampleDuration));
-  const tfdt = makeBox("tfdt", beU32(0), beU32(1000));
+  const tfdt = makeBox("tfdt", beU32(0), beU32(base));
   const trun = makeBox(
     "trun",
     beU32(0x000201), // data_offset + sample_size
@@ -469,6 +469,47 @@ Deno.test("소리 조각의 뒤를 잘라 영상 끝에 맞춘다", () => {
   assertEquals(dropTrailingSamples(fragment, 999, 44100), fragment);
   assertEquals(dropTrailingSamples(fragment, Infinity, 44100), fragment);
   assertEquals(dropTrailingSamples(fragment, 0, 44100), null);
+});
+
+/** 조각 안 moof 짝들의 (샘플 수, 시작 시각) 목록. */
+function fragmentsInfo(bytes) {
+  const out = [];
+  for (const box of listBoxes(bytes)) {
+    if (box.type !== "moof") continue;
+    const traf = listBoxes(bytes, box.start + 8, box.end).find((b) => b.type === "traf");
+    const kids = listBoxes(bytes, traf.start + 8, traf.end);
+    const trun = kids.find((b) => b.type === "trun");
+    const tfdt = kids.find((b) => b.type === "tfdt");
+    const view = new DataView(bytes.buffer, bytes.byteOffset);
+    out.push({
+      samples: view.getUint32(trun.start + 8 + 4),
+      time: view.getUint32(tfdt.start + 8 + 4),
+    });
+  }
+  return out;
+}
+
+Deno.test("moof 짝이 여러 개인 조각(라이브 출신)도 앞뒤를 자를 수 있다", () => {
+  // 5샘플짜리 짝 둘 = 총 10샘플. 라이브 조각을 이어붙인 다시보기가 이런 모양이다.
+  const multi = concat([
+    fakeAudioFragment({ samples: 5, base: 1000 }),
+    fakeAudioFragment({ samples: 5, base: 1000 + 5 * 1024 }),
+  ]);
+
+  // 뒤 자르기: 7샘플 어치만 남기면 → 첫 짝은 통째로, 둘째 짝은 2샘플만.
+  const tail = dropTrailingSamples(multi, (7 * 1024) / 44100, 44100);
+  assertEquals(fragmentsInfo(tail), [
+    { samples: 5, time: 1000 },
+    { samples: 2, time: 1000 + 5 * 1024 },
+  ]);
+
+  // 앞 자르기: 6샘플 어치를 버리면 → 첫 짝은 통째로 사라지고, 둘째 짝은 1샘플을 잃고
+  // 시작 시각이 그만큼 뒤로 밀린다.
+  const head = dropLeadingSamples(multi, (6 * 1024) / 44100, 44100);
+  assertEquals(fragmentsInfo(head), [{ samples: 4, time: 1000 + 6 * 1024 }]);
+
+  // 전부 버려야 하면 null.
+  assertEquals(dropLeadingSamples(multi, 999, 44100), null);
 });
 
 Deno.test("SAPISIDHASH 해시가 유튜브 방식과 같다", async () => {

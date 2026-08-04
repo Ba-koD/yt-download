@@ -396,65 +396,39 @@ export function combineInit(videoInit, audioInit, edits) {
  */
 export function dropLeadingSamples(fragment, seconds, timescale) {
   if (!(seconds > 0)) return fragment;
+  const pairs = fragmentPairs(fragment);
+  if (!pairs) return fragment;
 
-  const moof = listBoxes(fragment).find((box) => box.type === "moof");
-  const mdat = listBoxes(fragment).find((box) => box.type === "mdat");
-  if (!moof || !mdat) return fragment;
-
-  const traf = listBoxes(fragment, moof.start + HEADER, moof.end).find((b) => b.type === "traf");
-  if (!traf) return fragment;
-  const children = listBoxes(fragment, traf.start + HEADER, traf.end);
-  const tfhd = children.find((b) => b.type === "tfhd");
-  const tfdt = children.find((b) => b.type === "tfdt");
-  const trun = children.find((b) => b.type === "trun");
-  if (!tfhd || !trun) return fragment;
-
-  const sampleDuration = defaultSampleDuration(fragment, tfhd);
-  if (!sampleDuration) return fragment;
-
-  const sizes = readTrunSizes(fragment, trun);
-  if (!sizes) return fragment;
-
-  const drop = Math.min(sizes.length, Math.floor((seconds * timescale) / sampleDuration));
-  if (drop <= 0) return fragment;
-  if (drop >= sizes.length) return null;
-
-  const droppedBytes = sizes.slice(0, drop).reduce((sum, size) => sum + size, 0);
-  const keptSizes = sizes.slice(drop);
-
-  // trun 을 남은 샘플만으로 다시 쓴다. 크기 목록만 줄이면 되고 나머지 앞머리는 그대로다.
-  const newTrun = concat([
-    boxBytes(fragment, trun).subarray(0, HEADER + 4), // size+type+version/flags
-    u32be(keptSizes.length),
-    new Uint8Array(4), // data_offset 자리. 아래에서 다시 계산한다.
-    ...keptSizes.map(u32be),
-  ]);
-  writeU32At(newTrun, 0, newTrun.length);
-
-  const newTraf = rebuildBox(fragment, traf, (child) =>
-    child.type === "trun" ? newTrun : boxBytes(fragment, child),
-  );
-  const newMoof = rebuildBox(fragment, moof, (child) =>
-    child.type === "traf" ? newTraf : boxBytes(fragment, child),
-  );
-
-  // 샘플 데이터는 moof 바로 뒤(mdat 안)에서 시작한다.
-  const dataOffset = newMoof.length + HEADER;
-  const trunInNew = listBoxes(newMoof, HEADER, newMoof.length)
-    .filter((b) => b.type === "traf")
-    .flatMap((t) => listBoxes(newMoof, t.start + HEADER, t.end))
-    .find((b) => b.type === "trun");
-  writeU32At(newMoof, trunInNew.start + HEADER + 8, dataOffset);
-
-  const newMdat = concat([
-    u32be(mdat.end - mdat.start - droppedBytes),
-    ascii("mdat"),
-    fragment.subarray(mdat.start + HEADER + droppedBytes, mdat.end),
-  ]);
-
-  const result = concat([newMoof, newMdat]);
-  if (tfdt) shiftDecodeTime(result, drop * sampleDuration);
-  return result;
+  // 라이브에서 온 조각은 moof+mdat 짝이 여러 개다(원래 방송 조각들을 이어붙인 것).
+  // 짝을 순서대로 걸어가며 통째로 버리다가, 경계에 걸친 짝만 안에서 자른다.
+  let dropLeft = seconds * timescale;
+  const parts = [];
+  let started = false;
+  for (const pair of pairs) {
+    const whole = fragment.subarray(pair.moof.start, pair.mdat.end);
+    if (started) {
+      parts.push(whole);
+      continue;
+    }
+    const info = pairSamples(fragment, pair.moof);
+    if (!info) {
+      // 못 읽는 짝은 자르지 않고 그대로 둔다(모자라게 버리는 쪽이 안전하다).
+      parts.push(whole);
+      started = true;
+      continue;
+    }
+    const total = info.sizes.length * info.sampleDuration;
+    if (dropLeft >= total) {
+      dropLeft -= total; // 짝을 통째로 버린다
+      continue;
+    }
+    started = true;
+    const drop = Math.floor(dropLeft / info.sampleDuration);
+    if (drop <= 0) parts.push(whole);
+    else parts.push(slicePair(fragment, pair, info, drop, info.sizes.length));
+  }
+  if (!parts.length) return null;
+  return concat(parts);
 }
 
 /**
@@ -471,46 +445,94 @@ export function dropLeadingSamples(fragment, seconds, timescale) {
 export function dropTrailingSamples(fragment, seconds, timescale) {
   if (!Number.isFinite(seconds)) return fragment;
   if (!(seconds > 0)) return null;
+  const pairs = fragmentPairs(fragment);
+  if (!pairs) return fragment;
 
-  const moof = listBoxes(fragment).find((box) => box.type === "moof");
-  const mdat = listBoxes(fragment).find((box) => box.type === "mdat");
-  if (!moof || !mdat) return fragment;
+  // 짝을 순서대로 담다가, 남길 길이를 넘어서는 짝에서 자르고 그 뒤는 통째로 버린다.
+  // 딱 떨어지지 않으면 한 샘플(수십 ms)을 더 남기는 쪽으로 둔다. 모자라면 소리가 먼저 끊긴다.
+  let keepLeft = seconds * timescale;
+  const parts = [];
+  let ended = false;
+  for (const pair of pairs) {
+    if (ended) break;
+    const whole = fragment.subarray(pair.moof.start, pair.mdat.end);
+    const info = pairSamples(fragment, pair.moof);
+    if (!info) {
+      // 못 읽는 짝은 자르지 않고 그대로 둔다(길이도 모르니 세지 않는다).
+      parts.push(whole);
+      continue;
+    }
+    const total = info.sizes.length * info.sampleDuration;
+    if (total <= keepLeft) {
+      parts.push(whole);
+      keepLeft -= total;
+      continue;
+    }
+    ended = true;
+    const keep = Math.ceil(keepLeft / info.sampleDuration);
+    if (keep >= info.sizes.length) parts.push(whole);
+    else if (keep > 0) parts.push(slicePair(fragment, pair, info, 0, keep));
+  }
+  if (!ended) return fragment; // 전부 남길 길이 안에 든다 — 손대지 않는다
+  if (!parts.length) return null;
+  return concat(parts);
+}
 
-  const traf = listBoxes(fragment, moof.start + HEADER, moof.end).find((b) => b.type === "traf");
-  if (!traf) return fragment;
-  const children = listBoxes(fragment, traf.start + HEADER, traf.end);
+/** 조각 속의 moof+mdat 짝들. 하나짜리(일반 영상)도, 여러 개짜리(라이브 출신)도 있다. */
+function fragmentPairs(bytes) {
+  const boxes = listBoxes(bytes);
+  const pairs = [];
+  for (let i = 0; i < boxes.length; i += 1) {
+    if (boxes[i].type !== "moof") continue;
+    const next = boxes[i + 1];
+    if (!next || next.type !== "mdat") return null; // 예상 밖 구조 — 손대지 않는다
+    pairs.push({ moof: boxes[i], mdat: next });
+  }
+  return pairs.length ? pairs : null;
+}
+
+/** 짝 하나의 샘플 정보. 다루지 못하는 형태면 null. */
+function pairSamples(bytes, moof) {
+  const traf = listBoxes(bytes, moof.start + HEADER, moof.end).find((b) => b.type === "traf");
+  if (!traf) return null;
+  const children = listBoxes(bytes, traf.start + HEADER, traf.end);
   const tfhd = children.find((b) => b.type === "tfhd");
   const trun = children.find((b) => b.type === "trun");
-  if (!tfhd || !trun) return fragment;
+  if (!tfhd || !trun) return null;
+  const sampleDuration = defaultSampleDuration(bytes, tfhd);
+  if (!sampleDuration) return null;
+  const sizes = readTrunSizes(bytes, trun);
+  if (!sizes) return null;
+  return { traf, trun, sampleDuration, sizes };
+}
 
-  const sampleDuration = defaultSampleDuration(fragment, tfhd);
-  if (!sampleDuration) return fragment;
-  const sizes = readTrunSizes(fragment, trun);
-  if (!sizes) return fragment;
+/**
+ * 짝 하나에서 샘플 [from, to) 만 남긴 바이트를 만든다.
+ *
+ * trun 을 남은 샘플만으로 다시 쓰고(크기 목록만 줄이면 된다), data_offset 을 다시 재고,
+ * mdat 은 남은 샘플 바이트만 담는다. 앞을 잘랐으면 시작 시각(tfdt)을 그만큼 뒤로 민다.
+ */
+function slicePair(bytes, pair, info, from, to) {
+  const keptSizes = info.sizes.slice(from, to);
+  const leadBytes = info.sizes.slice(0, from).reduce((sum, size) => sum + size, 0);
+  const keptBytes = keptSizes.reduce((sum, size) => sum + size, 0);
 
-  // 딱 떨어지지 않으면 한 샘플(수십 ms)을 더 남기는 쪽으로 둔다. 모자라면 소리가 먼저 끊긴다.
-  const keep = Math.ceil((seconds * timescale) / sampleDuration);
-  if (keep >= sizes.length) return fragment;
-  if (keep <= 0) return null;
-
-  const keptSizes = sizes.slice(0, keep);
-  const tailBytes = sizes.slice(keep).reduce((sum, size) => sum + size, 0);
-
-  // trun 을 남은 샘플만으로 다시 쓴다. 시작 시각(tfdt)은 그대로다 — 뒤만 잘랐으니까.
   const newTrun = concat([
-    boxBytes(fragment, trun).subarray(0, HEADER + 4),
+    boxBytes(bytes, info.trun).subarray(0, HEADER + 4), // size+type+version/flags
     u32be(keptSizes.length),
     new Uint8Array(4), // data_offset 자리. 아래에서 다시 계산한다.
     ...keptSizes.map(u32be),
   ]);
   writeU32At(newTrun, 0, newTrun.length);
 
-  const newTraf = rebuildBox(fragment, traf, (child) =>
-    child.type === "trun" ? newTrun : boxBytes(fragment, child),
+  const newTraf = rebuildBox(bytes, info.traf, (child) =>
+    child.type === "trun" ? newTrun : boxBytes(bytes, child),
   );
-  const newMoof = rebuildBox(fragment, moof, (child) =>
-    child.type === "traf" ? newTraf : boxBytes(fragment, child),
+  const newMoof = rebuildBox(bytes, pair.moof, (child) =>
+    child.type === "traf" ? newTraf : boxBytes(bytes, child),
   );
+
+  // 샘플 데이터는 moof 바로 뒤(mdat 안)에서 시작한다.
   const dataOffset = newMoof.length + HEADER;
   const trunInNew = listBoxes(newMoof, HEADER, newMoof.length)
     .filter((b) => b.type === "traf")
@@ -519,11 +541,17 @@ export function dropTrailingSamples(fragment, seconds, timescale) {
   writeU32At(newMoof, trunInNew.start + HEADER + 8, dataOffset);
 
   const newMdat = concat([
-    u32be(mdat.end - mdat.start - tailBytes),
+    u32be(HEADER + keptBytes),
     ascii("mdat"),
-    fragment.subarray(mdat.start + HEADER, mdat.end - tailBytes),
+    bytes.subarray(
+      pair.mdat.start + HEADER + leadBytes,
+      pair.mdat.start + HEADER + leadBytes + keptBytes,
+    ),
   ]);
-  return concat([newMoof, newMdat]);
+
+  const result = concat([newMoof, newMdat]);
+  if (from > 0) shiftDecodeTime(result, from * info.sampleDuration);
+  return result;
 }
 
 function u32be(value) {

@@ -152,9 +152,13 @@ export function withFallback(primary, secondary, { coolOffMs = 60_000, now = Dat
         // 같은 답이 오므로 그대로 던진다(일시적인 코드라면 withRetry 가 다시 시도한다).
         if (httpStatusOf(error)) throw error;
         // 상태 코드조차 없이 죽었다면(CORS 차단 등) 통로 문제다. 예비 통로로 옮겨 탄다.
+        // 자동으로 처리되는 일이므로 오류처럼 보이지 않게 info 로, 전환되는 순간 한 번만 적는다
+        // (요청 여섯이 나란히 막히면 같은 줄이 여섯 번 찍혔다).
+        if (!blocked) {
+          console.info("[yt-download] 페이지 요청이 막혀 예비 통로로 넘어갑니다:", error.message);
+        }
         blocked = true;
         blockedAt = now();
-        console.warn("[yt-download] 페이지 요청이 막혀 예비 통로로 넘어갑니다:", error.message);
       }
     }
     return secondary(url, headers);
@@ -203,7 +207,8 @@ export function withRetry(fetcher, { tries = 6, waitMs = 1000, maxWaitMs = 8000,
         return await fetcher(url, headers);
       } catch (error) {
         if (attempt >= tries || !transient(error, url)) throw error;
-        console.warn(
+        // 재시도로 처리되는 일이므로 오류처럼 보이지 않게 info 로 적는다.
+        console.info(
           `[yt-download] 잠시 쉬었다 다시 받아봅니다 (${attempt}/${tries - 1}):`,
           error.message,
         );

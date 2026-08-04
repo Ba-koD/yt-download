@@ -11,6 +11,23 @@ YouTube 영상·라이브의 원하는 **구간만** 골라 받는 데스크톱 
 | **확장** | 유튜브 페이지에 "구간 받기" 패널. 앱 없이 브라우저 안에서 완결 | `extension/` |
 | **확장 관리자** | 확장을 설치·갱신한다(스토어 밖 확장은 크롬이 자동 갱신을 안 해준다) | `manager/` |
 
+## 받기
+
+[릴리스](https://github.com/Ba-koD/yt-download/releases/latest)에서 플랫폼에 맞는 것을 받는다.
+도구(yt-dlp·ffmpeg·ffprobe·deno)가 전부 담겨 있어 **풀어서 실행 파일 하나면 끝**이고,
+첫 실행 때 도구를 푸느라 몇 초 걸린다.
+
+| 파일 | 대상 | 필요한 것 |
+| --- | --- | --- |
+| `yt-download-windows-x64.zip` | Windows 10/11 (x64) | Edge WebView2 런타임(대부분 기본 탑재) |
+| `yt-download-linux-x64.tar.gz` | Linux (x64) | `libwebkit2gtk-4.1-0` |
+| `yt-download-macos-arm64.tar.gz` | macOS (Apple Silicon) | 서명이 없어 처음엔 우클릭 → 열기 |
+| `yt-download-macos-x64.tar.gz` | macOS (Intel) | 위와 같음 |
+
+webview 가 없으면 창 대신 기본 브라우저로 열릴 뿐, 기능은 그대로 다 쓸 수 있다.
+한 번 받아두면 앱이 스스로 갱신한다(오른쪽 위 **업데이트 확인** → **다시 켜기**).
+받은 파일은 릴리스의 `SHA256SUMS.txt` 로 검증할 수 있다.
+
 ## 실행
 
 ```bash

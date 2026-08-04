@@ -63,11 +63,12 @@ grep -q '^## \[Unreleased\]' CHANGELOG.md || { echo "CHANGELOG 에 ## [Unrelease
 repo_url="$(sed -n 's|^\[Unreleased\]: \(.*\)/compare/v[0-9.]*\.\.\.HEAD$|\1|p' CHANGELOG.md | head -1)"
 [[ -n "$repo_url" ]] || { echo "CHANGELOG 의 [Unreleased] 링크를 찾지 못했습니다." >&2; exit 1; }
 
-awk -v v="$next" -v d="$(date +%F)" -v tag="$tag" -v url="$repo_url" '
+awk -v v="$next" -v d="$(date +%F)" -v tag="$tag" -v cur="$current" -v url="$repo_url" '
   /^## \[Unreleased\]/ && !added { print; print ""; print "## [" v "] - " d; added = 1; next }
   /^\[Unreleased\]: .*\/compare\// && !linked {
     print "[Unreleased]: " url "/compare/" tag "...HEAD"
-    print "[" v "]: " url "/releases/tag/" tag
+    # 버전 링크는 이전 버전과의 비교로 건다. 무엇이 바뀌었는지 한 번에 보인다.
+    print "[" v "]: " url "/compare/v" cur "..." tag
     linked = 1; next
   }
   { print }

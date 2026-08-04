@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 릴리스 본문을 만든다. CHANGELOG 의 해당 버전 칸 + 받는 방법 안내.
+# 릴리스 본문을 만든다. CHANGELOG 의 해당 버전 칸 + 이전 버전과의 비교 링크 + 짧은 받기 안내.
+# 설치 방법 같은 가이드는 여기 늘어놓지 않는다 — README 에 두고 링크한다.
 #
 #   ./scripts/release-notes.sh 0.2.0
 set -euo pipefail
@@ -10,48 +11,29 @@ version="${version#v}"
 
 "$root/scripts/changelog-section.sh" "$version"
 
-cat <<'NOTES'
+repo_url="$(sed -n 's|^\[Unreleased\]: \(.*\)/compare/v[0-9.]*\.\.\.HEAD$|\1|p' "$root/CHANGELOG.md" | head -1)"
+# CHANGELOG 에서 이 버전 제목 바로 다음에 오는 버전 제목이 이전 버전이다.
+prev="$(grep -oE '^## \[[0-9.]+\]' "$root/CHANGELOG.md" | tr -d '#[] ' |
+  awk -v v="$version" 'seen { print; exit } $0 == v { seen = 1 }')"
 
+echo
+if [[ -n "$repo_url" && -n "$prev" ]]; then
+  echo "**전체 변경 내역**: [v$prev → v$version]($repo_url/compare/v$prev...v$version)"
+  echo
+fi
+
+cat <<NOTES
 ---
 
-## 앱 받기
+## 받기
 
-도구(yt-dlp, ffmpeg, ffprobe, deno)를 모두 담은 포터블 빌드입니다.
-풀어서 실행 파일 하나만 두고 쓰면 되고, 처음 실행할 때 도구를 풀어내느라 몇 초 걸립니다.
-
-| 파일 | 대상 |
+| 파일 | 무엇 |
 | --- | --- |
-| `yt-download-windows-x64.zip` | Windows 10/11 (x64) — Microsoft Edge WebView2 런타임 필요 |
-| `yt-download-linux-x64.tar.gz` | Linux (x64) — `libwebkit2gtk-4.1-0` 필요 |
-| `yt-download-macos-arm64.tar.gz` | macOS (Apple Silicon) — 앱 번들 |
-| `yt-download-macos-x64.tar.gz` | macOS (Intel) — 앱 번들 |
+| \`yt-download-<플랫폼>.zip/.tar.gz\` | 데스크톱 앱 (도구 내장, 파일 하나로 동작) |
+| \`yt-download-extension.zip\` | 크롬 확장 (Edge·Brave 등 크로미움 계열 포함) |
+| \`yt-download-extension-firefox.zip\` | 파이어폭스 확장 |
+| \`SHA256SUMS.txt\` | 받은 파일 검증용 |
 
-macOS 는 서명이 없어 처음 열 때 우클릭 → 열기 를 한 번 해줘야 합니다.
-
-한 번 받아두면 다음부터는 앱이 스스로 갱신합니다. 오른쪽 위 **업데이트 확인** 을 누르면
-새 버전을 받아 실행 파일을 바꿔 끼우고, **다시 켜기** 로 새 버전이 뜹니다.
-관리자 권한은 필요 없고, 받다가 실패해도 쓰던 실행 파일은 그대로 남습니다.
-
-## 크롬 확장 받기 (`yt-download-extension.zip`)
-
-앱을 켜지 않고 유튜브 페이지에서 바로 구간을 받는 확장입니다. 앱과 아무것도 공유하지 않습니다.
-유튜브 이용약관 때문에 크롬 웹 스토어에는 올릴 수 없어서 직접 넣어야 합니다.
-
-1. `yt-download-extension.zip` 을 받아 **계속 둘 폴더에 풀어둡니다**
-   (확장은 이 폴더를 계속 참조하니 지우거나 옮기지 마세요)
-2. 주소창에 `chrome://extensions` 를 입력해 엽니다
-3. 오른쪽 위 **개발자 모드**를 켭니다
-4. **압축해제된 확장 프로그램을 로드**를 누르고 1번에서 푼 폴더를 고릅니다
-5. 유튜브 영상 페이지를 열면 좋아요 옆에 **구간 받기** 버튼이 생깁니다
-
-**프로필을 여러 개 쓰면 프로필마다 한 번씩** 4번을 해줘야 합니다(확장은 프로필마다 따로
-저장됩니다). Edge·Brave·Whale·Vivaldi·Opera 등 크로미움 계열도 같은 방법입니다.
-
-**나중에 새 버전이 나오면**: 새 zip 을 받아 같은 폴더에 덮어쓰고, `chrome://extensions` 에서
-이 확장의 새로고침(↻)을 한 번 누르면 됩니다. 파이어폭스는 `yt-download-extension-firefox.zip`
-을 `about:debugging` 에서 임시 부가 기능으로 로드합니다.
-
----
-
-`SHA256SUMS.txt` 로 받은 파일이 온전한지 확인할 수 있습니다.
+- **앱** 플랫폼별 파일·요구 사항·자동 갱신: [README의 "받기"]($repo_url#받기)
+- **확장** 설치·새 버전 갱신(웹 스토어에 없어 직접 얹습니다): [extension/README]($repo_url/blob/v$version/extension/README.md)
 NOTES

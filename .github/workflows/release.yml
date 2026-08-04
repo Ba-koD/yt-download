@@ -183,56 +183,6 @@ jobs:
           mv dist/yt-download-extension-firefox.zip .
           sha256sum yt-download-extension-firefox.zip > yt-download-extension-firefox.zip.sha256
 
-      # 서명된 CRX 와 update.xml. 관리자가 브라우저 정책에 걸어두면 브라우저가
-      # 이 둘만 보고 스스로 설치하고 스스로 갱신한다(사람이 폴더를 얹을 필요가 없다).
-      #
-      # 키가 없으면 여기서 세운다. 조용히 건너뛰면 CRX 없는 릴리스가 나가고,
-      # 정책으로 깔아 쓰는 사람들은 갱신이 멈춘 줄도 모른 채 옛 판에 남는다.
-      - name: Signing key is present
-        env:
-          CRX_PRIVATE_KEY: ${{ secrets.CRX_PRIVATE_KEY }}
-        run: |
-          if [ -z "$CRX_PRIVATE_KEY" ]; then
-            echo "CRX_PRIVATE_KEY 시크릿이 없습니다." >&2
-            echo "저장소 Settings → Secrets and variables → Actions 에 개인키 PEM 을 넣어주세요." >&2
-            exit 1
-          fi
-
-      - name: Sign the extension (CRX)
-        env:
-          CRX_PRIVATE_KEY: ${{ secrets.CRX_PRIVATE_KEY }}
-        run: |
-          python3 -m pip install --quiet --disable-pip-version-check cryptography
-          # 키는 러너 안에서만 쓰고 바로 지운다. 작업 폴더는 아티팩트로 올라가지 않지만
-          # 로그·자산에 섞여 나갈 여지를 아예 남기지 않는다.
-          umask 077
-          printf '%s' "$CRX_PRIVATE_KEY" > crx-key.pem
-          python3 scripts/pack-crx.py --key crx-key.pem
-          rm -f crx-key.pem
-          mv dist/yt-download.crx dist/update.xml .
-          sha256sum yt-download.crx > yt-download.crx.sha256
-
-      # 브라우저가 갱신 여부를 판단하는 근거다. 여기 적힌 버전이 태그와 다르면
-      # 새 판이 올라가도 아무도 받아가지 않는다(아무 소리 없이).
-      - name: Update manifest points at this version
-        run: |
-          cat update.xml
-          grep -q "version='${{ needs.verify.outputs.version }}'" update.xml
-
-      # CRX 는 헤더 + zip 이다. 담을 파일 목록을 손으로 적는 자리가 하나 더 늘었으니
-      # 여기서도 확인한다(전에 vendor 를 통째로 빠뜨린 적이 있다).
-      - name: CRX contents are complete
-        run: |
-          python3 - <<'PY'
-          import struct, pathlib
-          data = pathlib.Path("yt-download.crx").read_bytes()
-          assert data[:4] == b"Cr24", "CRX 머리표가 아닙니다"
-          _, header_len = struct.unpack("<II", data[4:12])
-          pathlib.Path("crx-inner.zip").write_bytes(data[12 + header_len:])
-          PY
-          python3 scripts/check-extension-zip.py crx-inner.zip extension
-          rm -f crx-inner.zip
-
       # 아티팩트는 이름별 폴더로 내려온다. 한곳에 모으고 체크섬은 한 파일로 합친다.
       - name: Collect assets
         run: |
@@ -242,14 +192,10 @@ jobs:
           find artifacts -type f ! -name '*.sha256' -exec mv {} release/ \;
           mv yt-download-extension.zip release/
           mv yt-download-extension-firefox.zip release/
-          # update.xml 은 이름이 고정이어야 한다. 브라우저가 늘 같은 주소
-          # (releases/latest/download/update.xml) 로 물어보기 때문이다.
-          mv yt-download.crx update.xml release/
           {
             find artifacts -type f -name '*.sha256' -exec cat {} +
             cat yt-download-extension.zip.sha256
             cat yt-download-extension-firefox.zip.sha256
-            cat yt-download.crx.sha256
           } | sort -k2 > release/SHA256SUMS.txt
           ls -l release
           cat release/SHA256SUMS.txt

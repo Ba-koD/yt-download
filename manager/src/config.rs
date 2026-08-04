@@ -12,6 +12,10 @@ pub struct Config {
     /// 확장을 넣어 둔 브라우저 키(chrome, edge …). changelog 를 그 브라우저로 연다.
     #[serde(default)]
     pub browser: Option<String>,
+    /// 그 브라우저에서 보고 있는 프로필 폴더(`Default`, `Profile 1` …).
+    /// 확장은 프로필마다 따로 저장되므로 어느 프로필 이야기인지 기억해야 한다.
+    #[serde(default)]
+    pub profile: Option<String>,
     /// 로그인할 때 관리자가 창 없이 한 번 업데이트를 확인하는지.
     #[serde(default)]
     pub auto_update: bool,

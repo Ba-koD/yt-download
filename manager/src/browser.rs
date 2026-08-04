@@ -12,16 +12,31 @@
 //! 그래서 브라우저마다 얹혀 있는지를 따로 본다 — 크로미움은 얹은 확장의 폴더 경로를
 //! 프로필의 `Preferences` 에 적어두므로 그걸 읽으면 알 수 있다.
 //!
-//! # 정책으로 자동 설치
+//! # 프로그램으로 설치하는 길은 전부 막혀 있다 (하나씩 재서 확인함)
 //!
-//! 손으로 얹는 일까지 없애는 길은 **정책 강제 설치**뿐이다. 크로미움은 정책에 적힌
-//! `<확장ID>;<update.xml 주소>` 를 보고 스스로 내려받아 설치하고, 그 뒤로도 스스로 갱신한다.
-//! 개발자 모드도, 압축해제 로드도, 관리자 권한도 필요 없다(정책을 `HKCU` 에 적는다).
+//! 여기서 읽기만 하는 이유다. 넣는 일은 사람이 한 번 해야 한다.
 //!
-//! 대신 브라우저마다 정책을 읽는 레지스트리 자리가 다르고, 벤더 문서가 엇갈리는 곳도 있다.
-//! 확실하지 않은 브라우저는 **알려진 자리 모두에 적는다** — 안 보는 자리에 적힌 값은
-//! 아무 일도 하지 않고, 해제하면 전부 지운다. 그리고 정말 깔렸는지는 우리 짐작이 아니라
-//! **브라우저 프로필을 읽어서** 확인한다(`extension_state`).
+//! **정책 강제설치**(`ExtensionInstallForcelist`): 안 된다. 크로미움은
+//! **웹 스토어가 아닌 update URL 을 조용히 버린다.** 같은 정책 키에 웹 스토어 확장과
+//! 우리 것을 나란히 넣고 돌려보면 웹 스토어 것만 깔리고, 우리 확장은 로그에 ID 조차
+//! 나오지 않는다(요청을 아예 안 한다). `chrome://policy` 에는 오류 없이 잘 실려 있다.
+//! `ExtensionSettings` + `override_update_url` 도 마찬가지다.
+//!
+//! 게다가 정책을 쓰면 대가가 크다 — 브라우저에 "조직에서 관리하는 브라우저입니다" 가
+//! 계속 뜨고, `HKCU\SOFTWARE\Policies` 는 윈도우가 잠가둬서(사용자에게 읽기만 준다)
+//! 쓰려면 관리자 권한이 필요하다.
+//!
+//! **레지스트리 사이드로드**(`Software\Google\Chrome\Extensions`): 문서상 웹 스토어 확장만
+//! 되고, Chrome 33 부터 로컬 CRX 설치가 막혔다.
+//!
+//! **웹사이트에서 설치**: `chrome.webstore.install()` 인라인 설치는 Chrome 71(2018)에서
+//! API 째로 사라졌다. `ExtensionInstallSources` 로 출처를 허용하고 CRX 를
+//! `application/x-chrome-extension` 으로 내려줘도 — 크롬이 받아만 가고 아무 일도 안 한다.
+//!
+//! **개발자 도구 프로토콜**(`Extensions.loadUnpacked`): 기능 자체는 완벽히 된다. 그런데
+//! 크롬 136 부터 기본 프로필에서는 디버깅 포트를 안 열어주고, 경로를 바꿔(정션 등) 우회하면
+//! **크롬이 다른 암호화 키를 쓴다** — 그 프로필의 로그인이 풀린다. 우회를 막으려고 만든
+//! 방어막이라 우회하면 대가를 치른다.
 
 use std::{
     path::{Path, PathBuf},
@@ -30,37 +45,12 @@ use std::{
 
 use serde::Serialize;
 
-/// 이 확장의 ID. `extension/manifest.json` 의 `key`(= CRX 서명키의 공개키)에서 나온다.
+/// 이 확장의 ID. `extension/manifest.json` 의 `key` 에서 나온다.
 ///
-/// 서명키를 바꾸면 이 값도 바뀌고, 그러면 이미 깔린 확장과 다른 것이 된다.
-/// 정책·update.xml·매니페스트 셋이 같은 키를 가리켜야 설치가 된다.
+/// `key` 를 박아두는 이유는 **ID 를 고정하기 위해서다.** 압축해제 확장의 ID 는 원래
+/// 얹은 폴더 경로에서 나와서, 폴더가 다르면 같은 확장도 다른 ID 가 된다. 그러면
+/// "이 프로필에 얹혀 있나" 를 ID 로 물을 수 없다. `key` 가 있으면 어디서 얹든 ID 가 같다.
 pub const EXTENSION_ID: &str = "gddgamjmdkmoobgnliipmenchgejaefi";
-
-/// 브라우저가 "새 버전 있나" 하고 물어볼 자리. 릴리스마다 같은 주소에 새로 올라간다.
-///
-/// 정책을 적을 때만 쓴다. 정책은 윈도우에서만 되므로 다른 OS 에서는 이 값도 필요 없다
-/// (그냥 두면 리눅스 CI 가 "안 쓰는 상수"로 잡는다 — `-D warnings` 라 빌드가 선다).
-#[cfg(windows)]
-pub const UPDATE_URL: &str =
-    "https://github.com/Ba-koD/yt-download/releases/latest/download/update.xml";
-
-/// 정책을 적을 자리(`HKCU\SOFTWARE\Policies\` 아래).
-///
-/// 여러 개인 것은 벤더 문서가 엇갈려서다. 안 보는 자리에 적힌 값은 아무 일도 하지 않는다.
-#[cfg(windows)]
-fn policy_roots(key: &str) -> &'static [&'static str] {
-    match key {
-        "chrome" => &[r"Google\Chrome"],
-        "edge" => &[r"Microsoft\Edge"],
-        // 브레이브는 문서마다 Brave-Browser 와 Brave 가 섞여 나온다.
-        "brave" => &[r"BraveSoftware\Brave-Browser", r"BraveSoftware\Brave"],
-        // 웨일은 정책 문서를 공개하지 않는다. 크로미움 관례대로 둘을 짚어본다.
-        "whale" => &[r"Naver\Whale", r"NaverWhale\Whale"],
-        "vivaldi" => &["Vivaldi"],
-        "opera" => &[r"Opera Software\Opera", r"Opera Software\Opera Stable"],
-        _ => &[],
-    }
-}
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct Browser {
@@ -124,9 +114,7 @@ pub enum Loaded {
     Unknown,
     /// 얹은 흔적이 없다.
     No,
-    /// 정책으로 설치돼 있다. 브라우저가 스스로 갱신하므로 더 손댈 것이 없다.
-    Policy,
-    /// 관리자가 갈아 끼우는 그 폴더를 압축해제 확장으로 얹었다.
+    /// 관리자가 갈아 끼우는 그 폴더를 얹었다. 정상 상태다.
     /// 폴더는 관리자가 갱신하고, 갈아 끼우면 확장이 스스로 다시 켜진다.
     Folder,
     /// 우리 확장이긴 한데 다른 폴더로 얹혀 있다.
@@ -134,219 +122,209 @@ pub enum Loaded {
     Elsewhere { path: String },
 }
 
-/// 정책 목록에 우리 확장이 적혀 있는지.
+/// 어떻게 얹혀 있는지와, 그 브라우저에 실제로 깔린 버전.
 ///
-/// 적혀 있다는 것과 실제로 깔렸다는 것은 다르다(브라우저를 한 번 다시 켜야 한다).
-/// 그래서 화면은 이 값과 `extension_state` 를 함께 보여준다.
-#[cfg(windows)]
-pub fn policy_registered(key: &str) -> bool {
-    policy_roots(key)
-        .iter()
-        .any(|root| !policy_entries(root).is_empty())
+/// 버전은 브라우저에게 직접 물어야 한다. 폴더 버전을 그대로 보여주면, 폴더만 새것이고
+/// 브라우저는 아직 옛 판인 순간에 거짓말이 된다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Presence {
+    pub state: Loaded,
+    pub version: Option<String>,
 }
 
-#[cfg(not(windows))]
-pub fn policy_registered(key: &str) -> bool {
-    let _ = key;
-    false
+impl Presence {
+    fn plain(state: Loaded) -> Self {
+        Presence {
+            state,
+            version: None,
+        }
+    }
 }
 
-/// 이 컴퓨터에서 정책 등록을 쓸 수 있는지. 지금은 윈도우만 된다.
+/// 브라우저 프로필 하나. 화면의 프로필 고르개가 이걸 그대로 쓴다.
+#[derive(Debug, Clone, Serialize)]
+pub struct Profile {
+    /// 폴더 이름(`Default`, `Profile 1` …). 어느 것을 골랐는지 기억할 때 쓴다.
+    pub dir: String,
+    /// 사람이 보는 이름. 브라우저가 `Local State` 에 적어둔 것을 그대로 쓴다.
+    pub name: String,
+    /// 로그인한 계정. 이름이 겹칠 때 이걸로 가린다.
+    pub account: Option<String>,
+    /// 이 프로필에 우리 확장이 얹혀 있는지.
+    pub state: Loaded,
+    /// 이 프로필에 깔린 확장 버전.
+    pub version: Option<String>,
+}
+
+/// 그 브라우저의 프로필들과, 각 프로필의 확장 상태.
 ///
-/// macOS 는 `.plist`, 리눅스는 `/etc/opt/<브라우저>/policies/managed/` 라 자리도 다르고
-/// 리눅스는 root 가 필요하다. 그쪽은 아직 손으로 얹는 길만 있다.
-pub const fn policy_supported() -> bool {
-    cfg!(windows)
-}
-
-// ── 정책 쓰기 ──────────────────────────────────────────────────────────────
-//
-// `ExtensionInstallForcelist` 는 값 이름이 "1", "2", … 인 목록이다. 남이 쓴 항목을
-// 덮어쓰면 그 확장이 조용히 사라지므로, 빈 번호를 찾아 우리 것만 얹는다.
-
-#[cfg(windows)]
-fn policy_key_path(root: &str) -> String {
-    format!(r"HKCU\SOFTWARE\Policies\{root}\ExtensionInstallForcelist")
-}
-
-/// 그 자리에 적힌 우리 항목들의 값 이름.
-#[cfg(windows)]
-fn policy_entries(root: &str) -> Vec<String> {
-    read_policy_values(root)
-        .into_iter()
-        .filter(|(_, data)| data.starts_with(EXTENSION_ID))
-        .map(|(name, _)| name)
-        .collect()
-}
-
-/// 그 자리에 적힌 값 전부(이름, 내용).
-#[cfg(windows)]
-fn read_policy_values(root: &str) -> Vec<(String, String)> {
-    let Ok(output) = crate::proc::command("reg")
-        .args(["query", &policy_key_path(root)])
-        .output()
-    else {
+/// **확장은 프로필마다 따로 저장된다**(공용 자리가 없다). 그래서 "이 브라우저에 얹혀
+/// 있나" 라는 질문은 성립하지 않는다 — 프로필마다 따로 물어야 한다. 프로필이 여섯 개인
+/// 환경에서 한 곳에만 얹어두고 "얹혀 있음" 이라고 하면 나머지 다섯에서 왜 버튼이 없는지
+/// 알 수 없다.
+pub fn profiles(key: &str, dir: &Path) -> Vec<Profile> {
+    let Some(root) = user_data_dir(key).filter(|root| root.is_dir()) else {
         return Vec::new();
     };
-    if !output.status.success() {
-        return Vec::new(); // 자리 자체가 없다 = 아무것도 안 적혀 있다
-    }
-    // "    1    REG_SZ    abcd…;https://…" 형태다.
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let (name, rest) = line.trim().split_once("    REG_SZ")?;
-            Some((name.trim().to_string(), rest.trim().to_string()))
+    let named = profile_names(&root);
+    let wanted = normalize(dir);
+
+    let mut found: Vec<Profile> = profile_dirs(key)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|path| {
+            let name = path.file_name()?.to_string_lossy().to_string();
+            // 사용자 폴더 자체는 프로필이 아니다(오페라처럼 겹치는 경우가 있어 걸러낸다).
+            if name != "Default" && !name.starts_with("Profile ") {
+                return None;
+            }
+            let presence = presence_in(&path, &wanted);
+            let info = named.get(&name);
+            Some(Profile {
+                name: info
+                    .map(|(label, _)| label.clone())
+                    .unwrap_or_else(|| name.clone()),
+                account: info.and_then(|(_, account)| account.clone()),
+                dir: name,
+                state: presence.state,
+                version: presence.version,
+            })
         })
-        .collect()
-}
+        .collect();
 
-/// 고른 브라우저의 정책에 우리 확장을 적는다. 브라우저를 다시 켜면 스스로 설치한다.
-#[cfg(windows)]
-pub fn register_policy(key: &str) -> anyhow::Result<()> {
-    let roots = policy_roots(key);
-    if roots.is_empty() {
-        anyhow::bail!("이 브라우저는 정책 설치를 지원하지 않습니다");
-    }
-    let value = format!("{EXTENSION_ID};{UPDATE_URL}");
-    let mut wrote = 0;
-    for root in roots {
-        let existing = read_policy_values(root);
-        // 이미 우리 것이 있으면 그 자리에 다시 쓴다(주소가 바뀌었을 수 있다).
-        let name = existing
+    // 브라우저가 보여주는 순서를 그대로 따른다.
+    let order = profile_order(&root);
+    found.sort_by_key(|profile| {
+        order
             .iter()
-            .find(|(_, data)| data.starts_with(EXTENSION_ID))
-            .map(|(name, _)| name.clone())
-            .unwrap_or_else(|| {
-                // 남의 항목을 덮지 않도록 안 쓰인 가장 작은 번호를 고른다.
-                let used: Vec<u32> = existing
-                    .iter()
-                    .filter_map(|(name, _)| name.parse().ok())
-                    .collect();
-                (1..).find(|n| !used.contains(n)).unwrap_or(1).to_string()
-            });
+            .position(|dir| dir == &profile.dir)
+            .unwrap_or(usize::MAX)
+    });
+    found
+}
 
-        let status = crate::proc::command("reg")
-            .args([
-                "add",
-                &policy_key_path(root),
-                "/v",
-                &name,
-                "/t",
-                "REG_SZ",
-                "/d",
-                &value,
-                "/f",
-            ])
-            .status();
-        if matches!(status, Ok(status) if status.success()) {
-            wrote += 1;
-        }
+/// `Local State` 에 적힌 프로필 이름과 계정.
+fn profile_names(root: &Path) -> std::collections::HashMap<String, (String, Option<String>)> {
+    let mut names = std::collections::HashMap::new();
+    let Ok(bytes) = std::fs::read(root.join("Local State")) else {
+        return names;
+    };
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return names;
+    };
+    let cache = value
+        .get("profile")
+        .and_then(|node| node.get("info_cache"))
+        .and_then(serde_json::Value::as_object);
+    for (dir, info) in cache.into_iter().flatten() {
+        let label = info
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .filter(|name| !name.is_empty())
+            .unwrap_or(dir)
+            .to_string();
+        let account = info
+            .get("user_name")
+            .and_then(serde_json::Value::as_str)
+            .filter(|account| !account.is_empty())
+            .map(ToOwned::to_owned);
+        names.insert(dir.clone(), (label, account));
     }
-    if wrote == 0 {
-        anyhow::bail!("정책을 적지 못했습니다");
-    }
-    Ok(())
+    names
 }
 
-/// 정책에서 우리 확장을 뺀다. 브라우저를 다시 켜면 스스로 지운다.
-#[cfg(windows)]
-pub fn unregister_policy(key: &str) -> anyhow::Result<()> {
-    for root in policy_roots(key) {
-        for name in policy_entries(root) {
-            let _ = crate::proc::command("reg")
-                .args(["delete", &policy_key_path(root), "/v", &name, "/f"])
-                .status();
-        }
-    }
-    Ok(())
+/// 브라우저가 프로필을 보여주는 순서.
+fn profile_order(root: &Path) -> Vec<String> {
+    std::fs::read(root.join("Local State"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|value| {
+            value
+                .get("profile")
+                .and_then(|node| node.get("profiles_order"))
+                .and_then(serde_json::Value::as_array)
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|item| item.as_str().map(ToOwned::to_owned))
+                        .collect()
+                })
+        })
+        .unwrap_or_default()
 }
 
-#[cfg(not(windows))]
-pub fn register_policy(key: &str) -> anyhow::Result<()> {
-    let _ = key;
-    anyhow::bail!("정책 설치는 아직 윈도우에서만 됩니다")
-}
-
-#[cfg(not(windows))]
-pub fn unregister_policy(key: &str) -> anyhow::Result<()> {
-    let _ = key;
-    anyhow::bail!("정책 설치는 아직 윈도우에서만 됩니다")
-}
-
-/// 그 브라우저의 프로필들을 뒤져서 우리 확장이 얹혀 있는지 본다.
+/// 프로필 하나를 읽어 우리 확장이 얹혀 있는지 본다.
 ///
 /// 두 가지를 본다.
-///  - **확장 ID** — 매니페스트에 `key` 를 박아둔 뒤로는 정책으로 깔든 폴더로 얹든 ID 가 같다.
-///    정책으로 깔린 것은 브라우저 자기 폴더에 들어가므로 경로로는 못 알아본다.
+///
+///  - **확장 ID** — 매니페스트에 `key` 를 박아둔 뒤로는 어떻게 얹든 ID 가 같다.
 ///  - **폴더 경로** — `key` 가 없던 시절에 얹은 것은 ID 가 다르다. 그때 얹은 것도 알아본다.
-pub fn extension_state(key: &str, dir: &Path) -> Loaded {
-    let Some(profiles) = profile_dirs(key) else {
-        return Loaded::Unknown;
-    };
-    let wanted = normalize(dir);
+fn presence_in(profile: &Path, wanted: &str) -> Presence {
     let mut read_any = false;
     let mut elsewhere = None;
 
-    for profile in profiles {
-        // 확장 목록이 어느 파일에 적히는지는 판마다 다르다(요즘 크롬은 Secure Preferences 다).
-        // 둘 다 본다.
-        for name in ["Preferences", "Secure Preferences"] {
-            let Ok(bytes) = std::fs::read(profile.join(name)) else {
-                continue;
-            };
-            let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-                continue;
-            };
-            read_any = true;
-            let Some(settings) = value
-                .get("extensions")
-                .and_then(|node| node.get("settings"))
-                .and_then(serde_json::Value::as_object)
-            else {
-                continue;
-            };
+    // 확장 목록이 어느 파일에 적히는지는 판마다 다르다(요즘 크롬은 Secure Preferences 다).
+    // 둘 다 본다.
+    for name in ["Preferences", "Secure Preferences"] {
+        let Ok(bytes) = std::fs::read(profile.join(name)) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            continue;
+        };
+        read_any = true;
+        let Some(settings) = value
+            .get("extensions")
+            .and_then(|node| node.get("settings"))
+            .and_then(serde_json::Value::as_object)
+        else {
+            continue;
+        };
 
-            // ID 로 바로 찾는다. 이게 걸리면 어떻게 깔렸는지까지 알 수 있다.
-            if let Some(entry) = settings.get(EXTENSION_ID) {
-                let path = entry.get("path").and_then(serde_json::Value::as_str);
-                return match path {
-                    // 압축해제 확장은 얹은 폴더를 그대로 적는다. 절대 경로면 그것이다.
-                    Some(path) if Path::new(path).is_absolute() => {
-                        if normalize(Path::new(path)) == wanted {
-                            Loaded::Folder
-                        } else {
-                            Loaded::Elsewhere {
-                                path: path.to_string(),
-                            }
+        // ID 로 바로 찾는다. 이게 걸리면 어떻게 얹혔는지까지 알 수 있다.
+        if let Some(entry) = settings.get(EXTENSION_ID) {
+            let path = entry.get("path").and_then(serde_json::Value::as_str);
+            let version = entry
+                .get("manifest")
+                .and_then(|node| node.get("version"))
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned);
+            let state = match path {
+                // 압축해제 확장은 얹은 폴더를 그대로 적는다. 절대 경로면 그것이다.
+                Some(path) if Path::new(path).is_absolute() => {
+                    if normalize(Path::new(path)) == wanted {
+                        Loaded::Folder
+                    } else {
+                        Loaded::Elsewhere {
+                            path: path.to_string(),
                         }
                     }
-                    // 정책으로 깔린 것은 브라우저 자기 확장 폴더에 들어가고,
-                    // 경로도 "<ID>/<버전>" 같은 상대 경로로 적힌다.
-                    _ => Loaded::Policy,
-                };
-            }
+                }
+                // 경로가 없거나 상대 경로면 브라우저가 자기 폴더에 받아둔 것이다.
+                // 우리가 얹은 것은 늘 절대 경로라, 여기 오면 우리 소관이 아니다.
+                _ => Loaded::Unknown,
+            };
+            return Presence { state, version };
+        }
 
-            // 매니페스트에 `key` 가 없던 시절에 얹은 것. ID 가 달라서 경로로만 알아본다.
-            for entry in settings.values() {
-                let Some(path) = entry.get("path").and_then(serde_json::Value::as_str) else {
-                    continue;
-                };
-                if normalize(Path::new(path)) == wanted {
-                    return Loaded::Folder;
-                }
-                if elsewhere.is_none() && is_our_folder(Path::new(path)) {
-                    elsewhere = Some(path.to_string());
-                }
+        // 매니페스트에 `key` 가 없던 시절에 얹은 것. ID 가 달라서 경로로만 알아본다.
+        for entry in settings.values() {
+            let Some(path) = entry.get("path").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            if normalize(Path::new(path)) == wanted {
+                return Presence::plain(Loaded::Folder);
+            }
+            if elsewhere.is_none() && is_our_folder(Path::new(path)) {
+                elsewhere = Some(path.to_string());
             }
         }
     }
 
-    match (elsewhere, read_any) {
+    Presence::plain(match (elsewhere, read_any) {
         (Some(path), _) => Loaded::Elsewhere { path },
         (None, true) => Loaded::No,
         (None, false) => Loaded::Unknown,
-    }
+    })
 }
 
 /// 그 폴더가 우리 확장인지. manifest 의 이름으로 가린다.
@@ -402,7 +380,7 @@ fn profile_dirs(key: &str) -> Option<Vec<PathBuf>> {
 }
 
 #[cfg(windows)]
-fn user_data_dir(key: &str) -> Option<PathBuf> {
+pub fn user_data_dir(key: &str) -> Option<PathBuf> {
     let local = dirs::data_local_dir()?;
     let roaming = dirs::data_dir()?;
     Some(match key {
@@ -417,7 +395,7 @@ fn user_data_dir(key: &str) -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-fn user_data_dir(key: &str) -> Option<PathBuf> {
+pub fn user_data_dir(key: &str) -> Option<PathBuf> {
     let support = dirs::home_dir()?.join("Library/Application Support");
     Some(match key {
         "chrome" => support.join("Google/Chrome"),
@@ -431,7 +409,7 @@ fn user_data_dir(key: &str) -> Option<PathBuf> {
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn user_data_dir(key: &str) -> Option<PathBuf> {
+pub fn user_data_dir(key: &str) -> Option<PathBuf> {
     let config = dirs::config_dir()?;
     Some(match key {
         "chrome" => config.join("google-chrome"),
@@ -479,8 +457,7 @@ pub fn open_url(url: &str, prefer: Option<&str>) {
 /// `chrome://` 를 열 수 있어서, 정책으로 조용히 깔려도 사용자가 알아챌 수 있다.
 ///
 /// 돌려주는 값은 클립보드에 넣었는지 여부다.
-pub fn open_extensions_page(key: &str) -> bool {
-    let page = find(key).map_or("chrome://extensions", |browser| browser.page);
+pub fn open_browser_page(key: &str, page: &str) -> bool {
     if let Some(exe) = browser_executable(key) {
         let _ = crate::proc::command(&exe).arg(page).spawn();
     }
@@ -502,7 +479,7 @@ fn open_with_os(url: &str) {
 
 /// 고른 브라우저의 실행 파일 자리. 못 찾으면 `None`(기본 열기로 넘어간다).
 #[cfg(windows)]
-fn browser_executable(key: &str) -> Option<PathBuf> {
+pub fn browser_executable(key: &str) -> Option<PathBuf> {
     // 설치된 브라우저의 실행 파일 자리는 App Paths 에 적혀 있다.
     let app = match key {
         "chrome" => "chrome.exe",
@@ -538,14 +515,14 @@ fn browser_executable(key: &str) -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-fn browser_executable(key: &str) -> Option<PathBuf> {
+pub fn browser_executable(key: &str) -> Option<PathBuf> {
     // macOS 는 앱 번들이라 open -a 로 여는 편이 낫다. 여기서는 기본 열기에 맡긴다.
     let _ = key;
     None
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn browser_executable(key: &str) -> Option<PathBuf> {
+pub fn browser_executable(key: &str) -> Option<PathBuf> {
     // PATH 에서 흔한 실행 파일 이름을 찾는다.
     let candidates: &[&str] = match key {
         "chrome" => &["google-chrome", "google-chrome-stable", "chromium"],
@@ -690,10 +667,16 @@ mod tests {
     }
 
     #[test]
-    fn 모르는_브라우저는_안_얹혔다고_말하지_않는다() {
+    fn 모르는_브라우저는_프로필이_없다() {
+        // 목록에 없는 브라우저를 물으면 빈 목록이 나와야 한다. 지어내면 안 된다.
+        assert!(profiles("firefox", Path::new("/nowhere")).is_empty());
+    }
+
+    #[test]
+    fn 읽을수_없는_프로필은_안_얹혔다고_말하지_않는다() {
         // "모르겠다"와 "아니다"를 섞으면 멀쩡히 쓰는 사람에게 헛수고를 시킨다.
         assert_eq!(
-            extension_state("firefox", Path::new("/nowhere")),
+            presence_in(Path::new("/nowhere-at-all"), "/nowhere").state,
             Loaded::Unknown
         );
     }

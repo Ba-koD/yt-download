@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-04
+
 ### 없앰 — 확장 관리자
 
 - **확장 관리자(`yt-download-manager-*`)를 통째로 지웠다.** 관리자가 하던 일은 결국 "확장
@@ -371,7 +373,8 @@
   비교했는데, 압축을 풀어서 받은 파일은 아카이브의 옛 시각을 물려받는다.
   이제 크기와 시각을 함께 확인한다.
 
-[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.8.0
 [0.7.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.7.0
 [0.6.2]: https://github.com/Ba-koD/yt-download/releases/tag/v0.6.2
 [0.6.1]: https://github.com/Ba-koD/yt-download/releases/tag/v0.6.1

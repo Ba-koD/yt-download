@@ -300,6 +300,100 @@ Deno.test("페이지 요청이 되면 예비 통로는 쓰지 않는다", async 
   assertEquals(secondaryCalls, 0);
 });
 
+Deno.test("통로 계량기는 지나간 바이트를 알려준다", async () => {
+  const { withMeter } = await import("../src/net.js");
+  const counted = [];
+  const fetcher = withMeter(async () => new Uint8Array(7), (n) => counted.push(n));
+  await fetcher("u");
+  await fetcher("u");
+  assertEquals(counted, [7, 7]);
+});
+
+// --- 조각 저장소와 이어받기 ---
+import { fetchSegments } from "../src/download.js";
+import { useTransport } from "../src/net.js";
+import { openMemory } from "../src/store.js";
+
+Deno.test("받아둔 조각은 다시 받지 않는다(이어받기)", async () => {
+  // 10바이트짜리 조각 셋. 내용은 바이트 위치 그대로라 어긋나면 바로 보인다.
+  const index = {
+    segments: [
+      { time: 0, duration: 5, start: 0, end: 9 },
+      { time: 5, duration: 5, start: 10, end: 19 },
+      { time: 10, duration: 5, start: 20, end: 29 },
+    ],
+  };
+  const asked = [];
+  useTransport({
+    json: async () => {
+      throw new Error("여기서는 안 쓴다");
+    },
+    text: async () => {
+      throw new Error("여기서는 안 쓴다");
+    },
+    bytes: async (_url, headers) => {
+      asked.push(headers.Range);
+      const [, from, to] = /bytes=(\d+)-(\d+)/.exec(headers.Range).map(Number);
+      return new Uint8Array(Array.from({ length: to - from + 1 }, (_, i) => from + i));
+    },
+  });
+
+  const media = openMemory();
+  const track = await media.track(401);
+  const seen = [];
+  const first = await fetchSegments(
+    { url: "u" }, index, 0, 15, (done, total) => seen.push([done, total]), null, track,
+  );
+  assertEquals(first.totalBytes, 30);
+  assertEquals(first.segments.map((s) => s.name), ["s0-9", "s10-19", "s20-29"]);
+  // 이어진 조각은 한 요청으로 묶인다.
+  assertEquals(asked, ["bytes=0-29"]);
+  // 저장된 조각의 내용이 제 바이트 범위와 맞는다.
+  assertEquals([...(await track.read("s10-19"))], [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+
+  // 같은 구간을 다시 — 전부 저장돼 있으니 요청이 없어야 하고, 진행률은 처음부터 꽉 차 있다.
+  const before = asked.length;
+  const again = await fetchSegments(
+    { url: "u" }, index, 0, 15, (done, total) => seen.push([done, total]), null, track,
+  );
+  assertEquals(asked.length, before);
+  assertEquals(again.totalBytes, 30);
+  assertEquals(seen[seen.length - 1], [30, 30]);
+});
+
+Deno.test("일부만 받아뒀으면 없는 조각만 받는다", async () => {
+  const index = {
+    segments: [
+      { time: 0, duration: 5, start: 0, end: 9 },
+      { time: 5, duration: 5, start: 10, end: 19 },
+      { time: 10, duration: 5, start: 20, end: 29 },
+    ],
+  };
+  const asked = [];
+  useTransport({
+    json: async () => {
+      throw new Error("여기서는 안 쓴다");
+    },
+    text: async () => {
+      throw new Error("여기서는 안 쓴다");
+    },
+    bytes: async (_url, headers) => {
+      asked.push(headers.Range);
+      const [, from, to] = /bytes=(\d+)-(\d+)/.exec(headers.Range).map(Number);
+      return new Uint8Array(to - from + 1);
+    },
+  });
+
+  const media = openMemory();
+  const track = await media.track(401);
+  // 가운데 조각만 미리 받아둔 상태를 만든다.
+  await track.write("s10-19", new Uint8Array(10));
+
+  await fetchSegments({ url: "u" }, index, 0, 15, null, null, track);
+  // 가운데는 건너뛰고 양옆만 따로 받는다(이어져 있지 않으니 두 요청).
+  assertEquals(asked, ["bytes=0-9", "bytes=20-29"]);
+});
+
 Deno.test("SAPISIDHASH 해시가 유튜브 방식과 같다", async () => {
   const { sha1 } = await import("../src/innertube.js");
   // 유튜브는 "시각 SAPISID 출처" 를 SHA-1 로 해시한다.

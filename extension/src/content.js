@@ -48,13 +48,32 @@
     { formatLabel },
     net,
     nsig,
+    store,
   ] =
     await Promise.all([
       load("download.js"),
       load("innertube.js"),
       load("net.js"),
       load("nsig.js"),
+      load("store.js"),
     ]);
+
+  // 그만둔 이어받기 조각과 완성본 찌꺼기가 디스크(OPFS)에 눌러앉지 않게 이따금 청소한다.
+  store.cleanup().catch(() => {});
+
+  // 다운로드 속도 계량기. 통로를 지나간 바이트를 최근 8초 창으로 재서 속도를 만든다.
+  const meter = { events: [] };
+  const METER_WINDOW = 8000;
+  const meterAdd = (count) => {
+    meter.events.push({ at: Date.now(), count });
+  };
+  const meterSpeed = () => {
+    const now = Date.now();
+    while (meter.events.length && now - meter.events[0].at > METER_WINDOW) meter.events.shift();
+    if (!meter.events.length) return 0;
+    const span = Math.max(1000, now - meter.events[0].at);
+    return meter.events.reduce((sum, event) => sum + event.count, 0) / (span / 1000);
+  };
 
   // 미디어는 페이지 쪽에서 받아온다. 여기서 곧바로 부르면 교차 출처로 막히고,
   // 배경 일꾼으로 보내면 Origin 이 붙어 InnerTube 가 403 을 준다.
@@ -68,7 +87,10 @@
     // 그때는 배경 일꾼이 대신 받아온다(느리지만 확실하다).
     // 라이브 조각은 서버가 일시적으로 503 을 주는 일이 흔해서, 어느 통로든
     // 일시적인 실패는 잠깐 쉬었다 몇 번 더 받아 본다.
-    bytes: net.withRetry(net.withFallback(viaPage.bytes, net.workerBytes(chrome.runtime))),
+    bytes: net.withMeter(
+      net.withRetry(net.withFallback(viaPage.bytes, net.workerBytes(chrome.runtime))),
+      meterAdd,
+    ),
   });
 
   const state = {
@@ -864,12 +886,52 @@
         selectWhole();
         setStatus("");
       }
+      // 받다 만 조각이 남아 있으면 알려준다(같은 구간을 다시 받으면 이어서 받는다).
+      store.hasLeftovers(videoId).then((left) => {
+        if (left && state.videoId === videoId && !state.busy) {
+          setStatus("받다 만 조각이 남아 있습니다 · 같은 구간을 받으면 이어서 받습니다");
+        }
+      }).catch(() => {});
     } catch (error) {
       setStatus(error.message, "ytdl-bad");
       say("화질 목록 실패:", error);
       el.quality.replaceChildren(make("option", { text: "없음" }));
     }
     render();
+  }
+
+  const showMb = (bytes) => (bytes / 1048576).toFixed(1);
+
+  function speedLabel(bytesPerSec) {
+    if (bytesPerSec >= 1048576) return `${(bytesPerSec / 1048576).toFixed(1)} MB/s`;
+    return `${Math.max(1, Math.round(bytesPerSec / 1024))} KB/s`;
+  }
+
+  // 마지막으로 알려온 진행 상황. 조각이 뜸하게 와도 속도 표시는 계속 새로 그린다(주기 갱신).
+  let lastProgress = null;
+
+  function showProgress() {
+    if (!lastProgress) return;
+    const { done, total, stage } = lastProgress;
+    if (stage !== "받는 중") {
+      setStatus(stage);
+      return;
+    }
+    const percent = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+    let text = `받는 중 ${percent}%`;
+    // 일반 영상은 바이트 단위라 용량을 같이 적는다. 라이브는 조각 개수라 %만 적는다.
+    const inBytes = total > 1_000_000;
+    if (inBytes) text += ` · ${showMb(done)}/${showMb(total)} MB`;
+    if (state.control?.paused) {
+      setStatus(`${text} (멈춤)`);
+      return;
+    }
+    const speed = meterSpeed();
+    if (speed > 0) {
+      text += ` · ${speedLabel(speed)}`;
+      if (inBytes && done < total) text += ` · 남은 ${showClock((total - done) / speed)}`;
+    }
+    setStatus(text);
   }
 
   async function start() {
@@ -883,17 +945,26 @@
     render();
     const began = Date.now();
 
+    // 조각은 되도록 디스크(OPFS)에 쌓는다. 메모리는 조각 하나 크기만 쓰고,
+    // 받다 죽어도 조각이 남아 다시 누르면 이어받는다.
+    const media = await store.openBest(state.videoId || "video");
+    const resumable = media.kind === "disk";
+    const resumeHint = resumable ? " · 받은 만큼은 남아 있어 다시 누르면 이어받습니다" : "";
+    meter.events.length = 0;
+    lastProgress = null;
+    const ticker = setInterval(showProgress, 500);
+
     try {
-      const { bytes, mediaStart, mediaSeconds } = await downloadSection({
+      const { file, mediaStart, mediaSeconds } = await downloadSection({
         videoFormat,
         audioFormat: state.formats.audio[0],
         start: state.start,
         end: state.end,
         control: state.control,
+        store: media,
         onProgress: (done, total, stage) => {
-          const percent = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
-          const paused = state.control?.paused ? " (멈춤)" : "";
-          setStatus(stage === "받는 중" ? `${stage} ${percent}%${paused}` : stage);
+          lastProgress = { done, total, stage };
+          showProgress();
         },
       });
 
@@ -901,35 +972,43 @@
       // 이름도 실제 내용에 맞춰 붙인다. 이름과 속이 다르면 헷갈리기만 한다.
       const realStart = Number.isFinite(mediaStart) ? mediaStart : state.start;
       save(
-        bytes,
+        file,
         `${safeFileName(state.formats.title)} ` +
           `[${clockLabel(realStart)}~${clockLabel(state.end)}].mp4`,
       );
+      // 저장까지 됐으면 조각은 더 필요 없다. 지워서 디스크를 돌려준다.
+      media.clearChunks().catch(() => {});
       const took = ((Date.now() - began) / 1000).toFixed(1);
       const lead = state.start - realStart;
       const note = lead >= 0.5 ? ` · 앞 ${lead.toFixed(1)}초가 더 붙었습니다(키프레임)` : "";
       setStatus(
         `저장했습니다 · ${showClock(realStart)}~${showClock(state.end)} ` +
           `(${showClock(mediaSeconds)})${note} · ` +
-          `${(bytes.length / 1048576).toFixed(1)} MB · ${took}초`,
+          `${showMb(file.size)} MB · ${took}초`,
         "ytdl-ok",
       );
     } catch (error) {
       // 내가 정지를 누른 것은 실패가 아니다.
-      if (error instanceof Stopped) setStatus("받기를 멈췄습니다");
-      else {
-        setStatus(error.message, "ytdl-bad");
+      if (error instanceof Stopped) setStatus(`받기를 멈췄습니다${resumeHint}`);
+      else if (error?.name === "QuotaExceededError" || /quota/i.test(error?.message || "")) {
+        // 용량 상한은 우리가 정하지 않는다 — 브라우저의 오리진 할당량이 곧 상한이다.
+        setStatus("브라우저 저장 공간이 부족합니다. 디스크 여유를 만들고 다시 눌러주세요", "ytdl-bad");
+        say("받기 실패(저장 공간):", error);
+      } else {
+        setStatus(`${error.message}${resumeHint}`, "ytdl-bad");
         say("받기 실패:", error);
       }
     } finally {
+      clearInterval(ticker);
+      lastProgress = null;
       state.busy = false;
       state.control = null;
       render();
     }
   }
 
-  function save(bytes, name) {
-    const url = URL.createObjectURL(new Blob([bytes], { type: "video/mp4" }));
+  function save(blob, name) {
+    const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
     link.download = name;

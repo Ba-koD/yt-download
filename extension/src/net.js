@@ -161,6 +161,15 @@ export function withFallback(primary, secondary, { coolOffMs = 60_000, now = Dat
   };
 }
 
+/** 통로를 지나간 바이트를 세어 준다. 다운로드 속도 표시는 이 숫자로 만든다. */
+export function withMeter(fetcher, onBytes) {
+  return async (url, headers) => {
+    const bytes = await fetcher(url, headers);
+    onBytes?.(bytes.length);
+    return bytes;
+  };
+}
+
 /** 실패 메시지에 담긴 HTTP 상태 코드. 없으면 0(네트워크 단계에서 죽은 것). */
 export function httpStatusOf(error) {
   const found = /HTTP (\d{3})/.exec(String(error?.message || error));

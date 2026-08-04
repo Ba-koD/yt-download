@@ -11,6 +11,17 @@
 //! 한 번씩 해줘야 한다. 크롬에만 얹어둔 채 엣지에서 열면 버튼이 없다(실제로 그랬다).
 //! 그래서 브라우저마다 얹혀 있는지를 따로 본다 — 크로미움은 얹은 확장의 폴더 경로를
 //! 프로필의 `Preferences` 에 적어두므로 그걸 읽으면 알 수 있다.
+//!
+//! # 정책으로 자동 설치
+//!
+//! 손으로 얹는 일까지 없애는 길은 **정책 강제 설치**뿐이다. 크로미움은 정책에 적힌
+//! `<확장ID>;<update.xml 주소>` 를 보고 스스로 내려받아 설치하고, 그 뒤로도 스스로 갱신한다.
+//! 개발자 모드도, 압축해제 로드도, 관리자 권한도 필요 없다(정책을 `HKCU` 에 적는다).
+//!
+//! 대신 브라우저마다 정책을 읽는 레지스트리 자리가 다르고, 벤더 문서가 엇갈리는 곳도 있다.
+//! 확실하지 않은 브라우저는 **알려진 자리 모두에 적는다** — 안 보는 자리에 적힌 값은
+//! 아무 일도 하지 않고, 해제하면 전부 지운다. 그리고 정말 깔렸는지는 우리 짐작이 아니라
+//! **브라우저 프로필을 읽어서** 확인한다(`extension_state`).
 
 use std::{
     path::{Path, PathBuf},
@@ -18,6 +29,33 @@ use std::{
 };
 
 use serde::Serialize;
+
+/// 이 확장의 ID. `extension/manifest.json` 의 `key`(= CRX 서명키의 공개키)에서 나온다.
+///
+/// 서명키를 바꾸면 이 값도 바뀌고, 그러면 이미 깔린 확장과 다른 것이 된다.
+/// 정책·update.xml·매니페스트 셋이 같은 키를 가리켜야 설치가 된다.
+pub const EXTENSION_ID: &str = "gddgamjmdkmoobgnliipmenchgejaefi";
+
+/// 브라우저가 "새 버전 있나" 하고 물어볼 자리. 릴리스마다 같은 주소에 새로 올라간다.
+pub const UPDATE_URL: &str =
+    "https://github.com/Ba-koD/yt-download/releases/latest/download/update.xml";
+
+/// 정책을 적을 자리(`HKCU\SOFTWARE\Policies\` 아래).
+///
+/// 여러 개인 것은 벤더 문서가 엇갈려서다. 안 보는 자리에 적힌 값은 아무 일도 하지 않는다.
+fn policy_roots(key: &str) -> &'static [&'static str] {
+    match key {
+        "chrome" => &[r"Google\Chrome"],
+        "edge" => &[r"Microsoft\Edge"],
+        // 브레이브는 문서마다 Brave-Browser 와 Brave 가 섞여 나온다.
+        "brave" => &[r"BraveSoftware\Brave-Browser", r"BraveSoftware\Brave"],
+        // 웨일은 정책 문서를 공개하지 않는다. 크로미움 관례대로 둘을 짚어본다.
+        "whale" => &[r"Naver\Whale", r"NaverWhale\Whale"],
+        "vivaldi" => &["Vivaldi"],
+        "opera" => &[r"Opera Software\Opera", r"Opera Software\Opera Stable"],
+        _ => &[],
+    }
+}
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct Browser {
@@ -71,7 +109,7 @@ pub fn is_installed(key: &str) -> bool {
     browser_executable(key).is_some() || user_data_dir(key).is_some_and(|dir| dir.is_dir())
 }
 
-/// 그 브라우저에 우리 확장이 얹혀 있는지.
+/// 그 브라우저에 우리 확장이 얹혀 있는지, 그리고 어떤 방식으로인지.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(tag = "state", rename_all = "lowercase")]
 pub enum Loaded {
@@ -81,17 +119,162 @@ pub enum Loaded {
     Unknown,
     /// 얹은 흔적이 없다.
     No,
-    /// 관리자가 갈아 끼우는 그 폴더로 얹혀 있다. 갱신이 그대로 닿는다.
-    Yes,
+    /// 정책으로 설치돼 있다. 브라우저가 스스로 갱신하므로 더 손댈 것이 없다.
+    Policy,
+    /// 관리자가 갈아 끼우는 그 폴더를 압축해제 확장으로 얹었다.
+    /// 폴더는 관리자가 갱신하고, 갈아 끼우면 확장이 스스로 다시 켜진다.
+    Folder,
     /// 우리 확장이긴 한데 다른 폴더로 얹혀 있다.
     /// 관리자는 자기 폴더만 갈아 끼우므로, 그 브라우저에는 갱신이 닿지 않는다.
     Elsewhere { path: String },
 }
 
+/// 정책 목록에 우리 확장이 적혀 있는지.
+///
+/// 적혀 있다는 것과 실제로 깔렸다는 것은 다르다(브라우저를 한 번 다시 켜야 한다).
+/// 그래서 화면은 이 값과 `extension_state` 를 함께 보여준다.
+#[cfg(windows)]
+pub fn policy_registered(key: &str) -> bool {
+    policy_roots(key)
+        .iter()
+        .any(|root| !policy_entries(root).is_empty())
+}
+
+#[cfg(not(windows))]
+pub fn policy_registered(key: &str) -> bool {
+    let _ = key;
+    false
+}
+
+/// 이 컴퓨터에서 정책 등록을 쓸 수 있는지. 지금은 윈도우만 된다.
+///
+/// macOS 는 `.plist`, 리눅스는 `/etc/opt/<브라우저>/policies/managed/` 라 자리도 다르고
+/// 리눅스는 root 가 필요하다. 그쪽은 아직 손으로 얹는 길만 있다.
+pub const fn policy_supported() -> bool {
+    cfg!(windows)
+}
+
+// ── 정책 쓰기 ──────────────────────────────────────────────────────────────
+//
+// `ExtensionInstallForcelist` 는 값 이름이 "1", "2", … 인 목록이다. 남이 쓴 항목을
+// 덮어쓰면 그 확장이 조용히 사라지므로, 빈 번호를 찾아 우리 것만 얹는다.
+
+#[cfg(windows)]
+fn policy_key_path(root: &str) -> String {
+    format!(r"HKCU\SOFTWARE\Policies\{root}\ExtensionInstallForcelist")
+}
+
+/// 그 자리에 적힌 우리 항목들의 값 이름.
+#[cfg(windows)]
+fn policy_entries(root: &str) -> Vec<String> {
+    read_policy_values(root)
+        .into_iter()
+        .filter(|(_, data)| data.starts_with(EXTENSION_ID))
+        .map(|(name, _)| name)
+        .collect()
+}
+
+/// 그 자리에 적힌 값 전부(이름, 내용).
+#[cfg(windows)]
+fn read_policy_values(root: &str) -> Vec<(String, String)> {
+    let Ok(output) = crate::proc::command("reg")
+        .args(["query", &policy_key_path(root)])
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new(); // 자리 자체가 없다 = 아무것도 안 적혀 있다
+    }
+    // "    1    REG_SZ    abcd…;https://…" 형태다.
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let (name, rest) = line.trim().split_once("    REG_SZ")?;
+            Some((name.trim().to_string(), rest.trim().to_string()))
+        })
+        .collect()
+}
+
+/// 고른 브라우저의 정책에 우리 확장을 적는다. 브라우저를 다시 켜면 스스로 설치한다.
+#[cfg(windows)]
+pub fn register_policy(key: &str) -> anyhow::Result<()> {
+    let roots = policy_roots(key);
+    if roots.is_empty() {
+        anyhow::bail!("이 브라우저는 정책 설치를 지원하지 않습니다");
+    }
+    let value = format!("{EXTENSION_ID};{UPDATE_URL}");
+    let mut wrote = 0;
+    for root in roots {
+        let existing = read_policy_values(root);
+        // 이미 우리 것이 있으면 그 자리에 다시 쓴다(주소가 바뀌었을 수 있다).
+        let name = existing
+            .iter()
+            .find(|(_, data)| data.starts_with(EXTENSION_ID))
+            .map(|(name, _)| name.clone())
+            .unwrap_or_else(|| {
+                // 남의 항목을 덮지 않도록 안 쓰인 가장 작은 번호를 고른다.
+                let used: Vec<u32> = existing
+                    .iter()
+                    .filter_map(|(name, _)| name.parse().ok())
+                    .collect();
+                (1..).find(|n| !used.contains(n)).unwrap_or(1).to_string()
+            });
+
+        let status = crate::proc::command("reg")
+            .args([
+                "add",
+                &policy_key_path(root),
+                "/v",
+                &name,
+                "/t",
+                "REG_SZ",
+                "/d",
+                &value,
+                "/f",
+            ])
+            .status();
+        if matches!(status, Ok(status) if status.success()) {
+            wrote += 1;
+        }
+    }
+    if wrote == 0 {
+        anyhow::bail!("정책을 적지 못했습니다");
+    }
+    Ok(())
+}
+
+/// 정책에서 우리 확장을 뺀다. 브라우저를 다시 켜면 스스로 지운다.
+#[cfg(windows)]
+pub fn unregister_policy(key: &str) -> anyhow::Result<()> {
+    for root in policy_roots(key) {
+        for name in policy_entries(root) {
+            let _ = crate::proc::command("reg")
+                .args(["delete", &policy_key_path(root), "/v", &name, "/f"])
+                .status();
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub fn register_policy(key: &str) -> anyhow::Result<()> {
+    let _ = key;
+    anyhow::bail!("정책 설치는 아직 윈도우에서만 됩니다")
+}
+
+#[cfg(not(windows))]
+pub fn unregister_policy(key: &str) -> anyhow::Result<()> {
+    let _ = key;
+    anyhow::bail!("정책 설치는 아직 윈도우에서만 됩니다")
+}
+
 /// 그 브라우저의 프로필들을 뒤져서 우리 확장이 얹혀 있는지 본다.
 ///
-/// 크로미움은 "압축해제된 확장"의 폴더 경로를 프로필 설정에 적어둔다. 그 경로가
-/// 우리 폴더면 확실하고, 다른 폴더라도 그 안의 manifest 이름으로 우리 것인지 알 수 있다.
+/// 두 가지를 본다.
+///  - **확장 ID** — 매니페스트에 `key` 를 박아둔 뒤로는 정책으로 깔든 폴더로 얹든 ID 가 같다.
+///    정책으로 깔린 것은 브라우저 자기 폴더에 들어가므로 경로로는 못 알아본다.
+///  - **폴더 경로** — `key` 가 없던 시절에 얹은 것은 ID 가 다르다. 그때 얹은 것도 알아본다.
 pub fn extension_state(key: &str, dir: &Path) -> Loaded {
     let Some(profiles) = profile_dirs(key) else {
         return Loaded::Unknown;
@@ -118,12 +301,34 @@ pub fn extension_state(key: &str, dir: &Path) -> Loaded {
             else {
                 continue;
             };
+
+            // ID 로 바로 찾는다. 이게 걸리면 어떻게 깔렸는지까지 알 수 있다.
+            if let Some(entry) = settings.get(EXTENSION_ID) {
+                let path = entry.get("path").and_then(serde_json::Value::as_str);
+                return match path {
+                    // 압축해제 확장은 얹은 폴더를 그대로 적는다. 절대 경로면 그것이다.
+                    Some(path) if Path::new(path).is_absolute() => {
+                        if normalize(Path::new(path)) == wanted {
+                            Loaded::Folder
+                        } else {
+                            Loaded::Elsewhere {
+                                path: path.to_string(),
+                            }
+                        }
+                    }
+                    // 정책으로 깔린 것은 브라우저 자기 확장 폴더에 들어가고,
+                    // 경로도 "<ID>/<버전>" 같은 상대 경로로 적힌다.
+                    _ => Loaded::Policy,
+                };
+            }
+
+            // 매니페스트에 `key` 가 없던 시절에 얹은 것. ID 가 달라서 경로로만 알아본다.
             for entry in settings.values() {
                 let Some(path) = entry.get("path").and_then(serde_json::Value::as_str) else {
                     continue;
                 };
                 if normalize(Path::new(path)) == wanted {
-                    return Loaded::Yes;
+                    return Loaded::Folder;
                 }
                 if elsewhere.is_none() && is_our_folder(Path::new(path)) {
                     elsewhere = Some(path.to_string());
@@ -256,6 +461,25 @@ pub fn open_url(url: &str, prefer: Option<&str>) {
         }
     }
     open_with_os(url);
+}
+
+/// 확장 관리 화면을 열 수 있게 창을 띄우고 주소를 복사해 준다.
+///
+/// **크로미움은 명령줄로 넘긴 `chrome://` 주소를 무시한다**(여러 번 확인했다 — 빈 창만
+/// 하나 뜬다. `chrome://extensions` 도 `chrome://version` 도 똑같았다). 그래서 우리가
+/// 대신 열어줄 수는 없고, 창을 띄우고 주소를 클립보드에 넣는 데까지만 한다.
+/// 사용자는 그 창에서 붙여넣기만 하면 된다.
+///
+/// 확장이 처음 깔릴 때는 확장 자신이 이 화면을 연다(`background.js`). 확장 안에서는
+/// `chrome://` 를 열 수 있어서, 정책으로 조용히 깔려도 사용자가 알아챌 수 있다.
+///
+/// 돌려주는 값은 클립보드에 넣었는지 여부다.
+pub fn open_extensions_page(key: &str) -> bool {
+    let page = find(key).map_or("chrome://extensions", |browser| browser.page);
+    if let Some(exe) = browser_executable(key) {
+        let _ = crate::proc::command(&exe).arg(page).spawn();
+    }
+    copy_to_clipboard(page)
 }
 
 fn open_with_os(url: &str) {

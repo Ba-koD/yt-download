@@ -39,6 +39,12 @@ def firefox_manifest(chrome_manifest: dict) -> dict:
     """크롬 매니페스트를 파이어폭스용으로 바꾼다."""
     manifest = json.loads(json.dumps(chrome_manifest))  # 깊은 복사
 
+    # 크로미움 전용 항목은 뺀다. `key` 는 CRX 서명키에서 나온 확장 ID 고정용이고
+    # `update_url` 은 크로미움이 정책으로 강제 설치할 때 보는 자리다.
+    # 파이어폭스는 둘 다 모르는 항목이라 경고만 내고, ID·갱신은 아래 gecko 칸으로 정한다.
+    for chromium_only in ("key", "update_url"):
+        manifest.pop(chromium_only, None)
+
     # 배경: service_worker → scripts. 파이어폭스는 service_worker 배경을 아직 안 받는다.
     worker = manifest.get("background", {}).get("service_worker")
     if worker:

@@ -73,10 +73,30 @@ function toBase64(bytes) {
 // 읽어 지금 돌고 있는 판과 견주면, 폴더가 갈렸다는 것을 우리가 먼저 알 수 있다.
 // 알았으면 스스로 다시 켠다(chrome.runtime.reload). 사용자가 누를 것이 없어진다.
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener((details) => {
   chrome.alarms.create(FOLDER_CHECK, { periodInMinutes: 5 });
   applyIfFolderChanged();
+  if (details?.reason === "install") showExtensionPage();
 });
+
+/**
+ * 처음 깔렸을 때 확장 관리 화면을 한 번 열어준다.
+ *
+ * 정책으로 깔리면 아무 소리 없이 들어와서, 사용자는 깔린 줄도 모른다. 한 번 보여준다.
+ *
+ * 이 일은 **확장만 할 수 있다.** 명령줄로 넘긴 `chrome://` 주소는 브라우저가 무시한다
+ * (관리자에서 여러 번 확인했다 — 빈 창만 하나 뜬다). 확장 안에서는 열린다.
+ */
+function showExtensionPage() {
+  try {
+    const url = `chrome://extensions/?id=${chrome.runtime.id}`;
+    Promise.resolve(chrome.tabs.create({ url })).catch(() => {
+      // 막는 판이 있을 수 있다. 확장은 이미 잘 돌고 있으니 조용히 넘어간다.
+    });
+  } catch {
+    // 위와 같다. 여기서 시끄럽게 굴 이유가 없다.
+  }
+}
 
 chrome.runtime.onStartup.addListener(() => {
   chrome.alarms.create(FOLDER_CHECK, { periodInMinutes: 5 });

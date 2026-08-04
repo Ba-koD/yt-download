@@ -1,12 +1,17 @@
 //! 크롬 확장 관리자.
 //!
-//! 크롬은 스토어를 거치지 않은 확장을 자동으로 갱신해 주지 않는다. 예전에는 CRX 를
-//! 직접 호스팅하고 `update_url` 로 갱신할 수 있었지만 지금은 막혔다. 남은 길은
-//! "압축 해제된 확장"인데, 그건 폴더를 그대로 읽는 방식이라 폴더만 갈아주면 된다.
+//! 크롬은 스토어를 거치지 않은 확장을 사용자가 그냥 설치하도록 두지 않는다.
+//! 그래서 넣는 길이 둘이고, 이 앱은 둘 다 맡는다.
 //!
-//! 그래서 이 앱이 깃허브 릴리스를 보고 최신인지 확인한 뒤, 정해진 자리에 풀어 놓는다.
-//! 자리가 고정이라 크롬이 보던 확장이 그대로 갱신되고 확장 ID 도 바뀌지 않는다.
-//! 다만 크롬이 폴더를 다시 읽게 하려면 사용자가 새로고침을 한 번 눌러야 한다.
+//! 1. **정책으로 자동 설치**(권장, 지금은 윈도우만). 브라우저 정책에
+//!    `<확장ID>;<update.xml 주소>` 를 적어두면 브라우저가 스스로 받아 깔고 스스로 갱신한다.
+//!    사람이 할 일이 없다. 대신 브라우저가 "조직에서 관리함"으로 표시되고, 그 확장을
+//!    브라우저 화면에서 지울 수 없다(관리자에서 해제해야 한다).
+//! 2. **폴더로 얹기**(예전 방식, 나머지 OS). 정해진 자리에 확장을 풀어 놓고, 사람이 한 번
+//!    "압축해제된 확장 로드" 를 한다. 자리가 고정이라 그 뒤로는 폴더만 갈아 끼우면 되고,
+//!    확장이 스스로 그것을 알아채고 다시 켜진다.
+//!
+//! 어느 쪽이든 깃허브 릴리스가 단일 출처다. 앱은 최신인지 확인하고 폴더를 갈아 끼운다.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -107,6 +112,10 @@ struct View {
     browser_here: bool,
     /// 고른 브라우저에 우리 확장이 얹혀 있는지.
     browser_loaded: browser::Loaded,
+    /// 고른 브라우저의 정책에 우리 확장이 적혀 있는지(적어도 다시 켜야 깔린다).
+    browser_policy: bool,
+    /// 이 컴퓨터에서 정책 등록을 쓸 수 있는지. 지금은 윈도우만 된다.
+    policy_supported: bool,
     /// 로그인 시 자동으로 업데이트를 확인하도록 등록돼 있는지.
     auto_update: bool,
 }
@@ -151,6 +160,8 @@ impl View {
             browser_loaded: chosen.as_deref().map_or(browser::Loaded::Unknown, |key| {
                 browser::extension_state(key, &dir)
             }),
+            browser_policy: chosen.as_deref().is_some_and(browser::policy_registered),
+            policy_supported: browser::policy_supported(),
             chosen_browser: chosen,
             auto_update: autostart::is_enabled(),
             ..Default::default()
@@ -288,6 +299,62 @@ fn handle(action: &str, proxy: EventLoopProxy<Message>) {
             let _ = config.save();
             let _ = proxy.send_event(Message::Show(View::base()));
         }
+        // 확인용으로 확장 관리 화면을 띄운다. 주소도 함께 복사해 둔다
+        // (크로미움이 명령줄 chrome:// 주소를 무시하는 판이 있다).
+        "open-extensions" => {
+            let mut view = View::base();
+            let Some(key) = view.chosen_browser.clone() else {
+                view.failed = true;
+                view.note = "먼저 브라우저를 골라주세요".into();
+                let _ = proxy.send_event(Message::Show(view));
+                return;
+            };
+            let page = browser::find(&key).map_or("chrome://extensions", |browser| browser.page);
+            let copied = browser::open_extensions_page(&key);
+            // 크로미움이 명령줄 chrome:// 주소를 무시해서 우리가 대신 열어줄 수는 없다.
+            // 창을 띄우고 주소를 복사해 주는 데까지가 할 수 있는 전부다.
+            view.note = if copied {
+                format!("창을 띄우고 {page} 을 복사했습니다 · 주소창에 붙여넣어 주세요")
+            } else {
+                format!("창을 띄웠습니다 · 주소창에 {page} 을 입력해 주세요")
+            };
+            let _ = proxy.send_event(Message::Show(view));
+        }
+        // 고른 브라우저의 정책에 확장을 걸거나 뺀다. 브라우저가 스스로 설치·갱신하게 되는
+        // 유일한 길이다(웹 스토어에 못 올리는 확장을 사람 손 없이 넣는 방법).
+        "policy-on" | "policy-off" => {
+            let on = action == "policy-on";
+            let mut view = View::base();
+            let Some(key) = view.chosen_browser.clone() else {
+                view.failed = true;
+                view.note = "먼저 브라우저를 골라주세요".into();
+                let _ = proxy.send_event(Message::Show(view));
+                return;
+            };
+            let label = view.browser_label.unwrap_or("브라우저");
+            let outcome = if on {
+                browser::register_policy(&key)
+            } else {
+                browser::unregister_policy(&key)
+            };
+            match outcome {
+                Ok(()) => {
+                    view.browser_policy = browser::policy_registered(&key);
+                    view.note = if on {
+                        format!("{label} 에 등록했습니다 · {label} 를 완전히 껐다 켜면 스스로 설치됩니다")
+                    } else {
+                        format!(
+                            "{label} 에서 뺐습니다 · {label} 를 완전히 껐다 켜면 스스로 지워집니다"
+                        )
+                    };
+                }
+                Err(err) => {
+                    view.failed = true;
+                    view.note = format!("{err}");
+                }
+            }
+            let _ = proxy.send_event(Message::Show(view));
+        }
         // 로그인 시 자동 확인 켜기/끄기. 시작 항목을 등록하거나 지운다.
         "auto-on" | "auto-off" => {
             let on = action == "auto-on";
@@ -372,10 +439,15 @@ fn install_in_background(proxy: EventLoopProxy<Message>) {
                 // 폴더만 갈아 끼운 것과 그 브라우저가 그 폴더를 읽는 것은 다른 이야기다.
                 // 아직 안 얹은 브라우저를 골라뒀다면 그것부터 알려준다.
                 let label = view.browser_label.unwrap_or("브라우저");
-                view.note = if view.browser_loaded == browser::Loaded::Yes {
-                    format!("설치했습니다 · {label} 에서 새로고침하면 반영됩니다. 이후 갱신은 자동입니다")
-                } else {
-                    format!("설치했습니다 · {label} 에 이 폴더를 얹어주세요(아래 순서, 한 번만)")
+                view.note = match view.browser_loaded {
+                    // 정책으로 깔린 브라우저는 이 폴더를 아예 보지 않는다.
+                    browser::Loaded::Policy => {
+                        format!("폴더를 갱신했습니다 · {label} 는 정책으로 스스로 갱신하므로 할 일이 없습니다")
+                    }
+                    browser::Loaded::Folder => {
+                        format!("설치했습니다 · {label} 에서 새로고침하면 반영됩니다. 이후 갱신은 자동입니다")
+                    }
+                    _ => format!("설치했습니다 · 아래에서 {label} 에 자동 설치를 켜주세요"),
                 };
                 view.manager_update = release.is_newer_than(github::manager_version());
                 view.latest = Some(release.version);

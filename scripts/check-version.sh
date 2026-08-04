@@ -17,13 +17,6 @@ if [[ "$version" != "$manifest" ]]; then
   exit 1
 fi
 
-# 확장 관리자도 같은 버전을 달고 나가야 한다.
-manager="$(sed -n '0,/^version = "/s|^version = "\([^"]*\)".*|\1|p' manager/Cargo.toml)"
-if [[ "$version" != "$manager" ]]; then
-  echo "VERSION($version) 과 manager/Cargo.toml($manager) 의 버전이 다릅니다." >&2
-  exit 1
-fi
-
 # 확장도 같은 버전을 달고 나가야 한다.
 extension="$(sed -n 's|^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*|\1|p' extension/manifest.json | head -1)"
 if [[ "$version" != "$extension" ]]; then

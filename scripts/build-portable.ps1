@@ -46,15 +46,10 @@ Write-Host "빌드 중 (도구를 압축해 실행 파일에 담습니다. 몇 �
 $env:YT_DOWNLOAD_EMBED_TOOLS = "1"
 Invoke-Cargo @("build", "--release")
 
-# 확장 관리자는 도구를 담지 않아 금방 빌드된다.
-Invoke-Cargo @("build", "--release", "-p", "yt-download-extension-manager")
-
 $dist = Join-Path $root "dist"
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
 $exe = Join-Path $dist "yt-download.exe"
 Copy-Item (Join-Path $root "target\release\yt-download.exe") $exe -Force
-Copy-Item (Join-Path $root "target\release\yt-download-extension-manager.exe") `
-  (Join-Path $dist "yt-download-extension-manager.exe") -Force
 
 $hash = (Get-FileHash $exe -Algorithm SHA256).Hash
 $size = [math]::Round((Get-Item $exe).Length / 1MB, 1)

@@ -95,8 +95,6 @@
     panelMoved: false,
     // 구간 손잡이를 놓았을 때 영상을 옮겨줄 지점.
     dropAt: null,
-    // 새 판이 폴더에 와 있는데 스스로 갈아타지 못했을 때, 사람에게 알릴 버전.
-    needsManualReload: null,
   };
 
   /** 걷어낼 때 같이 떼어내도록 붙여둔다. */
@@ -798,13 +796,6 @@
     el.hold.hidden = !state.busy;
     el.halt.hidden = !state.busy;
     el.hold.textContent = state.control?.paused ? "이어받기" : "일시정지";
-    // 새 판이 폴더에 와 있는데 스스로 갈아타지 못한 경우에만 알린다.
-    if (state.needsManualReload && !state.busy) {
-      setStatus(
-        `새 확장 ${state.needsManualReload} 이 준비됐습니다 · ` +
-          `chrome://extensions 에서 이 확장의 새로고침을 한 번 눌러주세요`,
-      );
-    }
     renderTimeline();
   }
 
@@ -886,8 +877,6 @@
       state.formats.video[0];
 
     state.busy = true;
-    // 받는 중에 확장이 스스로 다시 켜지면 이 작업이 통째로 날아간다. 배경 일꾼에게 알려둔다.
-    tellBusy(true);
     state.control = createControl();
     render();
     const began = Date.now();
@@ -932,17 +921,8 @@
       }
     } finally {
       state.busy = false;
-      tellBusy(false);
       state.control = null;
       render();
-    }
-  }
-
-  function tellBusy(on) {
-    try {
-      chrome.runtime.sendMessage({ type: "busy", on });
-    } catch {
-      // 통로가 닫혀 있어도 받는 일 자체는 계속돼야 한다.
     }
   }
 
@@ -969,20 +949,6 @@
     el.panel?.remove();
     watchProgress(false);
   });
-
-  // 폴더가 갈렸는지 배경 일꾼에게 한 번 보게 한다. 알람만 믿으면 몇 분을 기다리게 된다.
-  // 스스로 갈아타지 못했다면(그럴 수 있다) 사람에게 한 번만 알려준다.
-  try {
-    chrome.runtime.sendMessage({ type: "check-folder" }, (answer) => {
-      void chrome.runtime.lastError; // 답이 없어도 그만이다
-      if (answer?.needsManualReload) {
-        state.needsManualReload = answer.needsManualReload;
-        render();
-      }
-    });
-  } catch {
-    // 옛 판이 걷히는 중이면 통로가 이미 닫혀 있다. 그래도 이 판은 그냥 돈다.
-  }
 
   // 재생 위치 표시가 영상을 따라가게 한다.
   listen(

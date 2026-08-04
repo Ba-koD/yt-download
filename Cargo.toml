@@ -1,7 +1,7 @@
 [workspace]
 # 확장 관리자는 앱과 따로 도는 작은 프로그램이라 별도 크레이트로 둔다.
 # 자동 업데이트는 앱과 관리자가 똑같이 하는 일이라 공용 크레이트로 뺐다.
-members = ["manager", "update"]
+members = ["update"]
 
 [package]
 name = "yt-download"

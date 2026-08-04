@@ -4120,20 +4120,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "yt-download-extension-manager"
-version = "0.7.0"
-dependencies = [
- "anyhow",
- "dirs 5.0.1",
- "serde",
- "serde_json",
- "tao",
- "winresource",
- "wry",
- "yt-download-update",
-]
-
-[[package]]
 name = "yt-download-update"
 version = "0.1.0"
 dependencies = [

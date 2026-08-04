@@ -38,28 +38,23 @@ pub const CHECKSUMS: &str = "SHA256SUMS.txt";
 pub const EXTENSION_ASSET: &str = "yt-download-extension.zip";
 
 /// 자기 자신을 갱신할 수 있는 프로그램.
+///
+/// 지금은 앱뿐이다. 예전에는 확장 관리자도 여기 있었는데, 스토어 밖 확장을 개인용
+/// 브라우저에 프로그램으로 넣는 길이 전부 막혀 있어(무엇을 재봤는지는 커밋 기록에 있다)
+/// 관리자가 할 일이 없어져서 통째로 지웠다. 확장은 릴리스에서 직접 받아 손으로 얹는다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Program {
     App,
-    Manager,
 }
 
 impl Program {
     /// 릴리스에서 받아야 할 자산 이름. 알 수 없는 플랫폼이면 `None`.
-    ///
-    /// **관리자는 어느 플랫폼에서도 압축하지 않는다.** 실행 파일 하나뿐이라 묶을 이유가 없다.
-    /// 유닉스에서 받은 사람은 `chmod +x` 를 한 번 해줘야 한다(깃허브 릴리스 자산은
-    /// 실행 권한을 잃는다). 자동 업데이트는 스스로 권한을 주므로 이 영향을 받지 않는다.
     ///
     /// 앱은 압축본으로 둔다(윈도우 165.8MB 대 170.2MB). macOS 는 `.app` 폴더라 묶어야만 한다.
     pub fn asset_name(self) -> Option<String> {
         let slug = platform_slug()?;
         match self {
             Program::App => Some(format!("yt-download-{slug}{}", archive_suffix())),
-            Program::Manager => Some(format!(
-                "yt-download-manager-{slug}{}",
-                if cfg!(windows) { ".exe" } else { "" }
-            )),
         }
     }
 
@@ -68,8 +63,6 @@ impl Program {
         match (self, cfg!(windows)) {
             (Program::App, true) => "yt-download.exe",
             (Program::App, false) => "yt-download",
-            (Program::Manager, true) => "yt-download-extension-manager.exe",
-            (Program::Manager, false) => "yt-download-extension-manager",
         }
     }
 }
@@ -479,24 +472,9 @@ cccc  yt-download-extension.zip.sig
             return; // 릴리스를 내지 않는 플랫폼에서는 이름도 없다
         };
         let app = Program::App.asset_name().unwrap();
-        let manager = Program::Manager.asset_name().unwrap();
         assert!(app.starts_with(&format!("yt-download-{slug}")), "{app}");
-        assert!(
-            manager.starts_with(&format!("yt-download-manager-{slug}")),
-            "{manager}"
-        );
-        // 앱 이름이 관리자 자산까지 함께 잡아버리면 안 된다.
-        assert_ne!(app, manager);
         assert!(app.ends_with(archive_suffix()));
-
-        // 관리자는 어디서든 압축하지 않고 실행 파일 그대로 올린다.
-        if cfg!(windows) {
-            assert!(manager.ends_with(".exe"), "{manager}");
-        } else {
-            assert!(!manager.contains('.'), "{manager}");
-        }
-        // 이름만 보고 어떻게 다룰지 정할 수 있어야 한다.
-        assert_eq!(archive::kind_of(&manager).unwrap(), archive::Kind::Raw);
+        // 앱은 압축본이다(관리자와 달리 실행 파일 그대로가 아니다).
         assert_ne!(archive::kind_of(&app).unwrap(), archive::Kind::Raw);
     }
 

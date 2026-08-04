@@ -52,12 +52,6 @@ awk -v v="$next" '
   { print }
 ' Cargo.toml > Cargo.toml.tmp && mv Cargo.toml.tmp Cargo.toml
 
-# 2-1) 확장 관리자도 같은 버전으로 나간다.
-awk -v v="$next" '
-  !seen && /^version = "/ { print "version = \"" v "\""; seen = 1; next }
-  { print }
-' manager/Cargo.toml > manager/Cargo.toml.tmp && mv manager/Cargo.toml.tmp manager/Cargo.toml
-
 # 3) 확장 매니페스트도 같은 버전을 달아야 한다.
 awk -v v="$next" '
   !seen && /^[[:space:]]*"version"[[:space:]]*:/ { sub(/"version"[[:space:]]*:[[:space:]]*"[^"]*"/, "\"version\": \"" v "\""); seen = 1 }
@@ -83,7 +77,7 @@ awk -v v="$next" -v d="$(date +%F)" -v tag="$tag" -v url="$repo_url" '
 cargo update --workspace --offline >/dev/null 2>&1 ||
   echo "경고: Cargo.lock 갱신 실패 — cargo check 를 한 번 돌려주세요." >&2
 
-git add VERSION Cargo.toml Cargo.lock CHANGELOG.md extension/manifest.json manager/Cargo.toml
+git add VERSION Cargo.toml Cargo.lock CHANGELOG.md extension/manifest.json
 git commit -m "release: $tag" >/dev/null
 git tag -a "$tag" -m "yt-download $tag"
 

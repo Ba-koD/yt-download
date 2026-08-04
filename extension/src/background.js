@@ -136,11 +136,9 @@ chrome.storage.local.get(REINJECT_FLAG).then((stored) => {
 });
 
 async function reinjectAll() {
-  const urls = [
-    "https://www.youtube.com/watch*",
-    "https://www.youtube.com/live/*",
-    "https://www.youtube.com/shorts/*",
-  ];
+  // 유튜브 화면 전부. 지금 홈에 있어도 곧 영상으로 넘어가고, 그때는 크롬이 다시
+  // 넣어주지 않는다(유튜브는 화면만 갈아 끼운다). 그래서 미리 넣어둔다.
+  const urls = ["https://www.youtube.com/*"];
   let tabs = [];
   try {
     tabs = await chrome.tabs.query({ url: urls });

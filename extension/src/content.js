@@ -6,6 +6,12 @@
 //
 // content script 는 확장의 격리된 세계에서 돌지만 네트워크는 페이지(youtube.com) 몫으로 나간다.
 // 덕분에 InnerTube 는 동일 출처로, 미디어는 Range 를 허용하는 CORS 로 그대로 받을 수 있다.
+//
+// 이 스크립트는 **유튜브의 모든 화면**에 붙는다(영상 주소만 고르지 않는다).
+// 유튜브는 한 번 띄운 뒤로 화면만 갈아 끼우는데(SPA), 그때 크롬은 content script 를
+// 다시 넣어주지 않는다. 영상 주소만 골라 붙이면 홈에서 영상을 눌러 들어갔을 때
+// 아무것도 붙지 않아서, F5 를 눌러야 버튼이 떴다. 대신 영상 화면이 아닐 때는
+// `mount()` 가 얹은 것을 걷어내고 아무 일도 하지 않는다.
 
 (async () => {
   // 붙었는지 콘솔에서 바로 알 수 있게 한 줄 남긴다.
@@ -82,6 +88,8 @@
     toEnd: false,
     // 지금 붙어 있는 화면 종류("watch" 또는 "shorts"). 바뀌면 붙일 자리를 다시 잡는다.
     mode: null,
+    // 옆에 선 유튜브 버튼을 재서 치수를 맞췄는지. 못 쟀으면 다음 차례에 다시 해본다.
+    matched: false,
     // 띄운 패널을 끌고 있는 중인지, 그리고 사용자가 한 번이라도 직접 옮겼는지.
     panelDrag: null,
     panelMoved: false,
@@ -184,6 +192,12 @@
     return location.pathname.startsWith("/shorts/");
   }
 
+  /** 영상 화면인지. 홈·검색·채널 같은 데서는 얹을 것이 없다. */
+  function isVideoPage() {
+    const path = location.pathname;
+    return path === "/watch" || path.startsWith("/live/") || path.startsWith("/shorts/");
+  }
+
   /**
    * 지금 보고 있는 숏츠 한 편.
    *
@@ -255,10 +269,38 @@
     return h ? `${h}:${m}:${s}` : `${m}:${s}`;
   }
 
+  /**
+   * 내려받기 아이콘. 글자(↧)로 그리면 글꼴마다 굵기와 자리가 달라 옆 버튼들과 따로 논다.
+   *
+   * 이 그림은 **유튜브가 자기 화면에서 쓰는 그것 그대로다**(왼쪽 목록의 "오프라인 저장
+   * 동영상"에서 그대로 가져왔다). 비슷하게 새로 그리면 선 굵기와 끝 모양이 미묘하게
+   * 달라서 나란히 놓았을 때 티가 난다(실제로 티가 났다 — 유튜브의 옛 얇은 아이콘을
+   * 억지로 키워 썼더니 선만 두꺼워졌다).
+   *
+   * 24 틀에서 세로로 2~22 를 차지한다. 재보니 유튜브가 이 줄에 쓰는 아이콘들도 20~21 이라
+   * 크기를 따로 맞출 것이 없다.
+   */
+  const DOWNLOAD_PATH =
+    "M12 2a1 1 0 00-1 1v11.586l-4.293-4.293a1 1 0 10-1.414 1.414L12 18.414l6.707-6.707a1 1 0 " +
+    "10-1.414-1.414L13 14.586V3a1 1 0 00-1-1Zm7 18H5a1 1 0 000 2h14a1 1 0 000-2Z";
+
+  function downloadIcon() {
+    const NS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("focusable", "false");
+    svg.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS(NS, "path");
+    path.setAttribute("fill", "currentColor");
+    path.setAttribute("d", DOWNLOAD_PATH);
+    svg.append(path);
+    return svg;
+  }
+
   // 유튜브의 좋아요·공유 버튼과 나란히 설 버튼.
   // 숏츠에서는 오른쪽 세로 줄에 들어가므로 아이콘만 있는 동그란 모양으로 바꾼다.
   function buildButton(shorts) {
-    const icon = make("span", { class: "ytdl-open-icon", text: "↧" });
+    const icon = make("span", { class: "ytdl-open-icon" }, [downloadIcon()]);
     icon.setAttribute("aria-hidden", "true");
     const button = make(
       "button",
@@ -484,6 +526,78 @@
     );
   }
 
+  /**
+   * 옆에 선 유튜브 버튼을 재서 우리 버튼을 같은 치수로 맞춘다.
+   *
+   * 치수를 CSS 에 적어두면 유튜브가 버튼을 손볼 때마다 우리 것만 어긋난다(실제로 어긋났다 —
+   * 높이도 색도 옆 버튼과 달랐다). 그래서 그 줄에 실제로 서 있는 버튼에서 높이·모서리·여백·
+   * 글꼴·색을 읽어 그대로 쓴다. 밝게/어둡게 테마도 이걸로 함께 따라온다.
+   *
+   * 읽은 값은 사용자 지정 속성으로 넣는다. 그래야 :hover 와 눌린 상태 규칙이 그대로 산다
+   * (인라인 background 로 박으면 그 규칙들이 전부 진다).
+   */
+  function matchNeighbour() {
+    // 숏츠 쪽은 세로 줄에 맞춘 다른 모양이라 여기서 건드리지 않는다.
+    if (!el.button || state.mode !== "watch") return;
+    const host = el.button.parentElement;
+    const sample = sampleButton(host);
+    // 옆 버튼이 아직 안 그려졌을 수 있다. 그때는 표시를 남기지 않아서 다음 차례에 다시 잰다.
+    if (!sample) return;
+    state.matched = true;
+
+    const style = getComputedStyle(sample);
+    const box = sample.getBoundingClientRect();
+    const set = (name, value) => value && el.button.style.setProperty(name, value);
+
+    const height = Math.round(box.height);
+    set("--ytdl-open-h", `${height}px`);
+    // 모서리는 베끼지 않고 높이의 절반으로 둔다. 이 줄의 버튼은 모두 완전한 알약인데,
+    // 좋아요·싫어요는 서로 붙어 있어 한쪽만 둥글게 적혀 있다(그대로 베끼면 우리도 반쪽이 된다).
+    set("--ytdl-open-r", `${height / 2}px`);
+    set("--ytdl-open-font", `${style.fontWeight} ${style.fontSize}/1 ${style.fontFamily}`);
+    set("--ytdl-open-track", style.letterSpacing === "normal" ? "" : style.letterSpacing);
+    set("--ytdl-open-fg", style.color);
+    // 좌우 여백은 글자가 있는 버튼에서만 뜻이 있다. 동그란 아이콘 버튼은 여백이 0 이다.
+    if (sample.textContent.trim()) {
+      set("--ytdl-open-pad", `0 ${style.paddingRight} 0 ${style.paddingLeft}`);
+    }
+    // 속이 빈 버튼을 골랐다면 색은 우리 기본값을 쓴다(투명을 그대로 쓰면 바탕이 사라진다).
+    const background = style.backgroundColor;
+    if (background && !/^(transparent|rgba\(0, 0, 0, 0\))$/.test(background)) {
+      set("--ytdl-open-bg", background);
+    }
+    // 아이콘 크기는 여기서 재지 않는다. 유튜브의 틀은 24 였다가 48 이었다가 하지만
+    // 그 안의 그림은 어디서나 20~21 이라, 틀을 베끼면 우리 것만 두 배로 커진다.
+    // 유튜브의 그림을 그대로 쓰므로 애초에 맞춰져 있다(downloadIcon 참고).
+
+    // 옆 버튼과의 사이. 유튜브는 여백을 버튼이 아니라 그것을 감싼 껍데기에 준다.
+    // 줄 자체가 벌려 주고 있으면(gap) 우리만 여백을 더하면 안 된다.
+    const wrapper = [...host.children].find((node) => node.contains(sample));
+    const own = Number.parseFloat(wrapper ? getComputedStyle(wrapper).marginLeft : "");
+    const gap = Number.parseFloat(getComputedStyle(host).columnGap);
+    set("--ytdl-open-ml", gap > 0 ? "0px" : own > 0 ? `${own}px` : "8px");
+  }
+
+  /**
+   * 견줄 만한 유튜브 버튼 하나.
+   *
+   * 까다롭게 고르면 안 된다. 창이 좁으면 유튜브는 공유·저장을 글자 없는 `⋯` 동그라미
+   * 하나로 접어버린다. 그러면 "글자 있는 알약"만 찾다가 아무것도 못 고른다(실제로 그랬다 —
+   * 재지 못해 우리 버튼만 36px 로 남고 옆 버튼들은 40px 이었다).
+   *
+   * 그래서 보이는 버튼이면 무엇이든 받아들이고, 글자가 있는 것을 먼저 본다.
+   * 좌우 여백과 글꼴은 글자 있는 버튼에서만 뜻이 있기 때문이다.
+   */
+  function sampleButton(host) {
+    if (!host) return null;
+    const buttons = [...host.querySelectorAll("button")].filter((node) => {
+      if (node === el.button || el.button?.contains(node)) return false;
+      const box = node.getBoundingClientRect();
+      return box.height > 20 && box.width > 0;
+    });
+    return buttons.find((node) => node.textContent.trim()) || buttons[0] || null;
+  }
+
   /** 패널을 끼워 넣을 자리. 숏츠는 끼울 데가 없어서 화면 위에 띄운다(그때는 null). */
   function panelAnchor() {
     if (isShorts()) return null;
@@ -573,6 +687,22 @@
 
   // 유튜브는 화면을 통째로 다시 그리는 일이 잦다. 사라졌으면 다시 붙인다.
   function mount() {
+    // 영상 화면을 떠났다(홈·검색 …). 얹어둔 것을 걷어낸다.
+    // 특히 숏츠 패널은 body 에 띄워 둔 것이라, 두면 엉뚱한 화면 위에 그대로 남는다.
+    if (!isVideoPage()) {
+      if (state.mode !== null) {
+        el.button?.remove();
+        el.panel?.remove();
+        el.button = null;
+        el.panel = null;
+        state.mode = null;
+        state.panelMoved = false;
+        state.panelDrag = null;
+        watchProgress(false);
+      }
+      return;
+    }
+
     const mode = isShorts() ? "shorts" : "watch";
     // 숏츠와 일반 화면 사이를 오갈 때 유튜브는 문서를 새로 만들지 않는다.
     // 붙일 자리도 모양도 달라지므로 떼어내고 새로 만든다.
@@ -595,7 +725,13 @@
       // 숏츠에서는 좋아요 위에 둔다. 아래에 붙이면 창이 조금만 낮아도 화면 밖으로 밀린다.
       if (mode === "shorts") host.prepend(el.button);
       else host.append(el.button);
+      // 새 줄에 붙었으면 치수도 그 줄의 버튼에서 다시 잰다.
+      state.matched = false;
     }
+
+    // 옆 버튼을 재서 치수를 맞춘다. 그 버튼들이 우리보다 늦게 그려질 때가 있어서,
+    // 잴 수 있을 때까지 매 차례 다시 해본다(한 번 재고 나면 그만둔다).
+    if (!state.matched) matchNeighbour();
 
     if (!el.panel || !el.panel.isConnected) {
       const anchor = panelAnchor();
@@ -604,6 +740,8 @@
         if (anchor) anchor.insertAdjacentElement("afterend", panel);
         else document.body.append(panel);
         panel.hidden = !state.open;
+        // 열어둔 채 다른 화면에 갔다 왔으면 재생 상태 받아오기가 꺼져 있다. 다시 켠다.
+        watchProgress(state.open);
         // 새로 만든 패널은 화질칸이 비어 있다. 이미 받아둔 목록이 있으면 그대로 채운다.
         fillQuality();
         render();
@@ -819,7 +957,11 @@
   }
 
   mount();
-  say("준비됨 · 좋아요 옆 '구간 받기' 버튼을 눌러주세요");
+  say(
+    isVideoPage()
+      ? "준비됨 · 좋아요 옆 '구간 받기' 버튼을 눌러주세요"
+      : "준비됨 · 영상 화면으로 가면 '구간 받기' 버튼이 붙습니다",
+  );
 
   // 걷어낼 때는 화면에 얹은 것을 모두 치운다. 남겨두면 새 판의 것과 겹쳐 보인다.
   cleanup.push(() => {
@@ -870,6 +1012,18 @@
   // 유튜브는 페이지를 새로 그리지 않고 영상만 갈아끼운다.
   // 창 크기가 바뀌면 띄운 패널이 설 자리도 달라진다.
   listen(window, "resize", placeFloatingPanel);
+
+  // 화면을 갈아 끼웠다고 유튜브가 알려주는 순간. 아래 1초 시계가 어차피 다시 붙이지만,
+  // 그때까지 버튼이 비어 있는 게 눈에 보인다. 알려주면 바로 붙인다.
+  listen(window, "yt-navigate-finish", () => mount());
+
+  // 테마를 밝게/어둡게 바꾸면 옆 버튼의 색이 달라진다. 다시 재서 맞춘다.
+  const themeWatch = new MutationObserver(() => {
+    state.matched = false;
+    matchNeighbour();
+  });
+  themeWatch.observe(document.documentElement, { attributeFilter: ["dark"] });
+  cleanup.push(() => themeWatch.disconnect());
 
   let lastId = currentVideoId();
   const ticker = setInterval(() => {

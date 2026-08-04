@@ -13,6 +13,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
 use anyhow::Result;
@@ -100,23 +101,57 @@ struct View {
     /// 넣을 수 있는 브라우저들과, 지금 고른 브라우저.
     browsers: &'static [browser::Browser],
     chosen_browser: Option<String>,
+    /// 고른 브라우저의 이름. 화면이 문장에 그대로 쓴다.
+    browser_label: Option<&'static str>,
+    /// 고른 브라우저가 이 컴퓨터에 깔려 있는지.
+    browser_here: bool,
+    /// 고른 브라우저에 우리 확장이 얹혀 있는지.
+    browser_loaded: browser::Loaded,
     /// 로그인 시 자동으로 업데이트를 확인하도록 등록돼 있는지.
     auto_update: bool,
+}
+
+/// 마지막으로 확인한 최신 릴리스(버전, 올라온 날).
+///
+/// 담아두지 않으면 화면을 다시 그릴 때마다 "최신" 칸이 `—` 로 돌아간다. 브라우저를
+/// 고르거나 경로를 복사하는 것 같은 일에도 화면을 다시 그리므로 그때마다 깜빡였다.
+/// 깃허브에 다시 묻는 것은 "다시 확인" 을 눌렀을 때뿐이다.
+static LATEST: Mutex<Option<(String, Option<String>)>> = Mutex::new(None);
+
+fn remembered_latest() -> Option<(String, Option<String>)> {
+    LATEST.lock().ok().and_then(|slot| slot.clone())
 }
 
 impl View {
     fn base() -> Self {
         let config = Config::load();
+        // 지난번에 고른 브라우저가 있으면 그것, 없으면 이 컴퓨터의 기본 브라우저.
+        // 파이어폭스처럼 목록에 없는 것이 기본이면 고르지 않은 채로 둔다.
+        let chosen = config
+            .browser
+            .or_else(|| browser::default_key().map(str::to_string));
+        let dir = install_dir();
+        let installed = installed_version();
+        let latest = remembered_latest();
         View {
-            installed: installed_version(),
-            path: install_dir().to_string_lossy().to_string(),
+            update: latest
+                .as_ref()
+                .is_some_and(|(version, _)| Some(version.as_str()) != installed.as_deref()),
+            latest: latest.as_ref().map(|(version, _)| version.clone()),
+            published: latest.and_then(|(_, day)| day),
+            installed,
+            path: dir.to_string_lossy().to_string(),
             manager: github::manager_version(),
             browsers: browser::BROWSERS,
-            // 지난번에 고른 브라우저가 있으면 그것, 없으면 이 컴퓨터의 기본 브라우저.
-            // 파이어폭스처럼 목록에 없는 것이 기본이면 고르지 않은 채로 둔다.
-            chosen_browser: config
-                .browser
-                .or_else(|| browser::default_key().map(str::to_string)),
+            browser_label: chosen
+                .as_deref()
+                .and_then(browser::find)
+                .map(|browser| browser.label),
+            browser_here: chosen.as_deref().is_some_and(browser::is_installed),
+            browser_loaded: chosen.as_deref().map_or(browser::Loaded::Unknown, |key| {
+                browser::extension_state(key, &dir)
+            }),
+            chosen_browser: chosen,
             auto_update: autostart::is_enabled(),
             ..Default::default()
         }
@@ -205,9 +240,11 @@ fn handle(action: &str, proxy: EventLoopProxy<Message>) {
             let mut view = View::base();
             match fs::remove_dir_all(&dir) {
                 Ok(()) => {
+                    let label = view.browser_label.unwrap_or("브라우저");
                     view.installed = None;
                     view.update = true;
-                    view.note = "지웠습니다 · 크롬의 확장 목록에서도 제거해 주세요".into();
+                    view.browser_loaded = browser::Loaded::No;
+                    view.note = format!("지웠습니다 · {label} 의 확장 목록에서도 제거해 주세요");
                 }
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                     view.note = "이미 없습니다".into();
@@ -242,11 +279,14 @@ fn handle(action: &str, proxy: EventLoopProxy<Message>) {
             let _ = proxy.send_event(Message::Show(view));
         }
         // 브라우저를 골랐다. 자동 확인이 창 없이 돌 때도 알 수 있도록 파일에 적어둔다.
+        // 고르고 나면 그 브라우저 기준으로 화면을 다시 그린다 — 폴더는 같아도
+        // 그 브라우저에 얹혔는지는 브라우저마다 다르다.
         other if other.starts_with("browser:") => {
             let key = other.trim_start_matches("browser:").trim().to_string();
             let mut config = Config::load();
             config.browser = (!key.is_empty()).then_some(key);
             let _ = config.save();
+            let _ = proxy.send_event(Message::Show(View::base()));
         }
         // 로그인 시 자동 확인 켜기/끄기. 시작 항목을 등록하거나 지운다.
         "auto-on" | "auto-off" => {
@@ -284,6 +324,9 @@ fn check_in_background(proxy: EventLoopProxy<Message>) {
         match github::latest_release() {
             Ok(release) => {
                 let latest = release.version.clone();
+                if let Ok(mut slot) = LATEST.lock() {
+                    *slot = Some((latest.clone(), release.published_day()));
+                }
                 view.update = view.installed.as_deref() != Some(latest.as_str());
                 view.manager_update = release.is_newer_than(github::manager_version());
                 view.note = match &view.installed {
@@ -326,9 +369,14 @@ fn install_in_background(proxy: EventLoopProxy<Message>) {
                     view.auto_update = true;
                 }
                 view.installed = installed_version();
-                view.note =
-                    "설치했습니다 · 크롬에서 새로고침하면 반영됩니다. 이후 갱신은 자동입니다"
-                        .into();
+                // 폴더만 갈아 끼운 것과 그 브라우저가 그 폴더를 읽는 것은 다른 이야기다.
+                // 아직 안 얹은 브라우저를 골라뒀다면 그것부터 알려준다.
+                let label = view.browser_label.unwrap_or("브라우저");
+                view.note = if view.browser_loaded == browser::Loaded::Yes {
+                    format!("설치했습니다 · {label} 에서 새로고침하면 반영됩니다. 이후 갱신은 자동입니다")
+                } else {
+                    format!("설치했습니다 · {label} 에 이 폴더를 얹어주세요(아래 순서, 한 번만)")
+                };
                 view.manager_update = release.is_newer_than(github::manager_version());
                 view.latest = Some(release.version);
                 view.update = false;

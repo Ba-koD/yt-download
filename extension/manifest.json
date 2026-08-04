@@ -12,9 +12,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://www.youtube.com/watch*",
-        "https://www.youtube.com/live/*",
-        "https://www.youtube.com/shorts/*"
+        "https://www.youtube.com/*"
       ],
       "js": [
         "src/page-fetch.js"
@@ -24,9 +22,7 @@
     },
     {
       "matches": [
-        "https://www.youtube.com/watch*",
-        "https://www.youtube.com/live/*",
-        "https://www.youtube.com/shorts/*"
+        "https://www.youtube.com/*"
       ],
       "js": [
         "src/content.js"

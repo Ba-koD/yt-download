@@ -224,6 +224,9 @@
         <button id="copy-page">확장 페이지 주소 복사</button>
         <button id="copy-path">폴더 경로 복사</button>
       </div>
+      <!-- 폴더는 하나지만 "압축해제된 확장 로드"는 브라우저마다 한 번씩 해야 한다.
+           크롬에만 얹어둔 채 엣지에서 열면 버튼이 없다. 그래서 고른 브라우저 기준으로 적는다. -->
+      <p class="note" id="browser-note" style="margin-top: 12px"></p>
       <ol>
         <li><code id="page-url">chrome://extensions</code> 를 주소창에 붙여넣어 엽니다</li>
         <li>오른쪽 위 <b>개발자 모드</b>를 켭니다</li>
@@ -291,6 +294,28 @@
       document.getElementById("copy-page").addEventListener("click", () => send("copy:" + pageFor()));
       document.getElementById("copy-path").addEventListener("click", () => send("copy:" + installPath));
 
+      // 고른 브라우저에 얹혀 있는지. 폴더가 있다는 것과는 별개다 —
+      // 폴더 하나를 여러 브라우저가 함께 쓰지만, 얹는 일은 브라우저마다 한 번씩 해야 한다.
+      const browserNote = (view) => {
+        const label = view.browser_label || "이 브라우저";
+        if (!view.browser_here) return `${label} 를 이 컴퓨터에서 찾지 못했습니다`;
+        switch (view.browser_loaded?.state) {
+          case "yes":
+            return `${label} 에 얹혀 있습니다 · 갱신은 자동으로 반영됩니다`;
+          case "elsewhere":
+            return (
+              `${label} 은 다른 폴더의 확장을 읽고 있습니다(${view.browser_loaded.path}) · ` +
+              `이 관리자는 위 폴더만 갱신하므로 그쪽은 손이 닿지 않습니다`
+            );
+          case "no":
+            return view.installed
+              ? `${label} 에는 아직 얹지 않았습니다 · 아래 순서를 한 번만 해주세요`
+              : `${label} 에 아직 얹지 않았습니다 · 위에서 설치한 뒤 아래 순서를 해주세요`;
+          default:
+            return `${label} 에 얹었는지 확인하지 못했습니다 · 버튼이 안 보이면 아래 순서를 해주세요`;
+        }
+      };
+
       // 러스트 쪽에서 상태가 바뀔 때마다 부른다.
       window.show = (view) => {
         // 브라우저 목록은 한 번만 채우고, 지난번에 고른(없으면 기본) 브라우저를 선택으로 둔다.
@@ -308,6 +333,11 @@
         }
         installPath = view.path || "";
         autoUpdate.checked = Boolean(view.auto_update);
+
+        const browserLine = document.getElementById("browser-note");
+        browserLine.textContent = browserNote(view);
+        // 손이 더 가야 하는 경우에만 눈에 띄게 한다.
+        browserLine.classList.toggle("bad", view.browser_loaded?.state !== "yes");
 
         document.getElementById("installed").textContent = view.installed || "없음";
         document.getElementById("latest").textContent =

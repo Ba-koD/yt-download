@@ -5,8 +5,17 @@
 //!
 //! 페이지를 우리가 대신 열어줄 수는 없다. 크로미움은 명령줄로 넘긴 `chrome://` 주소를
 //! 무시한다(직접 확인했다 — 새 탭이 열린다). 그래서 주소를 복사해 주는 데까지만 한다.
+//!
+//! 다만 **폴더가 있다는 것과 그 브라우저가 그 폴더를 얹었다는 것은 다른 이야기다.**
+//! 폴더 하나를 여러 브라우저가 함께 쓰지만, "압축해제된 확장 로드"는 브라우저마다
+//! 한 번씩 해줘야 한다. 크롬에만 얹어둔 채 엣지에서 열면 버튼이 없다(실제로 그랬다).
+//! 그래서 브라우저마다 얹혀 있는지를 따로 본다 — 크로미움은 얹은 확장의 폴더 경로를
+//! 프로필의 `Preferences` 에 적어두므로 그걸 읽으면 알 수 있다.
 
-use std::{path::PathBuf, process::Stdio};
+use std::{
+    path::{Path, PathBuf},
+    process::Stdio,
+};
 
 use serde::Serialize;
 
@@ -51,6 +60,179 @@ pub const BROWSERS: &[Browser] = &[
         page: "opera://extensions",
     },
 ];
+
+/// 목록에서 키로 하나 찾는다.
+pub fn find(key: &str) -> Option<&'static Browser> {
+    BROWSERS.iter().find(|browser| browser.key == key)
+}
+
+/// 그 브라우저가 이 컴퓨터에 깔려 있는지.
+pub fn is_installed(key: &str) -> bool {
+    browser_executable(key).is_some() || user_data_dir(key).is_some_and(|dir| dir.is_dir())
+}
+
+/// 그 브라우저에 우리 확장이 얹혀 있는지.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "lowercase")]
+pub enum Loaded {
+    /// 프로필을 찾지 못했거나 읽지 못했다. "아니다"가 아니라 **모르겠다**는 뜻이다.
+    /// 모르는 것을 안 얹혔다고 잘라 말하면 멀쩡히 쓰는 사람에게 헛수고를 시킨다.
+    #[default]
+    Unknown,
+    /// 얹은 흔적이 없다.
+    No,
+    /// 관리자가 갈아 끼우는 그 폴더로 얹혀 있다. 갱신이 그대로 닿는다.
+    Yes,
+    /// 우리 확장이긴 한데 다른 폴더로 얹혀 있다.
+    /// 관리자는 자기 폴더만 갈아 끼우므로, 그 브라우저에는 갱신이 닿지 않는다.
+    Elsewhere { path: String },
+}
+
+/// 그 브라우저의 프로필들을 뒤져서 우리 확장이 얹혀 있는지 본다.
+///
+/// 크로미움은 "압축해제된 확장"의 폴더 경로를 프로필 설정에 적어둔다. 그 경로가
+/// 우리 폴더면 확실하고, 다른 폴더라도 그 안의 manifest 이름으로 우리 것인지 알 수 있다.
+pub fn extension_state(key: &str, dir: &Path) -> Loaded {
+    let Some(profiles) = profile_dirs(key) else {
+        return Loaded::Unknown;
+    };
+    let wanted = normalize(dir);
+    let mut read_any = false;
+    let mut elsewhere = None;
+
+    for profile in profiles {
+        // 확장 목록이 어느 파일에 적히는지는 판마다 다르다(요즘 크롬은 Secure Preferences 다).
+        // 둘 다 본다.
+        for name in ["Preferences", "Secure Preferences"] {
+            let Ok(bytes) = std::fs::read(profile.join(name)) else {
+                continue;
+            };
+            let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+                continue;
+            };
+            read_any = true;
+            let Some(settings) = value
+                .get("extensions")
+                .and_then(|node| node.get("settings"))
+                .and_then(serde_json::Value::as_object)
+            else {
+                continue;
+            };
+            for entry in settings.values() {
+                let Some(path) = entry.get("path").and_then(serde_json::Value::as_str) else {
+                    continue;
+                };
+                if normalize(Path::new(path)) == wanted {
+                    return Loaded::Yes;
+                }
+                if elsewhere.is_none() && is_our_folder(Path::new(path)) {
+                    elsewhere = Some(path.to_string());
+                }
+            }
+        }
+    }
+
+    match (elsewhere, read_any) {
+        (Some(path), _) => Loaded::Elsewhere { path },
+        (None, true) => Loaded::No,
+        (None, false) => Loaded::Unknown,
+    }
+}
+
+/// 그 폴더가 우리 확장인지. manifest 의 이름으로 가린다.
+///
+/// 크롬에 저장소 폴더를 직접 얹어 쓰는 경우가 있다(개발할 때 그렇게 한다).
+/// 그때 "안 얹혔다"고 하면 거짓말이 된다 — 얹혀 있되 갱신이 닿지 않을 뿐이다.
+fn is_our_folder(path: &Path) -> bool {
+    // 브라우저가 딸려 보내는 내장 확장은 수십 개다. 그 안까지 읽을 이유가 없다.
+    if !path.is_absolute() {
+        return false;
+    }
+    let Ok(bytes) = std::fs::read(path.join("manifest.json")) else {
+        return false;
+    };
+    serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .map(|name| name.contains("yt-download"))
+        })
+        .unwrap_or(false)
+}
+
+/// 경로를 견주기 좋게 다듬는다. 윈도우는 대소문자를 가리지 않고 `\` 와 `/` 를 함께 쓴다.
+fn normalize(path: &Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/");
+    let text = text.trim_end_matches('/').to_string();
+    if cfg!(windows) {
+        text.to_ascii_lowercase()
+    } else {
+        text
+    }
+}
+
+/// 프로필 폴더들(`Default`, `Profile 1` …). 어느 프로필에 얹었는지는 알 수 없으니 다 본다.
+fn profile_dirs(key: &str) -> Option<Vec<PathBuf>> {
+    let root = user_data_dir(key)?;
+    if !root.is_dir() {
+        return None;
+    }
+    // 오페라처럼 사용자 폴더가 곧 프로필인 것도 있다. 그 자리도 후보에 넣는다.
+    let mut found = vec![root.clone()];
+    for entry in std::fs::read_dir(&root).ok()?.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == "Default" || name.starts_with("Profile ") {
+            found.push(entry.path());
+        }
+    }
+    Some(found)
+}
+
+#[cfg(windows)]
+fn user_data_dir(key: &str) -> Option<PathBuf> {
+    let local = dirs::data_local_dir()?;
+    let roaming = dirs::data_dir()?;
+    Some(match key {
+        "chrome" => local.join(r"Google\Chrome\User Data"),
+        "edge" => local.join(r"Microsoft\Edge\User Data"),
+        "brave" => local.join(r"BraveSoftware\Brave-Browser\User Data"),
+        "whale" => local.join(r"Naver\Naver Whale\User Data"),
+        "vivaldi" => local.join(r"Vivaldi\User Data"),
+        "opera" => roaming.join(r"Opera Software\Opera Stable"),
+        _ => return None,
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn user_data_dir(key: &str) -> Option<PathBuf> {
+    let support = dirs::home_dir()?.join("Library/Application Support");
+    Some(match key {
+        "chrome" => support.join("Google/Chrome"),
+        "edge" => support.join("Microsoft Edge"),
+        "brave" => support.join("BraveSoftware/Brave-Browser"),
+        "whale" => support.join("Naver/Whale"),
+        "vivaldi" => support.join("Vivaldi"),
+        "opera" => support.join("com.operasoftware.Opera"),
+        _ => return None,
+    })
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn user_data_dir(key: &str) -> Option<PathBuf> {
+    let config = dirs::config_dir()?;
+    Some(match key {
+        "chrome" => config.join("google-chrome"),
+        "edge" => config.join("microsoft-edge"),
+        "brave" => config.join("BraveSoftware/Brave-Browser"),
+        "whale" => config.join("naver-whale"),
+        "vivaldi" => config.join("vivaldi"),
+        "opera" => config.join("opera"),
+        _ => return None,
+    })
+}
 
 /// 이 컴퓨터의 기본 브라우저. 목록에 없는 것(파이어폭스·사파리)이면 `None`.
 pub fn default_key() -> Option<&'static str> {
@@ -251,5 +433,39 @@ mod tests {
         }
         // 기본 브라우저를 못 알아내도 목록은 그대로 쓸 수 있어야 한다.
         assert!(BROWSERS.iter().any(|browser| browser.key == "chrome"));
+    }
+
+    #[test]
+    fn 얹은_폴더는_적힌_모양이_달라도_같은_것으로_본다() {
+        // 크로미움은 `\` 로 적고 우리는 `/` 로 이어 붙이기도 한다. 윈도우는 대소문자도 안 가린다.
+        let a = normalize(Path::new(
+            r"C:\Users\me\AppData\Local\yt-download\extension",
+        ));
+        let b = normalize(Path::new(
+            "C:/Users/me/AppData/Local/yt-download/extension/",
+        ));
+        assert_eq!(a, b);
+        if cfg!(windows) {
+            assert_eq!(
+                a,
+                normalize(Path::new(
+                    r"c:\users\me\appdata\local\YT-DOWNLOAD\extension"
+                ))
+            );
+        }
+        // 다른 폴더까지 같다고 하면 안 된다.
+        assert_ne!(
+            a,
+            normalize(Path::new(r"C:\Users\me\yt-download\extension"))
+        );
+    }
+
+    #[test]
+    fn 모르는_브라우저는_안_얹혔다고_말하지_않는다() {
+        // "모르겠다"와 "아니다"를 섞으면 멀쩡히 쓰는 사람에게 헛수고를 시킨다.
+        assert_eq!(
+            extension_state("firefox", Path::new("/nowhere")),
+            Loaded::Unknown
+        );
     }
 }

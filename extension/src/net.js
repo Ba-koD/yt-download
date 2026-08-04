@@ -131,20 +131,29 @@ export function decodeBase64(text) {
   return bytes;
 }
 
-/** 먼저 빠른 쪽으로 받아보고, 막히면 예비 통로로 다시 받는다. */
-export function withFallback(primary, secondary) {
-  let usePrimary = true;
+/**
+ * 먼저 빠른 쪽으로 받아보고, 막히면 예비 통로로 다시 받는다.
+ *
+ * 통로가 막히는 원인(라이브 서버 교대의 리다이렉트 등)은 대개 일시적이다.
+ * 그래서 영영 갈아타지 않고, 잠깐 식힌 뒤에는 빠른 통로를 다시 두드려 본다.
+ * 예비 통로는 base64 를 거쳐서 눈에 띄게 느리다 — 긴 받기가 통째로 느려지면 아깝다.
+ */
+export function withFallback(primary, secondary, { coolOffMs = 60_000, now = Date.now } = {}) {
+  let blocked = false;
+  let blockedAt = 0;
   return async (url, headers) => {
-    if (usePrimary) {
+    if (!blocked || now() - blockedAt >= coolOffMs) {
       try {
-        return await primary(url, headers);
+        const bytes = await primary(url, headers);
+        blocked = false;
+        return bytes;
       } catch (error) {
         // 상태 코드가 있다면 통로는 멀쩡한데 서버가 거절한 것이다. 통로를 갈아타 봐야
         // 같은 답이 오므로 그대로 던진다(일시적인 코드라면 withRetry 가 다시 시도한다).
         if (httpStatusOf(error)) throw error;
-        // 상태 코드조차 없이 죽었다면(CORS 차단 등) 통로 문제다.
-        // 한 번 막히면 그 뒤로도 막힐 가능성이 크므로 아예 예비 통로로 옮겨 탄다.
-        usePrimary = false;
+        // 상태 코드조차 없이 죽었다면(CORS 차단 등) 통로 문제다. 예비 통로로 옮겨 탄다.
+        blocked = true;
+        blockedAt = now();
         console.warn("[yt-download] 페이지 요청이 막혀 예비 통로로 넘어갑니다:", error.message);
       }
     }
@@ -162,10 +171,11 @@ export function httpStatusOf(error) {
  * 일시적인 실패는 잠깐 쉬었다가 다시 받아 본다.
  *
  * 라이브 조각은 서버가 잠깐 503 을 주는 일이 흔하다(방금 만들어진 조각, 서버 교대 등).
- * 그 한 번에 전체 받기를 포기하지 않도록 점점 길게 쉬며 몇 번 더 두드린다.
+ * 그 한 번에 전체 받기를 포기하지 않도록 점점 길게(상한 있음) 쉬며 몇 번 더 두드린다.
+ * 요청 하나는 길어야 8MB 라(mergeRanges 가 그 크기로 자른다) 다시 받는 값이 싸다.
  * 403(주소 만료)·404 같은 답은 다시 물어도 같으므로 바로 던진다.
  */
-export function withRetry(fetcher, { tries = 4, waitMs = 1000, sleep } = {}) {
+export function withRetry(fetcher, { tries = 6, waitMs = 1000, maxWaitMs = 8000, sleep } = {}) {
   const rest = sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const transient = (error) => {
     const status = httpStatusOf(error);
@@ -185,7 +195,7 @@ export function withRetry(fetcher, { tries = 4, waitMs = 1000, sleep } = {}) {
           error.message,
         );
         await rest(wait);
-        wait *= 2;
+        wait = Math.min(wait * 2, maxWaitMs);
       }
     }
   };

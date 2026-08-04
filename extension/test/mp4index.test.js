@@ -246,18 +246,45 @@ Deno.test("다시 물어도 답이 같은 실패(403)는 바로 던진다", asyn
   assertEquals(calls, 1);
 });
 
-Deno.test("계속 실패하면 정해진 횟수만 시도하고 그친다", async () => {
+Deno.test("계속 실패하면 정해진 횟수만 시도하고, 쉬는 시간에는 상한이 있다", async () => {
   let calls = 0;
+  const waits = [];
   const fetcher = withRetry(
     async () => {
       calls += 1;
       throw new Error("HTTP 503");
     },
-    { tries: 4, sleep: async () => {} },
+    { tries: 5, waitMs: 3000, maxWaitMs: 8000, sleep: async (ms) => waits.push(ms) },
   );
 
   await assertRejects(() => fetcher("u"), Error, "HTTP 503");
-  assertEquals(calls, 4);
+  assertEquals(calls, 5);
+  assertEquals(waits, [3000, 6000, 8000, 8000]);
+});
+
+Deno.test("예비 통로로 갈아탔어도 식힌 뒤에는 빠른 통로를 다시 두드려 본다", async () => {
+  let primaryCalls = 0;
+  let primaryBlocked = true;
+  let clock = 0;
+  const fetcher = withFallback(
+    async () => {
+      primaryCalls += 1;
+      if (primaryBlocked) throw new Error("Failed to fetch");
+      return new Uint8Array([5]);
+    },
+    async () => new Uint8Array([1]),
+    { coolOffMs: 1000, now: () => clock },
+  );
+
+  assertEquals([...(await fetcher("u"))], [1]); // 막혀서 예비 통로로
+  clock = 999;
+  assertEquals([...(await fetcher("u"))], [1]); // 아직 식지 않았다 — 예비 그대로
+  assertEquals(primaryCalls, 1);
+
+  clock = 1000;
+  primaryBlocked = false; // 서버 교대가 끝났다
+  assertEquals([...(await fetcher("u"))], [5]); // 빠른 통로로 되돌아온다
+  assertEquals(primaryCalls, 2);
 });
 
 Deno.test("페이지 요청이 되면 예비 통로는 쓰지 않는다", async () => {

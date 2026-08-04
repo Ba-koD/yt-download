@@ -75,6 +75,24 @@
     return meter.events.reduce((sum, event) => sum + event.count, 0) / (span / 1000);
   };
 
+  // 남은 시간 어림. 진행량의 최근 증가 속도로 잰다 — 진행량이 바이트(일반 영상)든
+  // 조각 개수(라이브)든 똑같이 통해서, 어느 쪽에서도 예상 시간을 보여줄 수 있다.
+  const pace = { events: [] };
+  const PACE_WINDOW = 15_000;
+  const paceAdd = (done) => {
+    pace.events.push({ at: Date.now(), done });
+  };
+  const paceRemaining = (done, total) => {
+    const now = Date.now();
+    while (pace.events.length && now - pace.events[0].at > PACE_WINDOW) pace.events.shift();
+    if (pace.events.length < 2) return null;
+    const first = pace.events[0];
+    const last = pace.events[pace.events.length - 1];
+    const rate = ((last.done - first.done) / Math.max(1, last.at - first.at)) * 1000;
+    if (rate <= 0) return null;
+    return (total - done) / rate;
+  };
+
   // 미디어는 페이지 쪽에서 받아온다. 여기서 곧바로 부르면 교차 출처로 막히고,
   // 배경 일꾼으로 보내면 Origin 이 붙어 InnerTube 가 403 을 준다.
   // youtube.com 은 여기가 동일 출처라 그대로 부른다.
@@ -927,10 +945,9 @@
       return;
     }
     const speed = meterSpeed();
-    if (speed > 0) {
-      text += ` · ${speedLabel(speed)}`;
-      if (inBytes && done < total) text += ` · 남은 ${showClock((total - done) / speed)}`;
-    }
+    if (speed > 0) text += ` · ${speedLabel(speed)}`;
+    const left = paceRemaining(done, total);
+    if (left !== null && done < total) text += ` · 예상 ${showClock(left)} 남음`;
     setStatus(text);
   }
 
@@ -951,6 +968,7 @@
     const resumable = media.kind === "disk";
     const resumeHint = resumable ? " · 받은 만큼은 남아 있어 다시 누르면 이어받습니다" : "";
     meter.events.length = 0;
+    pace.events.length = 0;
     lastProgress = null;
     const ticker = setInterval(showProgress, 500);
 
@@ -964,6 +982,7 @@
         store: media,
         onProgress: (done, total, stage) => {
           lastProgress = { done, total, stage };
+          if (stage === "받는 중") paceAdd(done);
           showProgress();
         },
       });

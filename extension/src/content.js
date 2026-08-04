@@ -126,6 +126,8 @@
     progress: null,
     // 받는 중에 멈추거나 그만두게 해주는 손잡이.
     control: null,
+    // 받다 만 조각이 디스크에 남아 있는지. 버리기 버튼을 보일지 정한다.
+    hasLeftovers: false,
     // 끝점을 "끝까지"로 둔 상태. 라이브면 방송이 진행되는 만큼 따라간다.
     toEnd: false,
     // 지금 붙어 있는 화면 종류("watch" 또는 "shorts"). 바뀌면 붙일 자리를 다시 잡는다.
@@ -459,6 +461,11 @@
     // 받는 동안에만 보이는 버튼들.
     el.hold = make("button", { class: "ytdl-hold", type: "button", text: "일시정지", hidden: true });
     el.halt = make("button", { class: "ytdl-halt", type: "button", text: "정지", hidden: true });
+    // 받다 만 조각이 남아 있을 때만 보이는 버튼.
+    el.discard = make("button", {
+      class: "ytdl-discard", type: "button", text: "받던 조각 버리기", hidden: true,
+      title: "이어받기용으로 남겨둔 조각을 지웁니다",
+    });
     el.status = make("div", { class: "ytdl-status", text: "화질 목록을 불러오는 중입니다" });
     el.total = make("span", { class: "ytdl-total" });
 
@@ -490,6 +497,7 @@
           el.go,
           el.hold,
           el.halt,
+          el.discard,
         ]),
         el.status,
       ]),
@@ -527,6 +535,13 @@
       render();
     });
     el.halt.addEventListener("click", () => state.control?.stop());
+    el.discard.addEventListener("click", async () => {
+      if (!state.videoId || state.busy) return;
+      await store.discard(state.videoId);
+      state.hasLeftovers = false;
+      setStatus("받아둔 조각을 지웠습니다");
+      render();
+    });
     return panel;
   }
 
@@ -837,6 +852,7 @@
     el.go.disabled = state.busy || !state.formats || length < 0.5;
     el.hold.hidden = !state.busy;
     el.halt.hidden = !state.busy;
+    el.discard.hidden = state.busy || !state.hasLeftovers;
     el.hold.textContent = state.control?.paused ? "이어받기" : "일시정지";
     renderTimeline();
   }
@@ -906,9 +922,12 @@
       }
       // 받다 만 조각이 남아 있으면 알려준다(같은 구간을 다시 받으면 이어서 받는다).
       store.hasLeftovers(videoId).then((left) => {
-        if (left && state.videoId === videoId && !state.busy) {
+        if (state.videoId !== videoId) return;
+        state.hasLeftovers = left;
+        if (left && !state.busy) {
           setStatus("받다 만 조각이 남아 있습니다 · 같은 구간을 받으면 이어서 받습니다");
         }
+        render();
       }).catch(() => {});
     } catch (error) {
       setStatus(error.message, "ytdl-bad");
@@ -932,14 +951,16 @@
     if (!lastProgress) return;
     const { done, total, stage } = lastProgress;
     if (stage !== "받는 중") {
-      setStatus(stage);
+      // 합치기 같은 단계도 몇째 조각인지 같이 적는다.
+      setStatus(total > 1 ? `${stage} ${done}/${total}` : stage);
       return;
     }
     const percent = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
     let text = `받는 중 ${percent}%`;
-    // 일반 영상은 바이트 단위라 용량을 같이 적는다. 라이브는 조각 개수라 %만 적는다.
+    // 일반 영상은 바이트 단위라 용량을, 라이브는 조각 개수를 같이 적는다.
     const inBytes = total > 1_000_000;
     if (inBytes) text += ` · ${showMb(done)}/${showMb(total)} MB`;
+    else text += ` · 조각 ${done}/${total}`;
     if (state.control?.paused) {
       setStatus(`${text} (멈춤)`);
       return;
@@ -997,6 +1018,7 @@
       );
       // 저장까지 됐으면 조각은 더 필요 없다. 지워서 디스크를 돌려준다.
       media.clearChunks().catch(() => {});
+      state.hasLeftovers = false;
       const took = ((Date.now() - began) / 1000).toFixed(1);
       const lead = state.start - realStart;
       const note = lead >= 0.5 ? ` · 앞 ${lead.toFixed(1)}초가 더 붙었습니다(키프레임)` : "";
@@ -1007,6 +1029,8 @@
         "ytdl-ok",
       );
     } catch (error) {
+      // 조각이 남았을 수 있다 — 이어받기 안내와 버리기 버튼의 근거가 된다.
+      if (resumable) state.hasLeftovers = true;
       // 내가 정지를 누른 것은 실패가 아니다.
       if (error instanceof Stopped) setStatus(`받기를 멈췄습니다${resumeHint}`);
       else if (net.httpStatusOf(error) === 503) {
@@ -1119,6 +1143,8 @@
       state.formats = null;
       state.videoId = id;
       state.touched = false;
+      // 남은 조각 여부는 영상마다 따로다. 목록을 다시 받을 때 다시 알아본다.
+      state.hasLeftovers = false;
       // 이전 영상의 재생 위치를 새 영상에 쓰면 안 된다.
       state.progress = null;
       // 열려 있으면 새 영상 목록으로 갈아끼우고, 닫혀 있으면 열 때 받는다.

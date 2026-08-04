@@ -186,11 +186,15 @@ export function httpStatusOf(error) {
  */
 export function withRetry(fetcher, { tries = 6, waitMs = 1000, maxWaitMs = 8000, sleep } = {}) {
   const rest = sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-  const transient = (error) => {
+  const transient = (error, url) => {
     const status = httpStatusOf(error);
     // 상태 코드가 없으면 네트워크가 잠깐 끊긴 것으로 보고 다시 해본다.
     if (!status) return true;
-    return status === 408 || status === 429 || status >= 500;
+    if (status === 408 || status === 429 || status >= 500) return true;
+    // 막 시작한 라이브는 가장자리 서버가 잠깐 401 을 주기도 한다(직접 확인 —
+    // 401 을 받았던 바로 그 주소가 몇 분 뒤 200 이었다). 라이브 조각에 한해
+    // 401·403 도 일시적인 것으로 보고 다시 두드린다.
+    return (status === 401 || status === 403) && /[?&]live=1/.test(String(url));
   };
   return async (url, headers) => {
     let wait = waitMs;
@@ -198,7 +202,7 @@ export function withRetry(fetcher, { tries = 6, waitMs = 1000, maxWaitMs = 8000,
       try {
         return await fetcher(url, headers);
       } catch (error) {
-        if (attempt >= tries || !transient(error)) throw error;
+        if (attempt >= tries || !transient(error, url)) throw error;
         console.warn(
           `[yt-download] 잠시 쉬었다 다시 받아봅니다 (${attempt}/${tries - 1}):`,
           error.message,

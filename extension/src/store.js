@@ -133,6 +133,17 @@ export async function hasLeftovers(videoId) {
   }
 }
 
+/** 이 영상의 저장소를 통째로 지운다(받다 만 조각 버리기). */
+export async function discard(videoId) {
+  try {
+    const opfs = await navigator.storage.getDirectory();
+    const root = await dir(opfs, ROOT, false);
+    await root?.removeEntry(videoId, { recursive: true });
+  } catch {
+    // 지울 것이 없거나 디스크가 없는 곳이면 그대로 둔다
+  }
+}
+
 /** 오래 안 쓴 영상 폴더를 지운다. 그만둔 이어받기와 완성본 찌꺼기가 디스크에 눌러앉지 않게. */
 export async function cleanup(maxAgeMs = 2 * 24 * 3600 * 1000) {
   try {

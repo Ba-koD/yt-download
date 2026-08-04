@@ -124,8 +124,11 @@
   color: #fff;
 }
 
-/* 영상 정보 바로 아래에 끼어드는 패널. */
+/* 영상 정보 바로 아래에 끼어드는 패널.
+   자기 너비를 기준으로 줄을 다시 짜는 반응형이다(아래 @container 규칙).
+   화면(뷰포트)이 아니라 패널이 낀 칸의 너비가 기준이라 컨테이너 쿼리를 쓴다. */
 .ytdl-panel {
+  container-type: inline-size;
   margin: 12px 0 16px;
   border: 1px solid rgba(0, 0, 0, 0.1);
   border-radius: 12px;
@@ -337,6 +340,7 @@
 .ytdl-quality {
   height: 34px;
   min-width: 150px;
+  max-width: 100%;
   border: 1px solid rgba(0, 0, 0, 0.18);
   border-radius: 8px;
   background: #fff;
@@ -465,7 +469,8 @@ html[dark] .ytdl-go:disabled {
 
 /* 받는 동안에만 나타나는 버튼들. 받기 버튼보다 눈에 덜 띄게 둔다. */
 .ytdl-hold,
-.ytdl-halt {
+.ytdl-halt,
+.ytdl-discard {
   border: 1px solid var(--ytdl-line, rgba(255, 255, 255, 0.2));
   background: transparent;
   color: inherit;
@@ -474,9 +479,39 @@ html[dark] .ytdl-go:disabled {
   height: 36px;
   cursor: pointer;
   font: inherit;
+  white-space: nowrap;
 }
 
 .ytdl-hold:hover,
-.ytdl-halt:hover {
+.ytdl-halt:hover,
+.ytdl-discard:hover {
   background: rgba(127, 127, 127, 0.15);
+}
+
+/* 패널이 좁아지면 한 줄에 다 못 선다. 칸을 크게 셋으로 나눈다 —
+   시간 칸들은 남는 너비를 나눠 갖고, 화질칸은 제 줄을 통째로 쓰고,
+   받기 버튼은 그 아래에서 전체 너비로 선다. */
+@container (max-width: 520px) {
+  .ytdl-time {
+    flex: 1 1 80px;
+    width: auto;
+    min-width: 72px;
+  }
+
+  .ytdl-length {
+    margin-left: auto;
+  }
+
+  .ytdl-quality {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .ytdl-go,
+  .ytdl-hold,
+  .ytdl-halt,
+  .ytdl-discard {
+    flex: 1 1 auto;
+    margin-left: 0;
+  }
 }

@@ -246,6 +246,32 @@ Deno.test("다시 물어도 답이 같은 실패(403)는 바로 던진다", asyn
   assertEquals(calls, 1);
 });
 
+Deno.test("라이브 조각의 401 은 일시적인 것으로 보고 다시 받아 본다", async () => {
+  let liveCalls = 0;
+  const liveFetcher = withRetry(
+    async () => {
+      liveCalls += 1;
+      if (liveCalls < 2) throw new Error("요청 실패 (HTTP 401)");
+      return new Uint8Array([3]);
+    },
+    { sleep: async () => {} },
+  );
+  assertEquals([...(await liveFetcher("https://g.example/videoplayback?live=1&sq=7"))], [3]);
+  assertEquals(liveCalls, 2);
+
+  // 라이브가 아니면 401 은 다시 물어도 같다 — 바로 던진다.
+  let vodCalls = 0;
+  const vodFetcher = withRetry(
+    async () => {
+      vodCalls += 1;
+      throw new Error("요청 실패 (HTTP 401)");
+    },
+    { sleep: async () => {} },
+  );
+  await assertRejects(() => vodFetcher("https://g.example/videoplayback?vprv=1"), Error, "HTTP 401");
+  assertEquals(vodCalls, 1);
+});
+
 Deno.test("계속 실패하면 정해진 횟수만 시도하고, 쉬는 시간에는 상한이 있다", async () => {
   let calls = 0;
   const waits = [];

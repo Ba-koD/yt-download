@@ -1009,7 +1009,15 @@
     } catch (error) {
       // 내가 정지를 누른 것은 실패가 아니다.
       if (error instanceof Stopped) setStatus(`받기를 멈췄습니다${resumeHint}`);
-      else if (error?.name === "QuotaExceededError" || /quota/i.test(error?.message || "")) {
+      else if (net.httpStatusOf(error) === 503) {
+        // 막 끝난 라이브는 유튜브가 아직 다시보기로 가공 중이라 고화질을 못 줄 때가 많다.
+        setStatus(
+          "서버가 지금 이 화질을 주지 못합니다(503) · 방금 끝난 라이브면 준비 중일 수 있어요" +
+            ` · 잠시 뒤 다시 누르거나 낮은 화질을 골라보세요${resumeHint}`,
+          "ytdl-bad",
+        );
+        say("받기 실패(서버 503):", error);
+      } else if (error?.name === "QuotaExceededError" || /quota/i.test(error?.message || "")) {
         // 용량 상한은 우리가 정하지 않는다 — 브라우저의 오리진 할당량이 곧 상한이다.
         setStatus("브라우저 저장 공간이 부족합니다. 디스크 여유를 만들고 다시 눌러주세요", "ytdl-bad");
         say("받기 실패(저장 공간):", error);

@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-05
+
 ### 바꿈 — 확장
 
 - **이어받기**: 받은 조각을 디스크(OPFS)에 남긴다. 끊겨도 같은 구간을 다시 받으면 없는
@@ -391,7 +393,8 @@
   비교했는데, 압축을 풀어서 받은 파일은 아카이브의 옛 시각을 물려받는다.
   이제 크기와 시각을 함께 확인한다.
 
-[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/Ba-koD/yt-download/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.8.0
 [0.7.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.7.0
 [0.6.2]: https://github.com/Ba-koD/yt-download/releases/tag/v0.6.2

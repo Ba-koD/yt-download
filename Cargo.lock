@@ -4098,7 +4098,7 @@ dependencies = [
 
 [[package]]
 name = "yt-download"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -4121,7 +4121,7 @@ dependencies = [
 
 [[package]]
 name = "yt-download-extension-manager"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",

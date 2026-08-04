@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-08-04
+
 ### 고침
 
 - **처음 들어간 영상에서 '구간 받기' 버튼이 안 뜨던 문제.** 확장이 `/watch`·`/live`·`/shorts`
@@ -297,7 +299,8 @@
   비교했는데, 압축을 풀어서 받은 파일은 아카이브의 옛 시각을 물려받는다.
   이제 크기와 시각을 함께 확인한다.
 
-[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/Ba-koD/yt-download/releases/tag/v0.6.2
 [0.6.1]: https://github.com/Ba-koD/yt-download/releases/tag/v0.6.1
 [0.6.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.5.0

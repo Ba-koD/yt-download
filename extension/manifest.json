@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "yt-download 구간 편집",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "description": "유튜브 영상 페이지에서 원하는 구간만 골라 받습니다.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsb+i/emBSyvM5pb7Txod/Pl4qNm2jBBljCGn43UMSDGSXigYQlUsfGGib58/PQ9ZskdV8MS0FBPokbHyE/uso98lGGx1skmezK0R001Kwx9kMplCRUYapZSowhdEokZAdnzfP1Fmar13xI15Cp94Zz8GmuMyitinbhFJT/rg4Xoza+0cov8KckY7iCY9UTMc2s24m97EhqFrmauvUQeru1/PUUQ0z2/qr2BmaeoVvgNahk9/hSdTQPys2YznhLIQnBed8l5x1hhq+hwBHt/NIdA0FOA2giYyJiktRMU6CmzKOkeLMjvZKUOTIELs8qWKtHqCwgnEwS2kjhgGQSSHhQIDAQAB",
   "update_url": "https://github.com/Ba-koD/yt-download/releases/latest/download/update.xml",

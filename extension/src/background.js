@@ -3,7 +3,12 @@
 // googlevideo 가 다른 호스트로 넘기면(cms_redirect) 페이지 쪽이 막힐 수 있다.
 // 리다이렉트를 탄 요청은 브라우저가 Origin 을 null 로 바꿔 보내므로, 응답의
 // Access-Control-Allow-Origin 이 딱 맞는 값이 아니면 읽지 못한다. 그래서 rules.json 이
-// googlevideo 응답에 `*` 를 박아 넣는다(미디어 요청은 쿠키를 안 쓰므로 `*` 가 된다).
+// googlevideo 응답에 `*` 를 박아 넣는다(우리 미디어 요청은 쿠키를 안 쓰므로 `*` 가 된다).
+//
+// 단, **우리가 쓰는 클라이언트(c=ANDROID_VR·WEB_CREATOR)의 주소에만** 건다.
+// 유튜브 자신의 플레이어(c=WEB)는 쿠키를 실어 보내는데(credentials: include),
+// 그 요청에 `*` 를 박으면 CORS 규칙 위반으로 **유튜브 재생 자체가 죽는다**(실제로 죽었다).
+//
 // 그래도 막히는 경우를 위해 남겨둔 것이 이 예비 통로다 — 배경 일꾼은
 // host_permissions 덕분에 CORS 제한을 받지 않는다.
 //

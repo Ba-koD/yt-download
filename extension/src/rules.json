@@ -13,8 +13,10 @@
       ]
     },
     "condition": {
-      "urlFilter": "||googlevideo.com/videoplayback",
-      "resourceTypes": ["xmlhttprequest"]
+      "regexFilter": "[?&]c=(ANDROID_VR|WEB_CREATOR)(&|$)",
+      "requestDomains": ["googlevideo.com"],
+      "resourceTypes": ["xmlhttprequest"],
+      "isUrlFilterCaseSensitive": true
     }
   }
 ]

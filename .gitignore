@@ -3,6 +3,9 @@
 /dist
 *.part
 
+# 작업 인수인계 메모. 로컬에서만 쓰고 저장소에는 올리지 않는다.
+/HANDOFF.md
+
 # 내려받은 도구는 빌드할 때 채운다
 /tools/*/
 !/tools/.gitkeep

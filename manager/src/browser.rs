@@ -37,12 +37,17 @@ use serde::Serialize;
 pub const EXTENSION_ID: &str = "gddgamjmdkmoobgnliipmenchgejaefi";
 
 /// 브라우저가 "새 버전 있나" 하고 물어볼 자리. 릴리스마다 같은 주소에 새로 올라간다.
+///
+/// 정책을 적을 때만 쓴다. 정책은 윈도우에서만 되므로 다른 OS 에서는 이 값도 필요 없다
+/// (그냥 두면 리눅스 CI 가 "안 쓰는 상수"로 잡는다 — `-D warnings` 라 빌드가 선다).
+#[cfg(windows)]
 pub const UPDATE_URL: &str =
     "https://github.com/Ba-koD/yt-download/releases/latest/download/update.xml";
 
 /// 정책을 적을 자리(`HKCU\SOFTWARE\Policies\` 아래).
 ///
 /// 여러 개인 것은 벤더 문서가 엇갈려서다. 안 보는 자리에 적힌 값은 아무 일도 하지 않는다.
+#[cfg(windows)]
 fn policy_roots(key: &str) -> &'static [&'static str] {
     match key {
         "chrome" => &[r"Google\Chrome"],

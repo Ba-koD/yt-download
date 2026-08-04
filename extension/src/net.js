@@ -139,11 +139,54 @@ export function withFallback(primary, secondary) {
       try {
         return await primary(url, headers);
       } catch (error) {
+        // 상태 코드가 있다면 통로는 멀쩡한데 서버가 거절한 것이다. 통로를 갈아타 봐야
+        // 같은 답이 오므로 그대로 던진다(일시적인 코드라면 withRetry 가 다시 시도한다).
+        if (httpStatusOf(error)) throw error;
+        // 상태 코드조차 없이 죽었다면(CORS 차단 등) 통로 문제다.
         // 한 번 막히면 그 뒤로도 막힐 가능성이 크므로 아예 예비 통로로 옮겨 탄다.
         usePrimary = false;
         console.warn("[yt-download] 페이지 요청이 막혀 예비 통로로 넘어갑니다:", error.message);
       }
     }
     return secondary(url, headers);
+  };
+}
+
+/** 실패 메시지에 담긴 HTTP 상태 코드. 없으면 0(네트워크 단계에서 죽은 것). */
+export function httpStatusOf(error) {
+  const found = /HTTP (\d{3})/.exec(String(error?.message || error));
+  return found ? Number(found[1]) : 0;
+}
+
+/**
+ * 일시적인 실패는 잠깐 쉬었다가 다시 받아 본다.
+ *
+ * 라이브 조각은 서버가 잠깐 503 을 주는 일이 흔하다(방금 만들어진 조각, 서버 교대 등).
+ * 그 한 번에 전체 받기를 포기하지 않도록 점점 길게 쉬며 몇 번 더 두드린다.
+ * 403(주소 만료)·404 같은 답은 다시 물어도 같으므로 바로 던진다.
+ */
+export function withRetry(fetcher, { tries = 4, waitMs = 1000, sleep } = {}) {
+  const rest = sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const transient = (error) => {
+    const status = httpStatusOf(error);
+    // 상태 코드가 없으면 네트워크가 잠깐 끊긴 것으로 보고 다시 해본다.
+    if (!status) return true;
+    return status === 408 || status === 429 || status >= 500;
+  };
+  return async (url, headers) => {
+    let wait = waitMs;
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await fetcher(url, headers);
+      } catch (error) {
+        if (attempt >= tries || !transient(error)) throw error;
+        console.warn(
+          `[yt-download] 잠시 쉬었다 다시 받아봅니다 (${attempt}/${tries - 1}):`,
+          error.message,
+        );
+        await rest(wait);
+        wait *= 2;
+      }
+    }
   };
 }

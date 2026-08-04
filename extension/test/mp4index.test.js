@@ -1,6 +1,6 @@
 // 실제 유튜브가 준 sidx 바이트로 색인 해석을 확인한다.
 //   deno test --allow-read extension/test/
-import { assert, assertEquals, assertThrows } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@1";
 
 import { findBox, mergeRanges, parseSidx, segmentsForRange } from "../src/mp4index.js";
 import { buildPlayerRequest, extractVisitorData, formatLabel, readFormats } from "../src/innertube.js";
@@ -164,7 +164,7 @@ Deno.test("재생할 수 없는 영상은 이유를 그대로 알려준다", () 
 });
 
 // --- 요청 통로 ---
-import { decodeBase64, withFallback } from "../src/net.js";
+import { decodeBase64, withFallback, withRetry } from "../src/net.js";
 
 Deno.test("base64 로 온 바이트를 원래대로 되돌린다", () => {
   const original = new Uint8Array([0, 1, 127, 128, 255, 66, 0, 9]);
@@ -191,6 +191,73 @@ Deno.test("페이지 요청이 막히면 예비 통로로 넘어가고 그 뒤�
   // 한 번 막히면 다시 시도하지 않는다.
   assertEquals(primaryCalls, 1);
   assertEquals(secondaryCalls, 2);
+});
+
+Deno.test("서버가 상태 코드로 거절한 것은 통로 문제가 아니므로 갈아타지 않는다", async () => {
+  let primaryCalls = 0;
+  let secondaryCalls = 0;
+  const fetcher = withFallback(
+    async () => {
+      primaryCalls += 1;
+      throw new Error("조각을 받지 못했습니다 (HTTP 503)");
+    },
+    async () => {
+      secondaryCalls += 1;
+      return new Uint8Array();
+    },
+  );
+
+  await assertRejects(() => fetcher("u"), Error, "HTTP 503");
+  await assertRejects(() => fetcher("u"), Error, "HTTP 503");
+  // 예비 통로로 보내봐야 같은 답이 온다. 다음에도 빠른 통로를 그대로 쓴다.
+  assertEquals(primaryCalls, 2);
+  assertEquals(secondaryCalls, 0);
+});
+
+Deno.test("일시적인 실패(503)는 쉬었다가 다시 받아서 살려낸다", async () => {
+  let calls = 0;
+  const waits = [];
+  const fetcher = withRetry(
+    async () => {
+      calls += 1;
+      if (calls < 3) throw new Error("HTTP 503");
+      return new Uint8Array([9]);
+    },
+    { waitMs: 10, sleep: async (ms) => waits.push(ms) },
+  );
+
+  assertEquals([...(await fetcher("u"))], [9]);
+  assertEquals(calls, 3);
+  // 쉬는 시간은 점점 길어진다.
+  assertEquals(waits, [10, 20]);
+});
+
+Deno.test("다시 물어도 답이 같은 실패(403)는 바로 던진다", async () => {
+  let calls = 0;
+  const fetcher = withRetry(
+    async () => {
+      calls += 1;
+      throw new Error("조각을 받지 못했습니다 (HTTP 403)");
+    },
+    { sleep: async () => {} },
+  );
+
+  await assertRejects(() => fetcher("u"), Error, "HTTP 403");
+  assertEquals(calls, 1);
+});
+
+Deno.test("계속 실패하면 정해진 횟수만 시도하고 그친다", async () => {
+  let calls = 0;
+  const fetcher = withRetry(
+    async () => {
+      calls += 1;
+      throw new Error("HTTP 503");
+    },
+    { tries: 4, sleep: async () => {} },
+  );
+
+  await assertRejects(() => fetcher("u"), Error, "HTTP 503");
+  assertEquals(calls, 4);
 });
 
 Deno.test("페이지 요청이 되면 예비 통로는 쓰지 않는다", async () => {

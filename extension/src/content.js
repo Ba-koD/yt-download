@@ -66,7 +66,9 @@
     text: direct.text,
     // googlevideo 가 다른 호스트로 넘기면 페이지 쪽이 CORS 로 막힐 때가 있다.
     // 그때는 배경 일꾼이 대신 받아온다(느리지만 확실하다).
-    bytes: net.withFallback(viaPage.bytes, net.workerBytes(chrome.runtime)),
+    // 라이브 조각은 서버가 일시적으로 503 을 주는 일이 흔해서, 어느 통로든
+    // 일시적인 실패는 잠깐 쉬었다 몇 번 더 받아 본다.
+    bytes: net.withRetry(net.withFallback(viaPage.bytes, net.workerBytes(chrome.runtime))),
   });
 
   const state = {

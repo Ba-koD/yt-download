@@ -420,6 +420,57 @@ Deno.test("일부만 받아뒀으면 없는 조각만 받는다", async () => {
   assertEquals(asked, ["bytes=0-9", "bytes=20-29"]);
 });
 
+// --- 소리 조각 뒤 잘라내기 ---
+import { concat, dropTrailingSamples, listBoxes, makeBox } from "../src/mp4mux.js";
+
+const beU32 = (value) => {
+  const bytes = new Uint8Array(4);
+  new DataView(bytes.buffer).setUint32(0, value);
+  return bytes;
+};
+
+/** 유튜브 소리 조각과 같은 뼈대의 작은 조각. 샘플마다 3바이트, 길이는 전부 같다. */
+function fakeAudioFragment({ samples = 10, size = 3, sampleDuration = 1024 } = {}) {
+  const tfhd = makeBox("tfhd", beU32(0x000008), beU32(2), beU32(sampleDuration));
+  const tfdt = makeBox("tfdt", beU32(0), beU32(1000));
+  const trun = makeBox(
+    "trun",
+    beU32(0x000201), // data_offset + sample_size
+    beU32(samples),
+    beU32(0),
+    ...Array.from({ length: samples }, () => beU32(size)),
+  );
+  const payload = new Uint8Array(samples * size).map((_, i) => i);
+  return concat([makeBox("moof", makeBox("traf", tfhd, tfdt, trun)), makeBox("mdat", payload)]);
+}
+
+function trunSampleCount(fragment) {
+  const moof = listBoxes(fragment).find((b) => b.type === "moof");
+  const traf = listBoxes(fragment, moof.start + 8, moof.end).find((b) => b.type === "traf");
+  const trun = listBoxes(fragment, traf.start + 8, traf.end).find((b) => b.type === "trun");
+  return new DataView(fragment.buffer, fragment.byteOffset + trun.start + 8 + 4).getUint32(0);
+}
+
+Deno.test("소리 조각의 뒤를 잘라 영상 끝에 맞춘다", () => {
+  const fragment = fakeAudioFragment(); // 10 샘플 × 1024/44100초
+  const keepSeconds = (4 * 1024) / 44100; // 딱 4샘플 어치
+  const cut = dropTrailingSamples(fragment, keepSeconds, 44100);
+
+  assertEquals(trunSampleCount(cut), 4);
+  const mdat = listBoxes(cut).find((b) => b.type === "mdat");
+  assertEquals(mdat.end - mdat.start - 8, 4 * 3); // 남은 샘플 바이트만
+  // 시작 시각(tfdt)은 그대로다 — 뒤만 잘랐다.
+  const moof = listBoxes(cut).find((b) => b.type === "moof");
+  const traf = listBoxes(cut, moof.start + 8, moof.end).find((b) => b.type === "traf");
+  const tfdt = listBoxes(cut, traf.start + 8, traf.end).find((b) => b.type === "tfdt");
+  assertEquals(new DataView(cut.buffer, cut.byteOffset + tfdt.start + 8 + 4).getUint32(0), 1000);
+
+  // 조각이 남길 길이보다 짧으면 손대지 않고, 남길 것이 없으면 통째로 버린다.
+  assertEquals(dropTrailingSamples(fragment, 999, 44100), fragment);
+  assertEquals(dropTrailingSamples(fragment, Infinity, 44100), fragment);
+  assertEquals(dropTrailingSamples(fragment, 0, 44100), null);
+});
+
 Deno.test("SAPISIDHASH 해시가 유튜브 방식과 같다", async () => {
   const { sha1 } = await import("../src/innertube.js");
   // 유튜브는 "시각 SAPISID 출처" 를 SHA-1 로 해시한다.

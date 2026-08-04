@@ -457,6 +457,75 @@ export function dropLeadingSamples(fragment, seconds, timescale) {
   return result;
 }
 
+/**
+ * 조각 뒷부분의 샘플을 실제로 잘라낸다.
+ *
+ * 소리 조각이 영상 트랙보다 뒤까지 이어지면 영상이 멈춘 채 소리만 계속 나온다
+ * (조각이 긴 라이브에서 두드러진다 — 실측 9초). 그래서 영상이 끝나는 지점 뒤의
+ * 소리 샘플을 아예 버려 두 트랙이 같은 지점에서 끝나게 만든다.
+ *
+ * @param seconds  남길 길이(초, 조각의 시작 샘플부터). 조각이 그보다 짧으면 그대로 둔다.
+ *                 유한한 수가 아니면 자르지 않는다.
+ * @returns 잘라낸 조각. 남길 것이 없으면 `null`.
+ */
+export function dropTrailingSamples(fragment, seconds, timescale) {
+  if (!Number.isFinite(seconds)) return fragment;
+  if (!(seconds > 0)) return null;
+
+  const moof = listBoxes(fragment).find((box) => box.type === "moof");
+  const mdat = listBoxes(fragment).find((box) => box.type === "mdat");
+  if (!moof || !mdat) return fragment;
+
+  const traf = listBoxes(fragment, moof.start + HEADER, moof.end).find((b) => b.type === "traf");
+  if (!traf) return fragment;
+  const children = listBoxes(fragment, traf.start + HEADER, traf.end);
+  const tfhd = children.find((b) => b.type === "tfhd");
+  const trun = children.find((b) => b.type === "trun");
+  if (!tfhd || !trun) return fragment;
+
+  const sampleDuration = defaultSampleDuration(fragment, tfhd);
+  if (!sampleDuration) return fragment;
+  const sizes = readTrunSizes(fragment, trun);
+  if (!sizes) return fragment;
+
+  // 딱 떨어지지 않으면 한 샘플(수십 ms)을 더 남기는 쪽으로 둔다. 모자라면 소리가 먼저 끊긴다.
+  const keep = Math.ceil((seconds * timescale) / sampleDuration);
+  if (keep >= sizes.length) return fragment;
+  if (keep <= 0) return null;
+
+  const keptSizes = sizes.slice(0, keep);
+  const tailBytes = sizes.slice(keep).reduce((sum, size) => sum + size, 0);
+
+  // trun 을 남은 샘플만으로 다시 쓴다. 시작 시각(tfdt)은 그대로다 — 뒤만 잘랐으니까.
+  const newTrun = concat([
+    boxBytes(fragment, trun).subarray(0, HEADER + 4),
+    u32be(keptSizes.length),
+    new Uint8Array(4), // data_offset 자리. 아래에서 다시 계산한다.
+    ...keptSizes.map(u32be),
+  ]);
+  writeU32At(newTrun, 0, newTrun.length);
+
+  const newTraf = rebuildBox(fragment, traf, (child) =>
+    child.type === "trun" ? newTrun : boxBytes(fragment, child),
+  );
+  const newMoof = rebuildBox(fragment, moof, (child) =>
+    child.type === "traf" ? newTraf : boxBytes(fragment, child),
+  );
+  const dataOffset = newMoof.length + HEADER;
+  const trunInNew = listBoxes(newMoof, HEADER, newMoof.length)
+    .filter((b) => b.type === "traf")
+    .flatMap((t) => listBoxes(newMoof, t.start + HEADER, t.end))
+    .find((b) => b.type === "trun");
+  writeU32At(newMoof, trunInNew.start + HEADER + 8, dataOffset);
+
+  const newMdat = concat([
+    u32be(mdat.end - mdat.start - tailBytes),
+    ascii("mdat"),
+    fragment.subarray(mdat.start + HEADER, mdat.end - tailBytes),
+  ]);
+  return concat([newMoof, newMdat]);
+}
+
 function u32be(value) {
   return u32(value);
 }

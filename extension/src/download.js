@@ -15,6 +15,7 @@ import {
   combineInit,
   splitLiveSegment,
   dropLeadingSamples,
+  dropTrailingSamples,
   firstDecodeTime,
   mediaTimescaleOf,
   patchDurations,
@@ -233,6 +234,10 @@ export async function writeMp4(output, caches, video, audio, section, control, o
   const audioStart = audio.segments[0]?.time ?? 0;
   const audioLead = Math.max(0, mediaStart - audioStart);
   const audioTimescale = mediaTimescaleOf(audio.init);
+  // 영상 트랙이 끝나는 지점. 소리도 여기서 끝나야 한다 — 소리 조각이 더 길면
+  // (조각이 긴 라이브에서 두드러진다) 영상이 멈춘 채 소리만 계속 나온다.
+  const lastVideo = video.segments[video.segments.length - 1];
+  const videoEnd = lastVideo ? lastVideo.time + (lastVideo.duration || 0) : Infinity;
 
   const readMedia = async (kind, segment) => {
     const bytes = await caches[kind].read(segment.name);
@@ -252,9 +257,12 @@ export async function writeMp4(output, caches, video, audio, section, control, o
     }
   }
   const trimmedAudio = async (plan) => {
-    const bytes = await readMedia("audio", plan.segment);
+    let bytes = await readMedia("audio", plan.segment);
     // 통째로 버려야 하는 조각이면 null 이 돌아온다.
-    return plan.trim > 0 ? dropLeadingSamples(bytes, plan.trim, audioTimescale) : bytes;
+    if (plan.trim > 0) bytes = dropLeadingSamples(bytes, plan.trim, audioTimescale);
+    if (!bytes) return null;
+    // 영상이 끝나는 지점 뒤의 소리는 잘라낸다(남은 앞부분 기준으로 남길 길이를 잰다).
+    return dropTrailingSamples(bytes, videoEnd - (plan.segment.time + plan.trim), audioTimescale);
   };
 
   // 기준 시각을 얻기 위해 첫 조각들만 먼저 읽는다. 읽은 것은 아래에서 한 번만 다시 쓴다.
@@ -292,16 +300,17 @@ export async function writeMp4(output, caches, video, audio, section, control, o
   //
   // 앞은 손대지 않고 뒤 길이만 맞춘다. 두 트랙이 항상 같이 간다.
   // 대신 파일이 요청보다 몇 초 앞에서 시작하는데, 그건 부르는 쪽에서 알려준다.
+  // 파일에 적는 길이는 실제 담긴 내용과 같아야 한다. 뒤쪽도 조각 경계까지 담기므로
+  // 요청한 구간이 아니라 영상 트랙의 실제 끝(videoEnd)을 기준으로 잰다.
+  const span = Number.isFinite(videoEnd)
+    ? videoEnd - mediaStart
+    : sectionSeconds(video.segments) || sectionSeconds(audio.segments);
   const { init, audioTrackId } = combineInit(
     video.init,
     audio.init,
-    section ? { video: { skip: 0, seconds: section.end - mediaStart },
-                audio: { skip: 0, seconds: section.end - mediaStart } } : null,
+    section ? { video: { skip: 0, seconds: span }, audio: { skip: 0, seconds: span } } : null,
   );
-  const seconds = section
-    ? section.end - section.start
-    : sectionSeconds(video.segments) || sectionSeconds(audio.segments);
-  await output.write(patchDurations(init, seconds));
+  await output.write(patchDurations(init, span));
 
   // 시간 순서대로 두 트랙을 번갈아 쓴다. 같은 시각이면 영상 먼저.
   const steps = video.segments.length + audioPlan.length;
@@ -432,7 +441,9 @@ export async function downloadSection({
     throw error;
   }
 
-  // 조각을 통째로 받으므로 파일은 요청보다 앞에서 시작하고 조금 길다. 그대로 알려준다.
+  // 조각을 통째로 받으므로 파일은 요청보다 앞에서 시작하고 뒤로도 조금 길다. 그대로 알려준다.
   const mediaStart = video.segments[0]?.time ?? start;
-  return { file, mediaStart, mediaSeconds: Math.max(0, end - mediaStart) };
+  const lastSegment = video.segments[video.segments.length - 1];
+  const mediaEnd = lastSegment ? lastSegment.time + (lastSegment.duration || 0) : end;
+  return { file, mediaStart, mediaEnd, mediaSeconds: Math.max(0, mediaEnd - mediaStart) };
 }

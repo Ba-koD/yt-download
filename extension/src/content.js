@@ -994,7 +994,7 @@
     const ticker = setInterval(showProgress, 500);
 
     try {
-      const { file, mediaStart, mediaSeconds } = await downloadSection({
+      const { file, mediaStart, mediaEnd, mediaSeconds } = await downloadSection({
         videoFormat,
         audioFormat: state.formats.audio[0],
         start: state.start,
@@ -1008,22 +1008,25 @@
         },
       });
 
-      // 영상은 키프레임에서만 자를 수 있어 실제 파일은 고른 지점보다 조금 앞에서 시작한다.
-      // 이름도 실제 내용에 맞춰 붙인다. 이름과 속이 다르면 헷갈리기만 한다.
+      // 영상은 키프레임(조각 경계)에서만 자를 수 있어 실제 파일은 고른 지점보다
+      // 조금 앞에서 시작하고 조금 뒤에서 끝난다. 이름도 실제 내용에 맞춰 붙인다.
       const realStart = Number.isFinite(mediaStart) ? mediaStart : state.start;
+      const realEnd = Number.isFinite(mediaEnd) ? mediaEnd : state.end;
       save(
         file,
         `${safeFileName(state.formats.title)} ` +
-          `[${clockLabel(realStart)}~${clockLabel(state.end)}].mp4`,
+          `[${clockLabel(realStart)}~${clockLabel(realEnd)}].mp4`,
       );
       // 저장까지 됐으면 조각은 더 필요 없다. 지워서 디스크를 돌려준다.
       media.clearChunks().catch(() => {});
       state.hasLeftovers = false;
       const took = ((Date.now() - began) / 1000).toFixed(1);
-      const lead = state.start - realStart;
-      const note = lead >= 0.5 ? ` · 앞 ${lead.toFixed(1)}초가 더 붙었습니다(키프레임)` : "";
+      const pads = [];
+      if (state.start - realStart >= 0.5) pads.push(`앞 ${(state.start - realStart).toFixed(1)}초`);
+      if (realEnd - state.end >= 0.5) pads.push(`뒤 ${(realEnd - state.end).toFixed(1)}초`);
+      const note = pads.length ? ` · ${pads.join("·")}가 더 붙었습니다(키프레임)` : "";
       setStatus(
-        `저장했습니다 · ${showClock(realStart)}~${showClock(state.end)} ` +
+        `저장했습니다 · ${showClock(realStart)}~${showClock(realEnd)} ` +
           `(${showClock(mediaSeconds)})${note} · ` +
           `${showMb(file.size)} MB · ${took}초`,
         "ytdl-ok",

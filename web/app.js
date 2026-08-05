@@ -1,5 +1,6 @@
 // 시작점: 이벤트를 연결하고 첫 화면을 준비한다.
 
+import { rememberTokenFromUrl } from "./api.js";
 import { cancelCurrentJob, openConsoleWindow, resetJobUi, startDownload } from "./jobs.js";
 import { bindLibraryFilters, loadLibrary, renderLibrary } from "./library.js";
 import { applyAppLogin, closeSelectedBrowser, openAppLoginBrowser, refreshHealth } from "./login.js";
@@ -19,6 +20,8 @@ import { loadMetadata, watchUrlInput } from "./video.js";
 window.onYouTubeIframeAPIReady = () => {};
 
 export function boot() {
+  // 첫 API 호출 전에 주소의 접근 토큰부터 챙긴다(브라우저 모드).
+  rememberTokenFromUrl();
   bindEvents();
   refreshHealth();
   restoreSettings();

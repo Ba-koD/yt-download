@@ -10,8 +10,9 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use axum::{
-    extract::{Path as AxumPath, State},
+    extract::{Path as AxumPath, Request, State},
     http::{header, HeaderValue, StatusCode},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -20,7 +21,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
-use tower_http::cors::CorsLayer;
 use uuid::Uuid;
 
 use crate::download::{
@@ -192,17 +192,18 @@ pub(crate) struct CloseBrowserResponse {
     pub(crate) message: String,
 }
 
-pub(crate) async fn serve_app(
-    started: Option<mpsc::Sender<Result<String, String>>>,
-    open_browser: bool,
-) -> Result<()> {
-    let state = AppState {
+pub(crate) fn app_state() -> AppState {
+    AppState {
         jobs: Arc::new(Mutex::new(HashMap::new())),
         latest_job: Arc::new(Mutex::new(None)),
         login_sessions: Arc::new(Mutex::new(HashMap::new())),
-    };
+    }
+}
 
-    let app = Router::new()
+/// 라우터를 만든다. 앱 창은 포트 없이 이 라우터를 직접 부르고(토큰 불필요),
+/// TCP 로 여는 브라우저 모드만 토큰을 요구한다.
+pub(crate) fn build_router(state: AppState, api_token: Option<String>) -> Router {
+    let router = Router::new()
         .route("/", get(index))
         .route("/console", get(console_page))
         .route("/api/jobs/latest", get(latest_job))
@@ -220,8 +221,63 @@ pub(crate) async fn serve_app(
         .route("/api/update/check", post(update_check))
         .route("/api/update/apply", post(update_apply))
         .route("/api/update/restart", post(update_restart))
-        .layer(CorsLayer::permissive())
         .with_state(state);
+
+    // 로컬 포트는 이 컴퓨터의 아무 프로그램이나 두드릴 수 있다. 브라우저에 띄운
+    // 악성 페이지도 마찬가지라, 서버가 시작할 때 만든 토큰 없이는 API 를 받지 않는다.
+    match api_token {
+        Some(token) => {
+            let token = Arc::new(token);
+            router.layer(middleware::from_fn(move |request: Request, next: Next| {
+                let token = token.clone();
+                async move {
+                    if !request.uri().path().starts_with("/api/")
+                        || request_has_token(&request, &token)
+                    {
+                        next.run(request).await
+                    } else {
+                        (
+                            StatusCode::UNAUTHORIZED,
+                            Json(json!({
+                                "error": "접근 토큰이 없습니다. 앱이 알려준 주소로 접속하세요."
+                            })),
+                        )
+                            .into_response()
+                    }
+                }
+            }))
+        }
+        None => router,
+    }
+}
+
+pub(crate) fn request_has_token(request: &Request, token: &str) -> bool {
+    if request
+        .headers()
+        .get("x-yt-download-token")
+        .and_then(|value| value.to_str().ok())
+        == Some(token)
+    {
+        return true;
+    }
+    // 콘솔 창처럼 헤더를 못 싣는 첫 진입은 주소의 token= 으로도 받는다.
+    request
+        .uri()
+        .query()
+        .map(|query| {
+            query
+                .split('&')
+                .any(|pair| pair.strip_prefix("token=") == Some(token))
+        })
+        .unwrap_or(false)
+}
+
+pub(crate) async fn serve_app(
+    started: Option<mpsc::Sender<Result<String, String>>>,
+    open_browser: bool,
+) -> Result<()> {
+    let token = Uuid::new_v4().simple().to_string();
+    let app = build_router(app_state(), Some(token.clone()));
 
     let listener = bind_listener().await.inspect_err(|err| {
         if let Some(started) = &started {
@@ -229,7 +285,8 @@ pub(crate) async fn serve_app(
         }
     })?;
     let addr = listener.local_addr()?;
-    let url = format!("http://{addr}");
+    // 토큰이 주소에 실려야 화면이 첫 요청부터 인증할 수 있다.
+    let url = format!("http://{addr}/?token={token}");
 
     println!("yt-download is running at {url}");
     if let Some(started) = started {

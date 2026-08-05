@@ -4111,7 +4111,7 @@ dependencies = [
  "tao",
  "tokio",
  "tokio-tungstenite",
- "tower-http",
+ "tower",
  "uuid",
  "webbrowser",
  "winresource",

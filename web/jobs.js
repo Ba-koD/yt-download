@@ -1,6 +1,6 @@
 // 다운로드 시작과 진행 상황 표시.
 
-import { api, baseRequest } from "./api.js";
+import { api, apiToken, baseRequest } from "./api.js";
 import { clamp } from "./format.js";
 import { syncLiveDuration } from "./player.js";
 import { saveSettings } from "./settings.js";
@@ -60,7 +60,10 @@ export function openConsoleWindow() {
     window.ipc.postMessage("open-console");
     return;
   }
-  window.open("/console", "yt-download-console", "width=820,height=560");
+  // 콘솔 창은 세션 저장소를 공유하지 않으므로 토큰을 주소로 넘긴다.
+  const token = apiToken();
+  const query = token ? `?token=${encodeURIComponent(token)}` : "";
+  window.open(`/console${query}`, "yt-download-console", "width=820,height=560");
 }
 
 export async function cancelCurrentJob() {

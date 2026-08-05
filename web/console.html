@@ -215,9 +215,13 @@
         if (el.follow.checked) el.log.scrollTop = el.log.scrollHeight;
       }
 
+      // 브라우저 모드에서는 여는 쪽이 주소에 접근 토큰을 실어 준다. 앱 창에서는 없다.
+      const token = new URL(window.location.href).searchParams.get("token") || "";
+      const headers = token ? { "x-yt-download-token": token } : {};
+
       async function tick() {
         try {
-          const response = await fetch("/api/jobs/latest");
+          const response = await fetch("/api/jobs/latest", { headers });
           if (!response.ok) return;
           const data = await response.json();
           render(data.job);

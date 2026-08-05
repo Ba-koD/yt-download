@@ -3472,6 +3472,21 @@ window.__ytdlPageTeardown = () => {
     true,
   );
 
+  // 패널을 여닫는 단축키. 북마클릿은 눌러서 들어온 뒤 닫았다 다시 열 때 쓴다.
+  //
+  // Alt+S 를 쓴다. 크롬이 잡아둔 자리(Alt+D 는 주소창, Alt+E·F 는 메뉴)와 유튜브가 쓰는
+  // 낱글자(k·j·l·f·t·c·m·i)를 모두 피해야 해서 조합키로 뒀다.
+  listen(document, "keydown", (event) => {
+    if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.code !== "KeyS") return;
+    const tag = document.activeElement?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || document.activeElement?.isContentEditable) return;
+    if (!el.panel) return;
+    event.preventDefault();
+    event.stopPropagation();
+    togglePanel();
+  });
+
   // 편집 프로그램처럼 I / O 로 시작점·끝점을 찍는다.
   listen(document, "keydown", (event) => {
     if (!state.open || event.ctrlKey || event.altKey || event.metaKey) return;

@@ -29,6 +29,7 @@
 """
 
 import argparse
+import base64
 import json
 import re
 import shutil
@@ -158,6 +159,33 @@ def build_loader(base: str) -> str:
     )
 
 
+# 북마크 바에 보일 이름. 끌어다 놓으면 이 글자가 그대로 북마크 이름이 된다.
+# 크롬은 북마클릿에 아이콘을 못 붙이므로(아래 build_import_file 참고) 이모지로 표시한다.
+BOOKMARK_NAME = "✂️ 구간 받기"
+
+
+def build_import_file(loader: str) -> str:
+    """로고가 박힌 북마크를 만들어 주는 가져오기 파일.
+
+    크롬은 북마크 아이콘을 화면에서 바꾸지 못하고, `javascript:` 주소는 불러올 페이지가
+    없어서 파비콘을 알아낼 수도 없다. 다만 **북마크 가져오기**로 들어오는 파일의
+    `ICON=` 속성은 그대로 받아준다. 그래서 아이콘을 data URI 로 박아 넣은 파일을 만들어 둔다.
+    """
+    icon = base64.b64encode((ROOT / "assets" / "icon-32.png").read_bytes()).decode()
+    # 로더 안에는 따옴표가 들어 있다. 그대로 두면 HREF 속성이 거기서 끊긴다.
+    loader = loader.replace("&", "&amp;").replace('"', "&quot;")
+    # 넷스케이프 북마크 파일 형식. 크롬·엣지·파이어폭스가 모두 이 형식을 읽는다.
+    return (
+        "<!DOCTYPE NETSCAPE-Bookmark-file-1>\n"
+        '<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">\n'
+        "<TITLE>Bookmarks</TITLE>\n"
+        "<H1>Bookmarks</H1>\n"
+        "<DL><p>\n"
+        f'    <DT><A HREF="{loader}" ICON="data:image/png;base64,{icon}">{BOOKMARK_NAME}</A>\n'
+        "</DL><p>\n"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="북마클릿판을 만든다")
     parser.add_argument(
@@ -177,7 +205,11 @@ def main():
     template = SITE_TEMPLATE.read_text(encoding="utf-8")
     if "__LOADER__" not in template:
         raise SystemExit(f"{SITE_TEMPLATE} 에 __LOADER__ 자리가 없습니다")
-    write(DOCS / "index.html", template.replace("__LOADER__", loader))
+    page = template.replace("__LOADER__", loader).replace("__BOOKMARK_NAME__", BOOKMARK_NAME)
+    write(DOCS / "index.html", page)
+
+    # 로고까지 붙이고 싶은 사람을 위한 가져오기 파일(끌어다 놓기로는 아이콘을 못 붙인다).
+    write(DOCS / "bookmarklet.html", build_import_file(build_loader(base)))
 
     # 깃허브 페이지가 Jekyll 로 다시 굽지 않게 한다(파일을 그대로 내보낸다).
     write(DOCS / ".nojekyll", "")

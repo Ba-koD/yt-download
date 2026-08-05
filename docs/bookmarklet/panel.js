@@ -2075,7 +2075,7 @@ function challengeOf(url) {
 
 return {solveUrls: solveUrls, challengeOf: challengeOf};
 });
-window.__ytdlBase = "https://cdn.jsdelivr.net/gh/Ba-koD/yt-download@main/extension/";
+window.__ytdlBase = "https://ba-kod.github.io/yt-download/";
 window.__ytdlModules = Object.fromEntries(
   ["net.js", "innertube.js", "mp4index.js", "mp4mux.js", "store.js", "download.js", "nsig.js"].map((name) => [name, __need(name)]),
 );

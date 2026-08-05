@@ -53,14 +53,3 @@ jobs:
           git diff --exit-code docs/ \
             || (echo "docs/ 가 소스와 다릅니다. python scripts/build-bookmarklet.py 를 돌리고 커밋하세요." && exit 1)
 
-      # 북마클릿은 jsDelivr 에서 받아온다. 그런데 @main 은 최대 12시간 캐시되므로,
-      # 비워주지 않으면 고친 뒤에도 한참 동안 옛 판이 나간다(실제로 그랬다).
-      # 캐시를 못 비워도 검사 자체는 통과시킨다 — 조금 늦게 퍼질 뿐이다.
-      - name: Purge bookmarklet from CDN
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        continue-on-error: true
-        run: |
-          for path in docs/bookmarklet/panel.js docs/bookmarklet.html docs/index.html; do
-            curl -sS --max-time 30 "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@main/$path" || true
-            echo
-          done

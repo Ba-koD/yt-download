@@ -41,9 +41,12 @@ SITE_TEMPLATE = Path(__file__).resolve().parent / "site.html"
 DOCS = ROOT / "docs"
 OUT_DIR = DOCS / "bookmarklet"
 
-# 기본 배포처. 저장소가 공개라 jsDelivr 가 그대로 실어 나른다.
-# 태그(@v0.9.0)로 바꾸면 그 버전에 고정된다.
-DEFAULT_BASE = "https://cdn.jsdelivr.net/gh/Ba-koD/yt-download@main/"
+# 기본 배포처 — 깃허브 페이지(`docs/` 를 그대로 내보낸다).
+#
+# 전에는 jsDelivr 를 썼는데 `@main` 이 밀어 올린 뒤에도 한참 옛 판을 내줬다. 파일 경로를
+# 퍼지해도 소용없다 — 브랜치 이름을 커밋으로 푸는 단계가 따로 캐시되기 때문이다(실측했다).
+# 페이지는 밀면 곧바로 바뀌고, `Access-Control-Allow-Origin: *` 라 유튜브에서 받아올 수 있다.
+DEFAULT_BASE = "https://ba-kod.github.io/yt-download/"
 
 # 패널이 쓰는 모듈. content.js 가 부르는 이름 그대로다(의존 순서는 레지스트리가 알아서 푼다).
 MODULES = [
@@ -110,7 +113,7 @@ def build_panel(base: str) -> str:
         parts.append(to_factory(name, (SRC / name).read_text(encoding="utf-8")))
 
     # 해결기 원본을 어디서 받아올지. nsig.js 가 이 값을 기준으로 vendor/ 를 찾는다.
-    parts.append(f"window.__ytdlBase = {json.dumps(base + 'extension/')};")
+    parts.append(f"window.__ytdlBase = {json.dumps(base)};")
     # content.js 는 확장에서 하던 대로 이름으로 모듈을 찾는다. 미리 다 만들어 넘긴다.
     parts.append("window.__ytdlModules = Object.fromEntries(")
     parts.append(f"  {json.dumps(MODULES)}.map((name) => [name, __need(name)]),")
@@ -138,7 +141,7 @@ def build_panel(base: str) -> str:
 
 def build_loader(base: str) -> str:
     """북마크에 담을 한 줄. 누를 때마다 최신 panel.js 를 받아 돌린다."""
-    url = base + "docs/bookmarklet/panel.js"
+    url = base + "bookmarklet/panel.js"
     return (
         "javascript:(async()=>{"
         "try{"
@@ -216,6 +219,12 @@ def main():
 
     # 화면 탭에 뜨는 아이콘. 앱과 같은 것을 쓴다.
     shutil.copyfile(ROOT / "assets" / "icon-128.png", DOCS / "icon.png")
+
+    # 로그인 영상의 주소를 푸는 해결기. 배포처 한 곳에서 다 받을 수 있어야 해서 함께 담는다.
+    vendor = DOCS / "vendor"
+    vendor.mkdir(exist_ok=True)
+    for name in ("yt-solver-lib.js", "yt-solver-core.js"):
+        shutil.copyfile(ROOT / "extension" / "vendor" / name, vendor / name)
 
     print(f"만들었습니다: {OUT_DIR / 'panel.js'}  ({len(panel) / 1024:.0f} KB)")
     print(f"           {DOCS / 'index.html'}")

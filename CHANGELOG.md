@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-05
+
 ### 추가 — 배포 페이지 (깃허브 페이지)
 
 - **`docs/` 를 깃허브 페이지로 켜면 그대로 배포 페이지가 된다.** 북마클릿 드래그 설치,
@@ -29,8 +31,8 @@
   (스토어 밖 확장을 프로그램으로 넣는 길이 전부 막혀 있어 확장은 손으로 얹어야 한다 —
   아래 0.8.0 기록).
 - 소스는 확장과 하나다. `scripts/build-bookmarklet.py` 가 `extension/src/` 의 ES 모듈을
-  eval 할 수 있는 한 덩이(`docs/bookmarklet/panel.js`)로 엮고, 끌어다 놓을 설치 페이지
-  (`docs/bookmarklet/index.html`)를 함께 만든다.
+  eval 할 수 있는 한 덩이(`docs/bookmarklet/panel.js`)로 엮고, 끌어다 놓을 배포 페이지
+  (`docs/index.html`)를 함께 만든다.
 - 되는 근거는 유튜브 watch 페이지의 CSP 를 직접 재서 확인했다(2026-08-05). `connect-src`
   지시어가 없어 어디서든 코드를 받아올 수 있고, `script-src` 에 `'unsafe-eval'` 이 있으며,
   `require-trusted-types-for` 는 있지만 정책 이름을 제한하는 `trusted-types` 지시어가 없어
@@ -446,7 +448,8 @@
   비교했는데, 압축을 풀어서 받은 파일은 아카이브의 옛 시각을 물려받는다.
   이제 크기와 시각을 함께 확인한다.
 
-[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/Ba-koD/yt-download/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/Ba-koD/yt-download/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.8.0
 [0.7.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.7.0

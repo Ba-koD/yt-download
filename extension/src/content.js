@@ -42,9 +42,18 @@
     }
   };
 
-  const load = (name) => import(chrome.runtime.getURL(`src/${name}`));
+  // 이 스크립트는 두 자리에서 돈다.
+  //  - 확장: 격리된 세계. 모듈은 확장 주소로 하나씩 불러온다.
+  //  - 북마클릿: 페이지 안. 확장 주소가 없으므로 번들이 미리 넣어둔 것을 그대로 쓴다.
+  //
+  // 어느 쪽인지는 **번들이 있는지**로 가른다. `chrome.runtime` 으로 가르면 안 된다 —
+  // 확장이 깔린 브라우저에서는 페이지 쪽에도 `chrome.runtime` 이 있어서, 북마클릿이
+  // 확장인 척하고 있지도 않은 배경 일꾼에게 조각을 부탁하게 된다.
+  const bundled = window.__ytdlModules || null;
+  const runtime = bundled ? null : chrome.runtime;
+  const load = (name) => (bundled ? bundled[name] : import(runtime.getURL(`src/${name}`)));
   const [
-    { downloadSection, getFormats, safeFileName, clockLabel, createControl, Stopped },
+    { downloadSection, downloadTrack, getFormats, safeFileName, clockLabel, createControl, Stopped },
     { formatLabel },
     net,
     nsig,
@@ -93,11 +102,16 @@
     return (total - done) / rate;
   };
 
-  // 미디어는 페이지 쪽에서 받아온다. 여기서 곧바로 부르면 교차 출처로 막히고,
+  // 미디어는 페이지 쪽에서 받아온다. 확장에서 곧바로 부르면 교차 출처로 막히고,
   // 배경 일꾼으로 보내면 Origin 이 붙어 InnerTube 가 403 을 준다.
   // youtube.com 은 여기가 동일 출처라 그대로 부른다.
   const direct = net.directTransport();
   const viaPage = net.pageTransport();
+  // 북마클릿은 이미 페이지 안이라 다리를 건널 것 없이 그대로 부르면 된다.
+  // 대신 배경 일꾼이 없어서 CORS 로 막히면 예비 통로가 없다(재시도로만 버틴다).
+  const media = runtime
+    ? net.withFallback(viaPage.bytes, net.workerBytes(runtime))
+    : direct.bytes;
   net.useTransport({
     json: direct.json,
     text: direct.text,
@@ -105,10 +119,7 @@
     // 그때는 배경 일꾼이 대신 받아온다(느리지만 확실하다).
     // 라이브 조각은 서버가 일시적으로 503 을 주는 일이 흔해서, 어느 통로든
     // 일시적인 실패는 잠깐 쉬었다 몇 번 더 받아 본다.
-    bytes: net.withMeter(
-      net.withRetry(net.withFallback(viaPage.bytes, net.workerBytes(chrome.runtime))),
-      meterAdd,
-    ),
+    bytes: net.withMeter(net.withRetry(media), meterAdd),
   });
 
   const state = {
@@ -689,9 +700,14 @@
     return buttons.find((node) => node.textContent.trim()) || buttons[0] || null;
   }
 
-  /** 패널을 끼워 넣을 자리. 숏츠는 끼울 데가 없어서 화면 위에 띄운다(그때는 null). */
+  /**
+   * 패널을 끼워 넣을 자리. 없으면(null) 화면 위에 띄운다.
+   *
+   * 숏츠는 끼울 데가 없다. 북마클릿도 늘 띄운다 — 눌러서 들어온 길이라 누른 그 자리에서
+   * 바로 보이는 편이 낫고, 유튜브가 화면 구조를 바꿔도 붙일 자리를 못 찾아 안 뜨는 일이 없다.
+   */
   function panelAnchor() {
-    if (isShorts()) return null;
+    if (isShorts() || bundled) return null;
     return document.querySelector("ytd-watch-metadata") || document.querySelector("#below");
   }
 
@@ -755,15 +771,26 @@
     el.panel.style.top = `${Math.round(limit(top, window.innerHeight - height - 8))}px`;
   }
 
+  /**
+   * 띄운 패널이 비켜서야 할 것.
+   *
+   * 숏츠는 세로 버튼 줄(그 오른쪽이 빈자리다), 일반 화면은 영상 자체다.
+   * 영상 오른쪽에는 추천 목록이 있지만 덮어도 된다 — 끌어서 옮길 수 있다.
+   */
+  function floatObstacle() {
+    if (state.mode === "shorts") return buttonHost();
+    return document.querySelector("#movie_player") || document.querySelector(".html5-video-player");
+  }
+
   function placeFloatingPanel() {
-    if (state.mode !== "shorts" || !el.panel || el.panel.hidden) return;
+    if (!el.panel || el.panel.hidden || !el.panel.classList.contains("ytdl-float")) return;
     // 사용자가 직접 옮겼으면 화면 밖으로 나가지 않게만 봐준다.
     if (state.panelMoved) {
       const rect = el.panel.getBoundingClientRect();
       moveFloatingPanel(rect.left, rect.top);
       return;
     }
-    const bar = buttonHost()?.getBoundingClientRect();
+    const bar = floatObstacle()?.getBoundingClientRect();
     const room = bar ? window.innerWidth - bar.right - FLOAT_GAP * 2 : 0;
     if (bar && room >= FLOAT_MIN_WIDTH) {
       el.panel.classList.remove("ytdl-float-bottom");
@@ -826,8 +853,10 @@
 
     if (!el.panel || !el.panel.isConnected) {
       const anchor = panelAnchor();
-      if (mode === "shorts" || anchor) {
-        const panel = buildPanel(mode === "shorts");
+      // 끼워 넣을 자리가 없으면 띄운다. 일반 화면의 확장만 자리를 기다린다 —
+      // 유튜브가 아직 안 그린 것뿐이라 다음 차례에 붙는다.
+      if (anchor || mode === "shorts" || bundled) {
+        const panel = buildPanel(!anchor);
         if (anchor) anchor.insertAdjacentElement("afterend", panel);
         else document.body.append(panel);
         panel.hidden = !state.open;
@@ -946,7 +975,8 @@
       // 로그인해야 볼 수 있는 영상은 주소의 `n` 을 풀어야 받을 수 있다.
       const unlock = (urls) =>
         nsig.solveUrls(urls, {
-          runtime: chrome.runtime,
+          // 해결기 원본이 있는 곳. 북마클릿은 확장 주소가 없어 배포처에서 받아온다.
+          runtime: runtime || { getURL: (path) => new URL(path, window.__ytdlBase).href },
           ask: (payload) => viaPage.ask(payload, "solve"),
           onStep: (text) => setStatus(text),
         });
@@ -1129,7 +1159,20 @@
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
   }
 
+  // 북마클릿은 사용자가 "지금 받겠다"고 눌러서 들어온 길이다. 패널을 바로 펼쳐 준다.
+  // (확장은 버튼이 늘 붙어 있으니 누를 때까지 기다린다.)
+  // 유튜브가 화면을 다 그리기 전이면 붙일 자리가 없다. 자리가 생기는 순간 한 번만 편다.
+  let autoOpened = false;
+  function maybeAutoOpen() {
+    if (!bundled || autoOpened || state.open || !el.panel) return;
+    autoOpened = true;
+    togglePanel().then(() => {
+      el.panel?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }
+
   mount();
+  maybeAutoOpen();
   say(
     isVideoPage()
       ? "준비됨 · 좋아요 옆 '구간 받기' 버튼을 눌러주세요"
@@ -1187,6 +1230,7 @@
   let lastId = currentVideoId();
   const ticker = setInterval(() => {
     mount();
+    maybeAutoOpen();
     placeFloatingPanel();
     // 영상 길이는 늦게 정해진다(특히 라이브). 손대기 전이라면 전 구간을 따라간다.
     if (state.open && !state.touched) selectWhole();

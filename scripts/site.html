@@ -1,0 +1,282 @@
+<!doctype html>
+<!--
+  yt-download 배포 페이지. scripts/build-bookmarklet.py 가 __LOADER__ 자리에
+  북마클릿 한 줄을 넣어 docs/index.html 로 만든다. 고칠 곳은 이 파일이다.
+
+  받을 파일 목록은 적어두지 않는다. 깃허브 릴리스 API 를 그때그때 물어보므로
+  새 판을 내도 이 페이지는 손댈 것이 없다.
+-->
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>yt-download — 유튜브 구간 다운로드</title>
+    <meta name="description" content="유튜브 영상에서 원하는 구간만 골라 받습니다. 앱·확장·북마클릿." />
+    <link rel="icon" href="icon.png" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --fg: #17181a;
+        --muted: #6b7075;
+        --line: rgba(0, 0, 0, 0.12);
+        --card: #fafafa;
+        --brand: #0f7b6c;
+        --brand-fg: #ffffff;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0f1113;
+          --fg: #eceff1;
+          --muted: #9aa0a6;
+          --line: rgba(255, 255, 255, 0.14);
+          --card: #17191c;
+          --brand: #2ea08d;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 16px/1.7 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+      }
+      .wrap { max-width: 880px; margin: 0 auto; padding: 0 20px 80px; }
+      header { padding: 64px 0 40px; text-align: center; }
+      h1 { margin: 0 0 10px; font-size: 40px; letter-spacing: -0.5px; }
+      .tagline { margin: 0; color: var(--muted); font-size: 18px; }
+      .version {
+        display: inline-block; margin-top: 14px; border: 1px solid var(--line);
+        border-radius: 999px; padding: 4px 14px; color: var(--muted); font-size: 13px;
+      }
+      h2 { margin: 48px 0 6px; font-size: 22px; }
+      h2 + .sub { margin: 0 0 18px; color: var(--muted); font-size: 14px; }
+      .cards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
+      .card {
+        border: 1px solid var(--line); border-radius: 12px; background: var(--card);
+        padding: 18px 20px; display: flex; flex-direction: column; gap: 4px;
+      }
+      .card.wide { grid-column: 1 / -1; }
+      .card .name { font-weight: 600; }
+      .card .meta { color: var(--muted); font-size: 13px; }
+      .card a.get {
+        margin-top: 12px; align-self: flex-start; border-radius: 8px;
+        border: 1px solid var(--brand); background: var(--brand); color: var(--brand-fg);
+        padding: 9px 18px; font-weight: 600; text-decoration: none; font-size: 15px;
+      }
+      .card a.get.ghost { background: transparent; color: inherit; border-color: var(--line); }
+      .card.suggested { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(15, 123, 108, 0.12); }
+      .badge {
+        display: inline-block; margin-left: 8px; border-radius: 999px;
+        background: var(--brand); color: var(--brand-fg); padding: 1px 9px; font-size: 11px; font-weight: 700;
+      }
+      .drag-row {
+        display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+        border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 20px;
+      }
+      a.bookmarklet {
+        border: 1px solid var(--brand); border-radius: 10px; background: var(--brand);
+        color: var(--brand-fg); padding: 13px 26px; font-size: 17px; font-weight: 700;
+        text-decoration: none; cursor: grab; white-space: nowrap;
+      }
+      .drag-row p { margin: 0; color: var(--muted); font-size: 14px; }
+      ol, ul { padding-left: 22px; }
+      li { margin-bottom: 8px; }
+      code {
+        background: rgba(128, 128, 128, 0.16); border-radius: 5px; padding: 2px 6px;
+        font-size: 13px; font-family: ui-monospace, Consolas, monospace;
+      }
+      table { border-collapse: collapse; width: 100%; margin-top: 10px; font-size: 15px; }
+      th, td { border-bottom: 1px solid var(--line); padding: 9px 8px; text-align: left; }
+      th { color: var(--muted); font-weight: 600; font-size: 13px; }
+      details { border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; margin-top: 12px; }
+      summary { cursor: pointer; font-weight: 600; }
+      textarea {
+        width: 100%; height: 84px; margin-top: 10px; border: 1px solid var(--line);
+        border-radius: 8px; background: var(--bg); color: var(--fg); padding: 10px;
+        font: 12px/1.5 ui-monospace, Consolas, monospace;
+      }
+      .note { border-left: 3px solid var(--brand); padding: 2px 0 2px 14px; color: var(--muted); margin: 20px 0; }
+      footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+      footer a { color: inherit; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>yt-download</h1>
+        <p class="tagline">유튜브 영상에서 원하는 구간만 골라 받습니다. 다시 인코딩하지 않아 화질이 그대로입니다.</p>
+        <div class="version" id="version">최신 판을 확인하는 중…</div>
+      </header>
+
+      <h2>1. 북마클릿 <span class="badge">설치 없음</span></h2>
+      <p class="sub">가장 간단합니다. 버튼을 북마크 바로 끌어다 놓으면 끝입니다.</p>
+      <div class="drag-row">
+        <a class="bookmarklet" href="__LOADER__">구간 받기</a>
+        <p>
+          ← 이 버튼을 <b>북마크 바로 드래그</b>하세요 (누르지 말고 끌어다 놓기).<br />
+          유튜브 영상에서 그 북마크를 누르면 구간 편집 패널이 떠 있는 창으로 바로 열립니다.
+        </p>
+      </div>
+      <ul style="margin-top: 14px">
+        <li>북마크 바가 안 보이면 <code>Ctrl</code>+<code>Shift</code>+<code>B</code> 로 켭니다.</li>
+        <li>탭마다 한 번씩 눌러야 합니다. 한 번 누르면 그 탭에서는 영상을 옮겨 다녀도 계속 살아 있습니다.</li>
+        <li>누를 때마다 최신판을 받아오므로 갱신할 일이 없습니다.</li>
+      </ul>
+      <details>
+        <summary>끌어다 놓기가 안 되나요?</summary>
+        <p style="color: var(--muted); font-size: 14px">
+          북마크를 하나 새로 만들고, 주소 칸에 아래 내용을 그대로 붙여 넣으세요.
+        </p>
+        <textarea readonly onclick="this.select()">__LOADER__</textarea>
+      </details>
+
+      <h2>2. 데스크톱 앱</h2>
+      <p class="sub">
+        긴 영상·라이브를 안정적으로 받고 싶을 때. yt-dlp·ffmpeg 가 함께 들어 있어 따로 설치할 것이 없습니다.
+      </p>
+      <div class="cards" id="apps">
+        <div class="card wide"><div class="meta">받을 파일을 확인하는 중…</div></div>
+      </div>
+
+      <h2>3. 브라우저 확장</h2>
+      <p class="sub">앱 없이 브라우저 안에서 처리합니다. 버튼이 유튜브에 늘 붙어 있습니다.</p>
+      <div class="cards" id="extensions"></div>
+      <details>
+        <summary>확장 설치 방법 (처음 한 번은 손으로 얹어야 합니다)</summary>
+        <ol style="margin-top: 12px">
+          <li>위에서 받은 zip 을 <b>계속 둘 폴더</b>에 풀어둡니다 (지우거나 옮기면 확장이 사라집니다).</li>
+          <li><code>chrome://extensions</code> 를 열고 오른쪽 위 <b>개발자 모드</b>를 켭니다.</li>
+          <li><b>압축해제된 확장 프로그램을 로드</b> → 1번 폴더를 고릅니다.</li>
+          <li>유튜브 영상 페이지를 열면 좋아요 줄에 <b>구간 받기</b> 버튼이 생깁니다.</li>
+        </ol>
+        <p style="color: var(--muted); font-size: 14px">
+          크롬 웹 스토어에는 올릴 수 없어(유튜브 약관) 이 방법뿐입니다. 정책·레지스트리·웹사이트
+          설치·개발자 도구까지 하나씩 재봤고 전부 막혀 있습니다. 파이어폭스는
+          <code>about:debugging</code> → 임시 부가 기능 로드를 씁니다.
+        </p>
+      </details>
+
+      <h2>무엇을 고를까요</h2>
+      <table>
+        <tr>
+          <th></th><th>북마클릿</th><th>확장</th><th>앱</th>
+        </tr>
+        <tr><td>설치</td><td>북마크에 드래그</td><td>폴더 풀고 얹기</td><td>받아서 실행</td></tr>
+        <tr><td>갱신</td><td>누를 때마다 최신</td><td>zip 덮어쓰기</td><td>앱이 스스로</td></tr>
+        <tr><td>쓸 때</td><td>탭마다 한 번 누르기</td><td>버튼이 늘 있음</td><td>창에서 주소 붙여넣기</td></tr>
+        <tr><td>구간 편집</td><td>됨</td><td>됨</td><td>됨(타임라인 확대·정확 컷)</td></tr>
+        <tr><td>영상만 · 소리만</td><td>됨</td><td>됨</td><td>됨</td></tr>
+        <tr><td>진행 중 라이브</td><td>됨</td><td>됨</td><td>됨(길게도 안정적)</td></tr>
+        <tr><td>내 채널 목록</td><td>—</td><td>—</td><td>됨</td></tr>
+      </table>
+
+      <div class="note">
+        받은 파일은 고른 구간보다 앞뒤로 몇 초 길 수 있습니다. 영상은 키프레임에서만 자를 수 있는데,
+        그 부분을 정확히 잘라내려면 다시 인코딩해야 해서 하지 않습니다(무손실이 핵심입니다).
+        소리는 영상과 같은 지점에서 시작하고 끝나도록 실제로 잘라 맞추므로 어긋나지 않습니다.
+      </div>
+
+      <footer>
+        <p>
+          <a href="https://github.com/Ba-koD/yt-download">GitHub</a> ·
+          <a href="https://github.com/Ba-koD/yt-download/releases">모든 릴리스</a> ·
+          <a href="https://github.com/Ba-koD/yt-download/blob/main/CHANGELOG.md">변경 기록</a>
+        </p>
+        <p>내려받은 영상의 사용은 유튜브 약관과 저작권법을 따릅니다.</p>
+      </footer>
+    </div>
+
+    <script>
+      // 받을 파일은 깃허브 릴리스에서 그때그때 읽어온다. 새 판을 내도 이 페이지는 그대로다.
+      const REPO = "Ba-koD/yt-download";
+
+      const PLATFORMS = [
+        { match: /windows-x64\.zip$/, name: "Windows", note: "64비트 · 압축을 풀고 yt-download.exe 실행", pick: (p) => p.includes("win") },
+        { match: /macos-arm64\.tar\.gz$/, name: "macOS (Apple Silicon)", note: "M1 이상", pick: (p) => p.includes("mac") },
+        { match: /macos-x64\.tar\.gz$/, name: "macOS (Intel)", note: "인텔 맥", pick: () => false },
+        { match: /linux-x64\.tar\.gz$/, name: "Linux", note: "64비트", pick: (p) => p.includes("linux") },
+      ];
+
+      const EXTENSIONS = [
+        { match: /^yt-download-extension\.zip$/, name: "Chrome · Edge · Brave · Whale", note: "크로미움 계열" },
+        { match: /^yt-download-extension-firefox\.zip$/, name: "Firefox", note: "128 이상 · 임시 부가 기능으로 얹습니다" },
+      ];
+
+      const size = (bytes) =>
+        bytes >= 1 << 20 ? `${(bytes / (1 << 20)).toFixed(0)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+
+      function card(asset, entry, suggested) {
+        const el = document.createElement("div");
+        el.className = suggested ? "card suggested" : "card";
+        const name = document.createElement("div");
+        name.className = "name";
+        name.textContent = entry.name;
+        if (suggested) {
+          const badge = document.createElement("span");
+          badge.className = "badge";
+          badge.textContent = "이 컴퓨터";
+          name.append(badge);
+        }
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        meta.textContent = `${entry.note} · ${size(asset.size)}`;
+        const link = document.createElement("a");
+        link.className = suggested ? "get" : "get ghost";
+        link.href = asset.browser_download_url;
+        link.textContent = "받기";
+        el.append(name, meta, link);
+        return el;
+      }
+
+      function fill(container, entries, assets, platform) {
+        container.replaceChildren();
+        let any = false;
+        for (const entry of entries) {
+          const asset = assets.find((item) => entry.match.test(item.name));
+          if (!asset) continue;
+          any = true;
+          container.append(card(asset, entry, entry.pick ? entry.pick(platform) : false));
+        }
+        if (!any) {
+          const empty = document.createElement("div");
+          empty.className = "card wide";
+          empty.textContent = "이번 릴리스에는 받을 파일이 없습니다.";
+          container.append(empty);
+        }
+      }
+
+      function failed(message) {
+        document.getElementById("version").textContent = message;
+        for (const id of ["apps", "extensions"]) {
+          const box = document.getElementById(id);
+          box.replaceChildren();
+          const card = document.createElement("div");
+          card.className = "card wide";
+          const link = document.createElement("a");
+          link.className = "get";
+          link.href = `https://github.com/${REPO}/releases/latest`;
+          link.textContent = "릴리스 페이지에서 받기";
+          card.append(link);
+          box.append(card);
+        }
+      }
+
+      (async () => {
+        try {
+          const response = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const release = await response.json();
+          const when = new Date(release.published_at).toLocaleDateString("ko-KR");
+          document.getElementById("version").textContent = `최신 ${release.tag_name} · ${when}`;
+          const platform = (navigator.userAgentData?.platform || navigator.platform || "").toLowerCase();
+          fill(document.getElementById("apps"), PLATFORMS, release.assets, platform);
+          fill(document.getElementById("extensions"), EXTENSIONS, release.assets, platform);
+        } catch (error) {
+          console.error(error);
+          failed("최신 판을 확인하지 못했습니다");
+        }
+      })();
+    </script>
+  </body>
+</html>

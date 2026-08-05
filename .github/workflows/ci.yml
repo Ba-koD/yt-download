@@ -44,3 +44,11 @@ jobs:
 
       - name: Extension tests
         run: deno test --allow-read extension/test/
+
+      # 배포 페이지와 북마클릿 번들은 저장소에 담겨 있고, 페이지·CDN 이 그대로 실어 나른다.
+      # 소스만 고치고 다시 만들지 않으면 사용자는 옛 판을 받는다.
+      - name: Site and bookmarklet bundle are up to date
+        run: |
+          python3 scripts/build-bookmarklet.py
+          git diff --exit-code docs/ \
+            || (echo "docs/ 가 소스와 다릅니다. python scripts/build-bookmarklet.py 를 돌리고 커밋하세요." && exit 1)

@@ -349,6 +349,11 @@
   font: inherit;
 }
 
+/* 받을 내용(영상+소리/영상만/소리만). 화질칸과 같은 생김새, 폭만 좁다. */
+.ytdl-media {
+  min-width: 96px;
+}
+
 .ytdl-go {
   margin-left: auto;
   border-color: #0f7b6c;

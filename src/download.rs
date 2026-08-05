@@ -43,6 +43,9 @@ pub(crate) struct DownloadRequest {
     pub(crate) output_dir: Option<String>,
     pub(crate) yt_dlp_path: Option<String>,
     pub(crate) format_mode: FormatMode,
+    // 받을 내용: 영상+소리(기본) / 영상만 / 소리만.
+    #[serde(default)]
+    pub(crate) media_mode: MediaMode,
     pub(crate) accurate_cut: bool,
     pub(crate) is_live: Option<bool>,
     // 화질 상한(세로 픽셀). 없거나 0이면 가장 높은 화질.
@@ -60,6 +63,15 @@ impl DownloadRequest {
 pub(crate) enum FormatMode {
     Mp4,
     Best,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum MediaMode {
+    #[default]
+    Video,
+    VideoOnly,
+    Audio,
 }
 
 pub(crate) async fn run_download(
@@ -521,7 +533,7 @@ pub(crate) async fn run_download_attempt(
     };
     cmd.args(["-o", &output_template]);
 
-    add_format_args(&mut cmd, req.format_mode, req.max_height());
+    add_format_args(&mut cmd, req);
 
     if live_from_start {
         cmd.arg("--live-from-start");
@@ -665,12 +677,13 @@ pub(crate) async fn join_output_task(task: tokio::task::JoinHandle<()>) {
 }
 
 // 화질 상한(max_height)이 없으면 4K/8K를 포함해 가장 높은 해상도를 고른다.
-pub(crate) fn add_format_args(cmd: &mut Command, mode: FormatMode, max_height: Option<u32>) {
-    let cap = max_height
+pub(crate) fn add_format_args(cmd: &mut Command, req: &DownloadRequest) {
+    let cap = req
+        .max_height()
         .map(|height| format!("[height<={height}]"))
         .unwrap_or_default();
-    match mode {
-        FormatMode::Mp4 => {
+    match (req.media_mode, req.format_mode) {
+        (MediaMode::Video, FormatMode::Mp4) => {
             cmd.arg("-f")
                 .arg(format!("bv*{cap}+ba[ext=m4a]/bv*{cap}+ba/b{cap}/bv*+ba/b"));
             // 해상도를 먼저 맞추고, 같은 해상도면 재생 호환성이 좋은 H.264를 고른다.
@@ -678,9 +691,28 @@ pub(crate) fn add_format_args(cmd: &mut Command, mode: FormatMode, max_height: O
             cmd.args(["-S", "res,vcodec:h264,acodec:aac"]);
             cmd.args(["--merge-output-format", "mp4", "--remux-video", "mp4"]);
         }
-        FormatMode::Best => {
+        (MediaMode::Video, FormatMode::Best) => {
             cmd.arg("-f").arg(format!("bv*{cap}+ba/b{cap}/bv*+ba/b"));
             cmd.args(["-S", "res"]);
+        }
+        // 영상만: 소리 없는 스트림(bv)을 먼저 고른다. bv*는 소리 딸린 통짜도
+        // 고를 수 있어서(실측: 통짜 18번을 선택) 마지막 보루로만 둔다.
+        (MediaMode::VideoOnly, FormatMode::Mp4) => {
+            cmd.arg("-f").arg(format!("bv{cap}/bv/bv*{cap}/bv*/b"));
+            cmd.args(["-S", "res,vcodec:h264"]);
+            cmd.args(["--remux-video", "mp4"]);
+        }
+        (MediaMode::VideoOnly, FormatMode::Best) => {
+            cmd.arg("-f").arg(format!("bv{cap}/bv/bv*{cap}/bv*/b"));
+            cmd.args(["-S", "res"]);
+        }
+        // 소리만: AAC(m4a)를 우선 고른다. 화질 상한은 소리에 의미가 없어 무시한다.
+        // opus를 m4a로 담는 remux는 ffmpeg가 거부할 수 있어 컨테이너는 받은 그대로 둔다.
+        (MediaMode::Audio, FormatMode::Mp4) => {
+            cmd.args(["-f", "ba[ext=m4a]/ba/ba*"]);
+        }
+        (MediaMode::Audio, FormatMode::Best) => {
+            cmd.args(["-f", "ba/ba*"]);
         }
     }
 }

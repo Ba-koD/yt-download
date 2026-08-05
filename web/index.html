@@ -61,6 +61,15 @@
                   </select>
                 </div>
               </div>
+              <div class="field">
+                <label for="mediaMode">출력</label>
+                <select id="mediaMode">
+                  <option value="video">영상 + 소리</option>
+                  <option value="video_only">영상만 (소리 제외)</option>
+                  <option value="audio">소리만 (오디오)</option>
+                </select>
+                <p id="mediaModeHint" class="field-hint" hidden></p>
+              </div>
               <div class="check-list">
                 <label class="check-field">
                   <input id="accurateCut" type="checkbox" />

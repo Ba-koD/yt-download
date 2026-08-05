@@ -37,6 +37,7 @@ export async function startDownload() {
       is_live: isActiveLiveMetadata(),
       output_dir: el.outputDir.value.trim() || null,
       format_mode: el.formatMode.value,
+      media_mode: el.mediaMode.value,
       max_height: Number(el.qualityMode.value) || null,
       accurate_cut: el.accurateCut.checked,
     });

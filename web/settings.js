@@ -13,6 +13,7 @@ export function saveSettings() {
       ytDlpPath: el.ytDlpPath.value,
       formatMode: el.formatMode.value,
       qualityMode: el.qualityMode.value,
+      mediaMode: el.mediaMode.value,
       accurateCut: el.accurateCut.checked,
       liveFromStart: el.liveFromStart.checked,
     }),
@@ -39,6 +40,7 @@ export function restoreSettings() {
     if (settings.ytDlpPath) el.ytDlpPath.value = settings.ytDlpPath;
     if (settings.formatMode) el.formatMode.value = settings.formatMode;
     if (settings.qualityMode) el.qualityMode.value = settings.qualityMode;
+    if (settings.mediaMode) el.mediaMode.value = settings.mediaMode;
     el.accurateCut.checked = Boolean(settings.accurateCut);
     el.liveFromStart.checked = Boolean(settings.liveFromStart);
   } catch {

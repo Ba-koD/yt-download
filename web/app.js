@@ -22,6 +22,7 @@ export function boot() {
   bindEvents();
   refreshHealth();
   restoreSettings();
+  syncMediaMode();
   setRangeValues(0, state.duration);
   resetView();
   resetJobUi();
@@ -77,11 +78,25 @@ export function bindEvents() {
     el.ytDlpPath,
     el.formatMode,
     el.qualityMode,
+    el.mediaMode,
     el.accurateCut,
     el.liveFromStart,
   ]) {
     item.addEventListener("change", saveSettings);
   }
+  el.mediaMode.addEventListener("change", syncMediaMode);
+}
+
+// 출력 모드에 따라 화질 선택을 잠그고, 어떤 파일이 만들어지는지 알려준다.
+function syncMediaMode() {
+  const mode = el.mediaMode.value;
+  el.qualityMode.disabled = mode === "audio";
+  const hints = {
+    video_only: "소리 없는 영상 파일 하나가 저장됩니다.",
+    audio: "소리 파일(m4a) 하나가 저장됩니다. 화질 설정은 쓰지 않습니다.",
+  };
+  el.mediaModeHint.textContent = hints[mode] || "";
+  el.mediaModeHint.hidden = !hints[mode];
 }
 
 boot();

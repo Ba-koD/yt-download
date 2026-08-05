@@ -128,6 +128,8 @@
     control: null,
     // 받다 만 조각이 디스크에 남아 있는지. 버리기 버튼을 보일지 정한다.
     hasLeftovers: false,
+    // 받을 내용(영상+소리 / 영상만 / 소리만). 마지막 선택을 기억한다.
+    media: savedMediaMode(),
     // 끝점을 "끝까지"로 둔 상태. 라이브면 방송이 진행되는 만큼 따라간다.
     toEnd: false,
     // 지금 붙어 있는 화면 종류("watch" 또는 "shorts"). 바뀌면 붙일 자리를 다시 잡는다.
@@ -181,6 +183,26 @@
     }
     node.append(...children);
     return node;
+  }
+
+  // 받을 내용 선택은 영상과 무관한 취향이라 하나만 기억한다.
+  const MEDIA_KEY = "ytdl-media-mode";
+
+  function savedMediaMode() {
+    try {
+      const value = localStorage.getItem(MEDIA_KEY);
+      return value === "video" || value === "audio" ? value : "merged";
+    } catch {
+      return "merged";
+    }
+  }
+
+  function saveMediaMode(value) {
+    try {
+      localStorage.setItem(MEDIA_KEY, value);
+    } catch {
+      // 저장 공간이 막혀 있어도 기능 자체는 계속 쓸 수 있어야 한다.
+    }
   }
 
   // 골라둔 구간을 영상별로 기억한다. 실수로 창을 닫거나 다른 영상에 갔다 와도 그대로 남는다.
@@ -456,6 +478,19 @@
     });
 
     el.length = make("span", { class: "ytdl-length" });
+    // 받을 내용. "소리만"을 고르면 화질칸이 소리 품질 목록으로 바뀐다.
+    el.media = make("select", { class: "ytdl-quality ytdl-media", title: "받을 내용" }, [
+      make("option", { value: "merged", text: "영상+소리" }),
+      make("option", { value: "video", text: "영상만" }),
+      make("option", { value: "audio", text: "소리만" }),
+    ]);
+    el.media.value = state.media;
+    el.media.addEventListener("change", () => {
+      state.media = el.media.value;
+      saveMediaMode(state.media);
+      fillQuality();
+      render();
+    });
     el.quality = make("select", { class: "ytdl-quality" }, [make("option", { text: "불러오는 중…" })]);
     el.go = make("button", { class: "ytdl-go", type: "button", text: "구간 받기", disabled: true });
     // 받는 동안에만 보이는 버튼들.
@@ -493,6 +528,7 @@
           markOut,
           toEnd,
           el.length,
+          el.media,
           el.quality,
           el.go,
           el.hold,
@@ -877,14 +913,25 @@
     el.status.className = `ytdl-status ${kind}`;
   }
 
-  /** 받아둔 화질 목록을 화질칸에 채운다. 패널을 다시 만들었을 때도 쓴다. */
+  /** 받을 내용에 맞는 품질 목록. "소리만"이면 소리 품질(비트레이트)을 보여준다. */
+  function qualityChoices() {
+    if (!state.formats) return [];
+    return state.media === "audio" ? state.formats.audio : state.formats.video;
+  }
+
+  /** 받아둔 품질 목록을 화질칸에 채운다. 패널을 다시 만들었을 때도 쓴다. */
   function fillQuality() {
     if (!el.quality || !state.formats) return;
+    const before = el.quality.value;
     el.quality.replaceChildren(
-      ...state.formats.video.map((format) =>
+      ...qualityChoices().map((format) =>
         make("option", { value: String(format.itag), text: formatLabel(format) }),
       ),
     );
+    // 목록을 갈아끼워도 같은 포맷이 남아 있으면 선택을 유지한다.
+    if ([...el.quality.options].some((option) => option.value === before)) {
+      el.quality.value = before;
+    }
   }
 
   async function loadFormats() {
@@ -974,9 +1021,11 @@
 
   async function start() {
     if (state.busy || !state.formats) return;
-    const videoFormat =
-      state.formats.video.find((format) => String(format.itag) === el.quality.value) ||
-      state.formats.video[0];
+    const mode = state.media || "merged";
+    const choices = qualityChoices();
+    const chosenFormat =
+      choices.find((format) => String(format.itag) === el.quality.value) || choices[0];
+    if (!chosenFormat) return;
 
     state.busy = true;
     state.control = createControl();
@@ -994,9 +1043,7 @@
     const ticker = setInterval(showProgress, 500);
 
     try {
-      const { file, mediaStart, mediaEnd, mediaSeconds } = await downloadSection({
-        videoFormat,
-        audioFormat: state.formats.audio[0],
+      const request = {
         start: state.start,
         end: state.end,
         control: state.control,
@@ -1006,16 +1053,27 @@
           if (stage === "받는 중") paceAdd(done);
           showProgress();
         },
-      });
+      };
+      const { file, mediaStart, mediaEnd, mediaSeconds } =
+        mode === "merged"
+          ? await downloadSection({
+              ...request,
+              videoFormat: chosenFormat,
+              audioFormat: state.formats.audio[0],
+            })
+          : await downloadTrack({ ...request, format: chosenFormat, kind: mode });
 
       // 영상은 키프레임(조각 경계)에서만 자를 수 있어 실제 파일은 고른 지점보다
       // 조금 앞에서 시작하고 조금 뒤에서 끝난다. 이름도 실제 내용에 맞춰 붙인다.
       const realStart = Number.isFinite(mediaStart) ? mediaStart : state.start;
       const realEnd = Number.isFinite(mediaEnd) ? mediaEnd : state.end;
+      // 소리만 받은 파일은 확장자(m4a)가, 소리 없는 영상은 이름표가 내용을 알려준다.
+      const marker = mode === "video" ? " [영상만]" : "";
+      const ext = mode === "audio" ? "m4a" : "mp4";
       save(
         file,
         `${safeFileName(state.formats.title)} ` +
-          `[${clockLabel(realStart)}~${clockLabel(realEnd)}].mp4`,
+          `[${clockLabel(realStart)}~${clockLabel(realEnd)}]${marker}.${ext}`,
       );
       // 저장까지 됐으면 조각은 더 필요 없다. 지워서 디스크를 돌려준다.
       media.clearChunks().catch(() => {});

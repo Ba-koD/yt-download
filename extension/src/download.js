@@ -447,3 +447,117 @@ export async function downloadSection({
   const mediaEnd = lastSegment ? lastSegment.time + (lastSegment.duration || 0) : end;
   return { file, mediaStart, mediaEnd, mediaSeconds: Math.max(0, mediaEnd - mediaStart) };
 }
+
+/**
+ * 트랙 하나만 골라 파일로 만든다. 앞머리는 원본 그대로라 트랙을 합칠 일이 없다.
+ *
+ * 영상은 키프레임(조각 경계)에서만 자를 수 있어 조각을 통째로 담고,
+ * 소리는 샘플 단위로 잘라 요청한 구간에 정확히 맞춘다.
+ *
+ * @param kind "video" 또는 "audio"
+ * @returns downloadSection 과 같은 모양: {file, mediaStart, mediaEnd, mediaSeconds}
+ */
+export async function downloadTrack({ format, kind, start, end, onProgress, control, store }) {
+  const media = store || openMemory();
+  const cache = await media.track(format.itag);
+  const report = (done, total) => onProgress?.(done, total, "받는 중");
+
+  const live = format.segmentSeconds > 0 && !format.indexRange;
+  let track;
+  if (live) {
+    onProgress?.(0, 1, "조각 받는 중");
+    track = await fetchLiveSegments(format, start, end, report, control, cache);
+  } else {
+    onProgress?.(0, 1, "색인 읽는 중");
+    const index = await fetchIndex(format);
+    const parts = await fetchSegments(format, index, start, end, report, control, cache);
+    track = { init: index.init, ...parts };
+  }
+
+  onProgress?.(0, 1, "파일 만드는 중");
+  const output = await media.output();
+  let file;
+  let span;
+  try {
+    span = await writeTrack(output, cache, track, kind, { start, end }, control, (step, steps) =>
+      onProgress?.(step, steps, "파일 만드는 중"),
+    );
+    file = await output.close();
+  } catch (error) {
+    output.abort();
+    throw error;
+  }
+  return {
+    file,
+    mediaStart: span.start,
+    mediaEnd: span.end,
+    mediaSeconds: Math.max(0, span.end - span.start),
+  };
+}
+
+/**
+ * 트랙 하나를 출력에 흘려 쓴다. 조각의 시각을 0에서 시작하도록 옮기는 것은
+ * writeMp4 와 같지만, 트랙이 하나뿐이라 서로 맞출 상대가 없어 훨씬 단순하다.
+ */
+export async function writeTrack(output, cache, track, kind, section, control, onStep) {
+  const timescale = mediaTimescaleOf(track.init);
+  const readMedia = async (segment) => {
+    const bytes = await cache.read(segment.name);
+    // 라이브 조각은 통째로 저장돼 있다(앞머리 포함). 본체만 꺼낸다.
+    return segment.live ? splitLiveSegment(bytes).media : bytes;
+  };
+
+  const segments = track.segments;
+  const first = segments[0]?.time ?? section.start;
+  const last = segments[segments.length - 1];
+  const tail = last ? last.time + (last.duration || 0) : section.end;
+
+  // 소리(AAC)는 샘플마다 독립이라 요청한 지점에서 그대로 자른다. 영상은 조각째 둔다.
+  const trim = kind === "audio";
+  const startAt = trim ? Math.min(Math.max(section.start, first), tail) : first;
+  const endAt = trim ? Math.min(tail, Math.max(section.end, startAt)) : tail;
+
+  // 조각별로 앞에서 얼마나 버릴지 정한다(writeMp4 의 소리 계획과 같은 방식).
+  const plan = [];
+  let toDrop = trim ? Math.max(0, startAt - first) : 0;
+  for (const segment of segments) {
+    if (toDrop <= 0) {
+      plan.push({ segment, trim: 0 });
+    } else {
+      plan.push({ segment, trim: toDrop });
+      toDrop -= segment.duration || 0;
+    }
+  }
+  const readKept = async (item) => {
+    let bytes = await readMedia(item.segment);
+    if (item.trim > 0) bytes = dropLeadingSamples(bytes, item.trim, timescale);
+    if (!bytes || !trim) return bytes;
+    // 요청한 끝 지점 뒤의 샘플은 잘라낸다(남은 앞부분 기준으로 남길 길이를 잰다).
+    return dropTrailingSamples(bytes, endAt - (item.segment.time + item.trim), timescale);
+  };
+
+  // 잘라내고도 살아남은 첫 조각이 시간축의 0이 된다.
+  let firstKept = null;
+  for (let index = 0; index < plan.length; index += 1) {
+    const bytes = await readKept(plan[index]);
+    if (bytes) {
+      firstKept = { index, bytes };
+      break;
+    }
+  }
+  if (!firstKept) throw new Error("해당 구간에 남길 조각이 없습니다");
+  const base = firstDecodeTime(firstKept.bytes);
+
+  await output.write(patchDurations(track.init, Math.max(0, endAt - startAt)));
+
+  const steps = plan.length - firstKept.index;
+  let written = 0;
+  for (let index = firstKept.index; index < plan.length; index += 1) {
+    await control?.gate();
+    const bytes = index === firstKept.index ? firstKept.bytes : await readKept(plan[index]);
+    if (bytes) await output.write(rebaseDecodeTimes(bytes, base));
+    written += 1;
+    onStep?.(written, steps);
+  }
+  return { start: startAt, end: endAt };
+}

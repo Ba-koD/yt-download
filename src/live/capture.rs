@@ -17,7 +17,7 @@ use super::fetch::{live_capture_dir, run_live_section_fetch};
 use super::source::TargetInfo;
 use crate::download::{
     add_format_args, download_section_duration, join_output_task, section_file_label,
-    stop_child_process, AttemptOutcome, DownloadRequest, FormatMode,
+    stop_child_process, AttemptOutcome, DownloadRequest, FormatMode, MediaMode,
 };
 use crate::jobs::{finish_download_job, push_log, update_job, JobStatus};
 use crate::media::{cut_media_streams, format_time, probe_capture_stream};
@@ -340,10 +340,13 @@ pub(crate) fn capture_output_path(
         )
     });
     // MP4 우선을 골랐으면 VP9/AV1이어도 mp4로 담는다(그대로 복사라 화질 손실 없음).
-    let ext = if mp4_friendly || req.accurate_cut || matches!(req.format_mode, FormatMode::Mp4) {
-        "mp4"
-    } else {
-        "mkv"
+    let mp4_wanted = mp4_friendly || req.accurate_cut || matches!(req.format_mode, FormatMode::Mp4);
+    // 소리만 받을 때는 소리 컨테이너를 쓴다. 영상 없는 mp4보다 m4a가 어디서나 자연스럽다.
+    let ext = match (req.media_mode, mp4_wanted) {
+        (MediaMode::Audio, true) => "m4a",
+        (MediaMode::Audio, false) => "mka",
+        (_, true) => "mp4",
+        (_, false) => "mkv",
     };
 
     let title = sanitize_media_filename(info.title.as_deref().unwrap_or("live"));
@@ -562,7 +565,7 @@ pub(crate) async fn run_capture_attempt(
     cmd.arg("--paths")
         .arg(format!("home:{}", capture_dir.to_string_lossy()));
     cmd.args(["-o", "capture.%(ext)s"]);
-    add_format_args(&mut cmd, req.format_mode, req.max_height());
+    add_format_args(&mut cmd, req);
     add_cookie_args(
         &mut cmd,
         req.cookies_browser.as_deref(),

@@ -209,7 +209,7 @@ pub(crate) async fn probe_target(req: &DownloadRequest, live_hint: bool) -> Resu
         cmd.arg("--live-from-start");
     }
     // 실제로 받을 포맷을 그대로 물어봐야 예상 용량이 맞는다.
-    add_format_args(&mut cmd, req.format_mode, req.max_height());
+    add_format_args(&mut cmd, req);
     add_ffmpeg_location(&mut cmd);
     add_js_runtime(&mut cmd);
     add_cookie_args(

@@ -48,6 +48,8 @@ export const el = {
   outputDir: document.querySelector("#outputDir"),
   formatMode: document.querySelector("#formatMode"),
   qualityMode: document.querySelector("#qualityMode"),
+  mediaMode: document.querySelector("#mediaMode"),
+  mediaModeHint: document.querySelector("#mediaModeHint"),
   accurateCut: document.querySelector("#accurateCut"),
   startInput: document.querySelector("#startInput"),
   endInput: document.querySelector("#endInput"),

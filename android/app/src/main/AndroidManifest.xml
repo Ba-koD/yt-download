@@ -5,8 +5,21 @@
 
     <application
         android:label="yt-download"
+        android:icon="@mipmap/ic_launcher"
         android:extractNativeLibs="true"
         android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
+
+        <!-- 공유 시트 진입점. 프로세스가 죽어 있어도 인텐트가 깨운다. -->
+        <activity
+            android:name=".ShareActivity"
+            android:launchMode="singleTask"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
 
         <!-- 0단계 스파이크: UI 없이 로그로만 구간 다운로드를 검증한다.
              통과 후 ShareActivity 로 대체된다. -->

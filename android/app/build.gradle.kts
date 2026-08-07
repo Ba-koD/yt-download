@@ -46,5 +46,13 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.webkit:webkit:1.12.1")
     testImplementation("junit:junit:4.13.2")
 }
+
+// 데스크톱 web/ 의 헬퍼를 단일 출처로 재사용한다 — assets/web 은 커밋하지 않는다.
+val copyWebAssets by tasks.registering(Copy::class) {
+    from(rootProject.file("../web")) { include("format.js") }
+    into(layout.projectDirectory.dir("src/main/assets/web"))
+}
+tasks.named("preBuild") { dependsOn(copyWebAssets) }

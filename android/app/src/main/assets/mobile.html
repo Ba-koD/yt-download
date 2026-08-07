@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>구간 받기</title>
+<style>
+  /* 다크 기본 — 유튜브에서 넘어오는 동선이다 */
+  :root {
+    --bg: #1c1c1e; --fg: #f2f2f4; --sub: #98989e;
+    --line: #38383c; --accent: #ff5252; --chip: #2c2c2f;
+    --track: #3a3a3e; --ok: #34c759;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #ffffff; --fg: #1a1a1c; --sub: #6e6e73;
+      --line: #e4e4e8; --accent: #e53935; --chip: #f1f1f4;
+      --track: #dcdce0; --ok: #2e9e4f;
+    }
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; background: transparent; }
+  body { display: flex; flex-direction: column; justify-content: flex-end;
+         font-family: system-ui, sans-serif; }
+  #dim { position: fixed; inset: 0; background: rgba(0,0,0,.45); }
+  #sheet { position: relative; background: var(--bg); color: var(--fg);
+           border-radius: 20px 20px 0 0; padding: 8px 20px calc(20px + env(safe-area-inset-bottom));
+           display: flex; flex-direction: column; gap: 14px; }
+  #grip { width: 36px; height: 4px; border-radius: 2px; background: var(--line); margin: 4px auto 2px; }
+
+  #head { display: flex; gap: 12px; align-items: center; min-height: 54px; }
+  #thumb { width: 96px; height: 54px; border-radius: 8px; background: var(--chip);
+           object-fit: cover; flex: none; }
+  #title { font-size: 15px; font-weight: 600; line-height: 1.3;
+           display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  #meta { font-size: 12px; color: var(--sub); margin-top: 3px; }
+
+  .chips { display: flex; gap: 8px; }
+  .chips button { flex: 1; height: 40px; border: 0; border-radius: 20px;
+                  background: var(--chip); color: var(--fg); font-size: 13px; font-weight: 500; }
+  .chips button.on { background: var(--accent); color: #fff; }
+
+  /* 슬라이더: 시각 20px, 터치는 트랙 전체 44px */
+  #track { position: relative; height: 44px; touch-action: none; }
+  #bar, #range { position: absolute; top: 19px; height: 6px; border-radius: 3px; }
+  #bar { left: 0; right: 0; background: var(--track); }
+  #range { background: var(--accent); }
+  .handle { position: absolute; top: 12px; width: 20px; height: 20px; border-radius: 50%;
+            background: #fff; border: 3px solid var(--accent); transform: translateX(-50%);
+            box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+
+  #times { display: flex; align-items: center; gap: 6px; }
+  #times .arrow { color: var(--sub); font-size: 13px; padding: 0 2px; }
+  .tgroup { flex: 1; display: flex; gap: 4px; }
+  .tgroup input { width: 100%; min-width: 0; height: 44px; text-align: center; border: 1px solid var(--line);
+                  border-radius: 10px; background: var(--chip); color: var(--fg);
+                  font-size: 14px; font-variant-numeric: tabular-nums; }
+  .tgroup button { width: 44px; height: 44px; flex: none; border: 0; border-radius: 10px;
+                   background: var(--chip); color: var(--fg); font-size: 12px; }
+
+  /* CTA 자리가 그대로 진행률 바로 변한다 — 화면 전환 없음 */
+  #cta { position: relative; height: 52px; border: 0; border-radius: 14px; overflow: hidden;
+         background: var(--accent); color: #fff; font-size: 16px; font-weight: 700; width: 100%; }
+  #cta:disabled { opacity: .4; }
+  #cta .fill { position: absolute; inset: 0; width: 0%; background: rgba(255,255,255,.25); }
+  #cta .lbl { position: relative; }
+  #cta.done { background: var(--ok); }
+  #cta .x { position: absolute; right: 0; top: 0; width: 52px; height: 52px; line-height: 52px;
+            font-size: 20px; display: none; }
+  #cta.running .x { display: block; }
+  #err { display: none; font-size: 12px; color: var(--accent); line-height: 1.4; }
+</style>
+</head>
+<body>
+<div id="dim"></div>
+<div id="sheet">
+  <div id="grip"></div>
+  <div id="head">
+    <img id="thumb" alt="">
+    <div style="min-width:0">
+      <div id="title">불러오는 중…</div>
+      <div id="meta"></div>
+    </div>
+  </div>
+  <div class="chips" id="presets">
+    <button data-len="30">여기서 30초</button>
+    <button data-len="60" class="on">여기서 1분</button>
+    <button data-len="end">여기부터 끝</button>
+  </div>
+  <div id="track">
+    <div id="bar"></div><div id="range"></div>
+    <div class="handle" id="hs"></div><div class="handle" id="he"></div>
+  </div>
+  <div id="times">
+    <div class="tgroup">
+      <button data-t="s" data-d="-1">−1s</button>
+      <input id="ts" inputmode="numeric" value="0:00:00">
+      <button data-t="s" data-d="1">+1s</button>
+    </div>
+    <span class="arrow">→</span>
+    <div class="tgroup">
+      <button data-t="e" data-d="-1">−1s</button>
+      <input id="te" inputmode="numeric" value="0:00:00">
+      <button data-t="e" data-d="1">+1s</button>
+    </div>
+  </div>
+  <div class="chips" id="quality">
+    <button data-q="best" class="on">최고</button>
+    <button data-q="1080">1080p</button>
+    <button data-q="720">720p</button>
+    <button data-q="audio">오디오</button>
+  </div>
+  <div id="err"></div>
+  <button id="cta" disabled>
+    <span class="fill"></span><span class="lbl">받기</span><span class="x">✕</span>
+  </button>
+</div>
+
+<script type="module">
+import { parseTime, formatClock, clamp } from "./web/format.js";
+
+const $ = (id) => document.getElementById(id);
+const hash = Object.fromEntries(new URLSearchParams(location.hash.slice(1)));
+const url = `https://www.youtube.com/watch?v=${hash.v}`;
+
+let dur = null;                    // probe 전엔 모른다
+let s = Number(hash.t) || 0;       // 공유로 넘어온 시작점 → 시작 핸들 초기값
+let e = null;                      // null = 끝까지
+let quality = "best";
+let jobId = null;
+
+// ── 브리지 비동기 규약 ─────────────────────────────
+const cbs = new Map();
+let cbSeq = 0;
+function call(fn, ...args) {
+  return new Promise((resolve, reject) => {
+    const id = `cb${++cbSeq}`;
+    cbs.set(id, { resolve, reject });
+    app[fn](...args, id);
+  });
+}
+window.__push = (msg) => {
+  if (msg.type === "result") {
+    const cb = cbs.get(msg.cbId);
+    if (cb) { cbs.delete(msg.cbId); msg.ok ? cb.resolve(msg.data) : cb.reject(new Error(msg.error)); }
+  } else if (msg.type === "job" && msg.job.id === jobId) {
+    onJob(msg.job);
+  }
+};
+
+// ── 렌더 ──────────────────────────────────────────
+function endOr(v) { return e === null ? (dur ?? v) : e; }
+function render() {
+  $("ts").value = formatClock(s);
+  $("te").value = e === null ? (dur ? formatClock(dur) : "끝까지") : formatClock(e);
+  if (dur) {
+    const w = $("track").clientWidth;
+    const sx = (s / dur) * w, ex = (endOr(dur) / dur) * w;
+    $("hs").style.left = sx + "px";
+    $("he").style.left = ex + "px";
+    $("range").style.left = sx + "px";
+    $("range").style.width = Math.max(0, ex - sx) + "px";
+  }
+}
+
+// ── 프리셋 칩 ─────────────────────────────────────
+$("presets").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button");
+  if (!b) return;
+  [...$("presets").children].forEach((c) => c.classList.toggle("on", c === b));
+  e = b.dataset.len === "end" ? null : (dur ? Math.min(s + Number(b.dataset.len), dur) : s + Number(b.dataset.len));
+  render();
+});
+
+// ── 화질 칩 ───────────────────────────────────────
+$("quality").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button");
+  if (!b) return;
+  quality = b.dataset.q;
+  [...$("quality").children].forEach((c) => c.classList.toggle("on", c === b));
+});
+
+// ── 듀얼 핸들 슬라이더 ────────────────────────────
+let grab = null; // "s" | "e" | "?" (붙어 있을 때: 첫 이동 방향으로 판정)
+let grabX = 0;
+$("track").addEventListener("pointerdown", (ev) => {
+  if (!dur) return;
+  const r = $("track").getBoundingClientRect();
+  const x = ev.clientX - r.left;
+  const sx = (s / dur) * r.width, ex = (endOr(dur) / dur) * r.width;
+  grab = Math.abs(ex - sx) < 8 ? "?" : (Math.abs(x - sx) <= Math.abs(x - ex) ? "s" : "e");
+  grabX = ev.clientX;
+  $("track").setPointerCapture(ev.pointerId);
+  move(ev);
+});
+$("track").addEventListener("pointermove", move);
+$("track").addEventListener("pointerup", () => { grab = null; });
+function move(ev) {
+  if (!grab || !dur) return;
+  if (grab === "?") {
+    if (Math.abs(ev.clientX - grabX) < 4) return;
+    grab = ev.clientX < grabX ? "s" : "e"; // 붙은 두 핸들: 끄는 방향 쪽을 잡는다
+  }
+  const r = $("track").getBoundingClientRect();
+  const sec = Math.round(clamp((ev.clientX - r.left) / r.width, 0, 1) * dur);
+  if (grab === "s") s = clamp(sec, 0, endOr(dur) - 1);
+  else e = clamp(sec, s + 1, dur);
+  render();
+}
+
+// ── ±1s / 직접 입력 ───────────────────────────────
+$("times").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button");
+  if (!b) return;
+  const d = Number(b.dataset.d);
+  if (b.dataset.t === "s") s = clamp(s + d, 0, endOr(s + 1) - 1);
+  else e = clamp(endOr(dur ?? s + 60) + d, s + 1, dur ?? Infinity);
+  render();
+});
+for (const id of ["ts", "te"]) {
+  $(id).addEventListener("change", () => {
+    const v = parseTime($(id).value);
+    if (Number.isFinite(v)) {
+      if (id === "ts") s = clamp(v, 0, endOr(v + 1) - 1);
+      else e = clamp(v, s + 1, dur ?? Infinity);
+    }
+    render();
+  });
+}
+
+// ── 받기 → 그 자리에서 진행률 ─────────────────────
+$("cta").addEventListener("click", (ev) => {
+  const cta = $("cta");
+  if (cta.classList.contains("running")) {
+    if (ev.target.closest(".x")) app.cancel(jobId);
+    return;
+  }
+  if (cta.classList.contains("done")) { app.close(); return; }
+  jobId = app.start(url, String(s), e === null ? "" : String(e), quality);
+  cta.classList.add("running");
+  $("err").style.display = "none";
+  setLabel("0%");
+});
+function setLabel(text) { $("cta").querySelector(".lbl").textContent = text; }
+function onJob(job) {
+  const cta = $("cta");
+  if (job.state === "running") {
+    const p = Math.max(0, job.pct);
+    cta.querySelector(".fill").style.width = p + "%";
+    if (p > 0) setLabel(Math.round(p) + "%");
+    else {
+      // 구간 다운로드는 전체 크기를 몰라 % 가 없다 — 받은 양이라도 보여준다
+      const size = /([\d.]+\s?[KMG]i?B)/.exec(job.text || "");
+      setLabel(size ? size[1] + " 받는 중" : "준비 중…");
+    }
+  } else if (job.state === "done") {
+    cta.classList.remove("running");
+    cta.classList.add("done");
+    cta.querySelector(".fill").style.width = "0";
+    setLabel("완료 — 닫기");
+  } else {
+    cta.classList.remove("running");
+    cta.querySelector(".fill").style.width = "0";
+    setLabel("받기");
+    if (job.state === "error") {
+      $("err").textContent = job.error || "실패했습니다";
+      $("err").style.display = "block";
+    }
+    jobId = null;
+  }
+}
+
+$("dim").addEventListener("click", () => app.close());
+
+// ── 부팅: probe + 재진입 시 진행 중 작업 복원 ─────
+(async () => {
+  for (const j of JSON.parse(app.jobs())) {
+    if (j.state === "running" && j.url === url) {
+      jobId = j.id;
+      $("cta").classList.add("running");
+      onJob(j);
+    }
+  }
+  try {
+    const info = await call("probe", url);
+    $("title").textContent = info.title;
+    dur = Math.max(1, Math.round(info.duration));
+    $("meta").textContent = info.isLive ? "라이브 진행 중" : formatClock(dur);
+    if (info.thumbnail) $("thumb").src = info.thumbnail;
+    s = clamp(s, 0, dur - 1);
+    if (e === null && !$("presets").querySelector('[data-len="end"]').classList.contains("on")) {
+      e = Math.min(s + 60, dur); // 기본: 여기서 1분
+    }
+    $("cta").disabled = false;
+    render();
+  } catch (err) {
+    $("title").textContent = "정보를 불러오지 못했습니다";
+    $("meta").textContent = String(err.message || err).slice(0, 120);
+  }
+})();
+render();
+addEventListener("resize", render);
+// onNewIntent 로 다른 영상이 오면 해시만 바뀐다 — 페이지를 새로 부팅한다
+addEventListener("hashchange", () => location.reload());
+</script>
+</body>
+</html>

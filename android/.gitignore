@@ -2,4 +2,5 @@
 build/
 local.properties
 .kotlin/
+app/src/main/assets/web/
 *.hprof

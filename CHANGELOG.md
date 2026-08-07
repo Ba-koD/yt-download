@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-08
+
 ### 추가 — 안드로이드 앱
 
 - **폰 단독으로 도는 안드로이드 앱을 추가했다 (`android/`).** PC 서버 없이, 유튜브 공유
@@ -497,7 +499,8 @@
   비교했는데, 압축을 풀어서 받은 파일은 아카이브의 옛 시각을 물려받는다.
   이제 크기와 시각을 함께 확인한다.
 
-[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/Ba-koD/yt-download/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Ba-koD/yt-download/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/Ba-koD/yt-download/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.8.0

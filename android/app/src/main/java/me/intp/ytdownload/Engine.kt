@@ -68,11 +68,31 @@ object Engine {
     private val jobs = ConcurrentHashMap<String, Job>()
     private var jobSeq = 0
 
-    suspend fun ensureReady(ctx: Context) = initMutex.withLock {
-        if (!ready) {
-            YoutubeDL.getInstance().init(ctx)
-            FFmpeg.getInstance().init(ctx)
-            ready = true
+    suspend fun ensureReady(ctx: Context) {
+        initMutex.withLock {
+            if (!ready) {
+                YoutubeDL.getInstance().init(ctx)
+                FFmpeg.getInstance().init(ctx)
+                ready = true
+            }
+        }
+        maybeDailyUpdate(ctx)
+    }
+
+    /**
+     * 하루 한 번 yt-dlp 갱신 확인 (완료 조건 6번의 절반 — 나머지 절반은
+     * 실패 시 즉시 갱신·재시도). 백그라운드로 돌아 probe 를 막지 않는다.
+     */
+    private fun maybeDailyUpdate(ctx: Context) {
+        val sp = ctx.getSharedPreferences("engine", Context.MODE_PRIVATE)
+        val last = sp.getLong("lastUpdateCheck", 0)
+        if (System.currentTimeMillis() - last < 24 * 3600 * 1000L) return
+        sp.edit().putLong("lastUpdateCheck", System.currentTimeMillis()).apply()
+        scope.launch {
+            runCatching {
+                val st = YoutubeDL.getInstance().updateYoutubeDL(ctx, UpdateChannel.STABLE)
+                Log.i(TAG, "daily update: $st -> ${YoutubeDL.getInstance().version(ctx)}")
+            }.onFailure { Log.w(TAG, "daily update failed", it) }
         }
     }
 

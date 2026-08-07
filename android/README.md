@@ -51,6 +51,25 @@
 **첫 실행부터 갱신이 전제다** — 앱은 init 직후 갱신을 시도해야 하고,
 추출 실패 시 갱신 → 재시도 경로(5단계)는 선택이 아니라 필수임이 실측으로 확인됐다.
 
+## 갱신 전략 (완료 조건 6번)
+
+- **yt-dlp**: 앱 시작 시 하루 1회 갱신 확인 + 추출 실패 시 즉시 갱신·1회 재시도.
+  순수 파이썬 zip 이라 W^X 와 무관하게 파일 교체로 끝난다. APK 재설치 불필요.
+- **ffmpeg**: 네이티브라 APK 에 묶이지만 유튜브 변경과 무관 — 몇 년에 한 번.
+- **앱 본체**: GitHub 릴리스 APK. [Obtainium](https://github.com/ImranR98/Obtainium) 에
+  `https://github.com/Ba-koD/yt-download` 을 등록하면 사용자 쪽 갱신이 자동화된다.
+
+## 릴리스
+
+`v*` 태그를 밀면 release 워크플로가 `yt-download-android-arm64.apk` 를 서명해
+기존 릴리스 자산에 합류시킨다. 버전은 `VERSION` 파일이 단일 출처
+(versionName 직접, versionCode 는 `major·minor·patch → M*1000000+m*1000+p`).
+
+서명 키: `~/.android-keys/yt-download.jks` (저장소 밖, 공개 저장소이므로 절대 커밋 금지).
+비밀번호는 같은 폴더의 txt. GitHub 시크릿 `ANDROID_KEYSTORE_B64`·`ANDROID_KEYSTORE_PASS`
+로 등록돼 있다. **키를 잃으면 기존 사용자는 재설치해야 하니 백업할 것.**
+시크릿이 없는 포크에서는 안드로이드 잡이 조용히 빠진다.
+
 ## 스파이크 실행
 
 ```

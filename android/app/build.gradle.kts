@@ -13,8 +13,12 @@ android {
         applicationId = "me.intp.ytdownload"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = rootProject.file("../VERSION").readText().trim()
+        // VERSION 파일이 데스크톱·확장·안드로이드의 단일 출처다
+        val ver = rootProject.file("../VERSION").readText().trim()
+        versionName = ver
+        versionCode = ver.split(".").let { (a, b, c) ->
+            a.toInt() * 1_000_000 + b.toInt() * 1_000 + c.toInt()
+        }
         // 폰 단독 실행이 목표라 arm64 만 담는다. 에뮬레이터 검증이 필요하면
         // 로컬에서만 x86_64 를 추가할 것 (릴리스 APK 크기와 직결).
         ndk { abiFilters += listOf("arm64-v8a") }
@@ -25,9 +29,25 @@ android {
         jniLibs { useLegacyPackaging = true }
     }
 
+    // CI 가 시크릿으로 넘기는 키로 서명한다. Obtainium 갱신은 서명 일관성이 전제라
+    // 로컬 debug 키로 릴리스를 만들면 안 된다.
+    val ksFile = System.getenv("ANDROID_KEYSTORE_FILE")
+    if (ksFile != null) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(ksFile)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASS")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS") ?: "ytdownload"
+                keyPassword = System.getenv("ANDROID_KEY_PASS")
+                    ?: System.getenv("ANDROID_KEYSTORE_PASS")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (ksFile != null) signingConfig = signingConfigs.getByName("release")
         }
     }
 

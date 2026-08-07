@@ -201,15 +201,15 @@
       <h2>무엇을 고를까요</h2>
       <table>
         <tr>
-          <th></th><th>북마클릿</th><th>확장</th><th>앱</th>
+          <th></th><th>북마클릿</th><th>확장</th><th>앱</th><th>안드로이드</th>
         </tr>
-        <tr><td>설치</td><td>북마크에 드래그</td><td>폴더 풀고 얹기</td><td>받아서 실행</td></tr>
-        <tr><td>갱신</td><td>누를 때마다 최신</td><td>zip 덮어쓰기</td><td>앱이 스스로</td></tr>
-        <tr><td>쓸 때</td><td>탭마다 한 번 누르기</td><td>버튼이 늘 있음</td><td>창에서 주소 붙여넣기</td></tr>
-        <tr><td>구간 편집</td><td>됨</td><td>됨</td><td>됨(타임라인 확대·정확 컷)</td></tr>
-        <tr><td>영상만 · 소리만</td><td>됨</td><td>됨</td><td>됨</td></tr>
-        <tr><td>진행 중 라이브</td><td>됨</td><td>됨</td><td>됨(길게도 안정적)</td></tr>
-        <tr><td>내 채널 목록</td><td>—</td><td>—</td><td>됨</td></tr>
+        <tr><td>설치</td><td>북마크에 드래그</td><td>폴더 풀고 얹기</td><td>받아서 실행</td><td>APK 설치</td></tr>
+        <tr><td>갱신</td><td>누를 때마다 최신</td><td>zip 덮어쓰기</td><td>앱이 스스로</td><td>yt-dlp 는 스스로 · 앱은 Obtainium</td></tr>
+        <tr><td>쓸 때</td><td>탭마다 한 번 누르기</td><td>버튼이 늘 있음</td><td>창에서 주소 붙여넣기</td><td>유튜브 공유 → 구간 창</td></tr>
+        <tr><td>구간 편집</td><td>됨</td><td>됨</td><td>됨(타임라인 확대·정확 컷)</td><td>됨(프리셋·슬라이더)</td></tr>
+        <tr><td>영상만 · 소리만</td><td>됨</td><td>됨</td><td>됨</td><td>됨</td></tr>
+        <tr><td>진행 중 라이브</td><td>됨</td><td>됨</td><td>됨(길게도 안정적)</td><td>됨</td></tr>
+        <tr><td>내 채널 목록</td><td>—</td><td>—</td><td>됨</td><td>—</td></tr>
       </table>
 
       <div class="note">
@@ -237,6 +237,7 @@
         { match: /macos-arm64\.tar\.gz$/, name: "macOS (Apple Silicon)", note: "M1 이상", pick: (p) => p.includes("mac") },
         { match: /macos-x64\.tar\.gz$/, name: "macOS (Intel)", note: "인텔 맥", pick: () => false },
         { match: /linux-x64\.tar\.gz$/, name: "Linux", note: "64비트", pick: (p) => p.includes("linux") },
+        { match: /android-arm64\.apk$/, name: "Android", note: "유튜브 공유 시트에서 바로 · 설치 때 Play 프로텍트 경고는 무시하고 설치", pick: (p) => p.includes("android") },
       ];
 
       const EXTENSIONS = [

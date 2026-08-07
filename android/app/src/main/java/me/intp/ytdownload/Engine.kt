@@ -32,6 +32,12 @@ object Engine {
     @Volatile private var ready = false
     @Volatile private var updatedThisRun = false
 
+    /**
+     * 갱신이 yt-dlp zip 을 교체하는 동안 실행이 그 파일을 읽으면
+     * "bad local file header" 로 터진다 (실측). 실행 = 읽기, 갱신 = 쓰기.
+     */
+    private val execLock = java.util.concurrent.locks.ReentrantReadWriteLock()
+
     /** UI 로 밀어넣는 채널. ShareActivity 가 붙였다 뗀다. */
     @Volatile var push: ((JSONObject) -> Unit)? = null
 
@@ -90,7 +96,14 @@ object Engine {
         sp.edit().putLong("lastUpdateCheck", System.currentTimeMillis()).apply()
         scope.launch {
             runCatching {
-                val st = YoutubeDL.getInstance().updateYoutubeDL(ctx, UpdateChannel.STABLE)
+                val st = execLock.writeLock().let { lock ->
+                    lock.lock()
+                    try {
+                        YoutubeDL.getInstance().updateYoutubeDL(ctx, UpdateChannel.STABLE)
+                    } finally {
+                        lock.unlock()
+                    }
+                }
                 Log.i(TAG, "daily update: $st -> ${YoutubeDL.getInstance().version(ctx)}")
             }.onFailure { Log.w(TAG, "daily update failed", it) }
         }
@@ -103,7 +116,12 @@ object Engine {
             updatedThisRun = true
         }
         return runCatching {
-            val st = YoutubeDL.getInstance().updateYoutubeDL(ctx, UpdateChannel.STABLE)
+            execLock.writeLock().lock()
+            val st = try {
+                YoutubeDL.getInstance().updateYoutubeDL(ctx, UpdateChannel.STABLE)
+            } finally {
+                execLock.writeLock().unlock()
+            }
             Log.i(TAG, "yt-dlp update: $st -> ${YoutubeDL.getInstance().version(ctx)}")
             true
         }.getOrElse {
@@ -112,10 +130,15 @@ object Engine {
         }
     }
 
-    /** 만료된 쿠키로 인한 실패를 판별한다 — 침묵하는 실패가 "1회 설치 후 방치"를 깨뜨린다. */
+    /**
+     * 만료된 쿠키로 인한 실패를 판별한다 — 침묵하는 실패가 "1회 설치 후 방치"를 깨뜨린다.
+     * 낱말 하나짜리 키워드는 오탐한다 ("cookies" 가 트레이스백의 cookies.py 에 걸렸다).
+     * yt-dlp 가 실제로 내는 문구만 정확히 본다.
+     */
     fun isAuthError(msg: String?): Boolean = msg != null && listOf(
-        "sign in", "log in", "login required", "private video",
-        "members-only", "age", "cookies", "account",
+        "sign in to confirm", "log in", "login required", "private video",
+        "members-only", "age-restricted", "confirm your age",
+        "cookies are no longer valid", "cookies you provided",
     ).any { msg.contains(it, ignoreCase = true) }
 
     /** 제목·길이·썸네일. 추출 실패면 갱신 후 1회 재시도. */
@@ -209,7 +232,12 @@ object Engine {
             addOption("--no-warnings")
             addOption("--no-playlist")
         }.withCookies(ctx)
-        val out = YoutubeDL.getInstance().execute(req, null, null).out
+        execLock.readLock().lock()
+        val out = try {
+            YoutubeDL.getInstance().execute(req, null, null).out
+        } finally {
+            execLock.readLock().unlock()
+        }
         return JSONObject(out.lineSequence().first { it.trimStart().startsWith("{") })
     }
 
@@ -287,9 +315,14 @@ object Engine {
             }
         }
         try {
-            YoutubeDL.getInstance().execute(req, job.id) { pct, _, line ->
-                job.pct = pct
-                job.text = line.take(120)
+            execLock.readLock().lock()
+            try {
+                YoutubeDL.getInstance().execute(req, job.id) { pct, _, line ->
+                    job.pct = pct
+                    job.text = line.take(120)
+                }
+            } finally {
+                execLock.readLock().unlock()
             }
         } finally {
             poller.cancel()

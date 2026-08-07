@@ -35,11 +35,15 @@ object Engine {
     /** UI 로 밀어넣는 채널. ShareActivity 가 붙였다 뗀다. */
     @Volatile var push: ((JSONObject) -> Unit)? = null
 
+    /** 작업 이벤트 리스너 (서비스 알림용). */
+    val jobListeners = java.util.concurrent.CopyOnWriteArrayList<(Job) -> Unit>()
+
     data class Job(
         val id: String,
         val url: String,
         val startSec: Long,
         val endSec: Long?,
+        val title: String = "",
         @Volatile var state: String = "running", // running | done | error | cancelled
         @Volatile var pct: Float = 0f,
         /** 구간 다운로드는 전체 크기를 몰라 pct 가 -1 인 채로 돈다 — 원시 진행 줄로 보완 */
@@ -108,13 +112,23 @@ object Engine {
         return JSONObject(out.lineSequence().first { it.trimStart().startsWith("{") })
     }
 
-    fun start(ctx: Context, url: String, startSec: Long, endSec: Long?, quality: String): String {
+    fun start(
+        ctx: Context,
+        url: String,
+        startSec: Long,
+        endSec: Long?,
+        quality: String,
+        title: String,
+    ): String {
         val id = "job${++jobSeq}-${System.currentTimeMillis()}"
-        val job = Job(id, url, startSec, endSec)
+        val job = Job(id, url, startSec, endSec, title)
         jobs[id] = job
+        DownloadService.start(ctx)
         scope.launch { run(ctx.applicationContext, job, quality) }
         return id
     }
+
+    fun firstRunning(): Job? = jobs.values.firstOrNull { it.state == "running" }
 
     private suspend fun run(ctx: Context, job: Job, quality: String) {
         try {
@@ -127,6 +141,14 @@ object Engine {
                 if (updateOnce(ctx)) exec(ctx, job, quality) else throw e
             }
             if (job.state != "cancelled") {
+                job.file?.let { name ->
+                    val src = File(
+                        File(ctx.getExternalFilesDir(null), "downloads/${job.id}"),
+                        name,
+                    )
+                    job.file = MediaSaver.publish(ctx, src)
+                    src.parentFile?.deleteRecursively()
+                }
                 job.state = "done"
                 emit(job)
             }
@@ -182,5 +204,6 @@ object Engine {
 
     private fun emit(job: Job) {
         push?.invoke(JSONObject().put("type", "job").put("job", job.toJson()))
+        jobListeners.forEach { it(job) }
     }
 }

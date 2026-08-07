@@ -36,8 +36,8 @@ class MobileBridge(
 
     /** 즉시 jobId 반환, 진행은 푸시로. */
     @JavascriptInterface
-    fun start(url: String, startSec: String, endSec: String, quality: String): String =
-        Engine.start(ctx, url, startSec.toLong(), endSec.toLongOrNull(), quality)
+    fun start(url: String, startSec: String, endSec: String, quality: String, title: String): String =
+        Engine.start(ctx, url, startSec.toLong(), endSec.toLongOrNull(), quality, title)
 
     @JavascriptInterface
     fun cancel(jobId: String) = Engine.cancel(jobId)

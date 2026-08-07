@@ -47,6 +47,15 @@ class ShareActivity : AppCompatActivity() {
         }
         setContentView(web)
 
+        // 없으면 포그라운드 서비스 알림이 조용히 실패한다 (13+).
+        // 6단계 온보딩이 생기면 그쪽으로 옮긴다.
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
+
         Engine.push = { msg -> runOnUiThread { pushToJs(msg) } }
         // 모달이 뜨는 동안 미리 초기화해 두면 probe 체감이 빨라진다
         Engine.scope.launch { runCatching { Engine.ensureReady(applicationContext) } }

@@ -7,6 +7,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
+import com.yausername.youtubedl_android.YoutubeDL.UpdateChannel
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,16 +49,24 @@ class SpikeActivity : AppCompatActivity() {
 
     private suspend fun runSpike() {
         try {
-            say("[1/4] YoutubeDL.init …")
+            say("[1/5] YoutubeDL.init …")
             YoutubeDL.getInstance().init(applicationContext)
-            say("[2/4] FFmpeg.init …")
+            say("[2/5] FFmpeg.init …")
             FFmpeg.getInstance().init(applicationContext)
             say("      yt-dlp version: " + YoutubeDL.getInstance().version(applicationContext))
+
+            // 번들 yt-dlp 는 낡아서 최신 유튜브 nsig 챌린지를 못 푼다 (실측: 403).
+            // 완료 조건 6번의 핵심 경로 — 갱신이 곧 복구다.
+            say("[3/5] yt-dlp 갱신 (STABLE) …")
+            val status = YoutubeDL.getInstance()
+                .updateYoutubeDL(applicationContext, UpdateChannel.STABLE)
+            say("      갱신 결과: $status, 버전: " +
+                YoutubeDL.getInstance().version(applicationContext))
 
             val outDir = File(getExternalFilesDir(null), "spike").apply { mkdirs() }
             outDir.listFiles()?.forEach { it.delete() }
 
-            say("[3/4] 구간 다운로드 시작 (1:00–1:10, 720p 이하)")
+            say("[4/5] 구간 다운로드 시작 (1:00–1:10, 720p 이하)")
             val request = YoutubeDLRequest(TEST_URL).apply {
                 addOption("--download-sections", "*00:01:00-00:01:10")
                 addOption("--force-keyframes-at-cuts")
@@ -69,7 +78,7 @@ class SpikeActivity : AppCompatActivity() {
                 Log.i(TAG, "progress=$progress% eta=${etaSec}s | $line")
             }
 
-            say("[4/4] 완료. 결과 파일:")
+            say("[5/5] 완료. 결과 파일:")
             val files = outDir.listFiles().orEmpty()
             if (files.isEmpty()) {
                 say("      (없음 — 실패)")

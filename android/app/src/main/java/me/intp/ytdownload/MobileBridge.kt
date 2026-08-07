@@ -34,6 +34,14 @@ class MobileBridge(
         }
     }
 
+    @JavascriptInterface
+    fun openLogin() {
+        ctx.startActivity(
+            android.content.Intent(ctx, LoginActivity::class.java)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
+
     /** 즉시 jobId 반환, 진행은 푸시로. */
     @JavascriptInterface
     fun start(url: String, startSec: String, endSec: String, quality: String, title: String): String =
@@ -45,9 +53,8 @@ class MobileBridge(
     @JavascriptInterface
     fun jobs(): String = Engine.jobsJson()
 
-    /** 4단계에서 쿠키 상태로 대체된다. */
     @JavascriptInterface
-    fun authState(): String = """{"loggedIn":false}"""
+    fun authState(): String = """{"loggedIn":${CookieJar.exists(ctx)}}"""
 
     private fun resolve(cbId: String, data: JSONObject) {
         Engine.push?.invoke(
@@ -59,7 +66,8 @@ class MobileBridge(
     private fun reject(cbId: String, error: String) {
         Engine.push?.invoke(
             JSONObject().put("type", "result").put("cbId", cbId)
-                .put("ok", false).put("error", error),
+                .put("ok", false).put("error", error)
+                .put("authError", Engine.isAuthError(error)),
         )
     }
 }

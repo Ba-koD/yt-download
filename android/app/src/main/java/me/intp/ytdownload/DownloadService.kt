@@ -60,15 +60,29 @@ class DownloadService : Service() {
                 .notify(NOTIF_ID, notification(running))
         } else {
             // 마지막 작업 결과를 별도 알림으로 남기고 포그라운드를 내린다
-            getSystemService(NotificationManager::class.java).notify(
-                NOTIF_ID + 1,
-                NotificationCompat.Builder(this, CHANNEL)
-                    .setSmallIcon(android.R.drawable.stat_sys_download_done)
-                    .setContentTitle(if (job.state == "done") "저장 완료" else "다운로드 실패")
-                    .setContentText(job.file ?: job.error ?: job.title)
-                    .setAutoCancel(true)
-                    .build(),
-            )
+            val done = NotificationCompat.Builder(this, CHANNEL)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle(
+                    when {
+                        job.state == "done" -> "저장 완료"
+                        job.authError -> "다시 로그인이 필요합니다"
+                        else -> "다운로드 실패"
+                    },
+                )
+                .setContentText(job.file ?: job.error ?: job.title)
+                .setAutoCancel(true)
+            if (job.authError) {
+                // 만료를 침묵시키지 않는다 — 탭하면 바로 재로그인
+                done.setContentIntent(
+                    PendingIntent.getActivity(
+                        this, 0,
+                        Intent(this, LoginActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        PendingIntent.FLAG_IMMUTABLE,
+                    ),
+                )
+            }
+            getSystemService(NotificationManager::class.java).notify(NOTIF_ID + 1, done.build())
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
@@ -83,7 +97,9 @@ class DownloadService : Service() {
         if (job != null) {
             val pct = job.pct.toInt()
             if (pct > 0) b.setProgress(100, pct, false) else b.setProgress(0, 0, true)
-            b.setContentText(job.text?.trim() ?: "")
+            b.setContentText(
+                if (job.bytes > 0) "%.1f MB".format(job.bytes / 1048576.0) else "준비 중",
+            )
             val cancel = Intent(this, DownloadService::class.java)
                 .setAction(ACTION_CANCEL).putExtra(EXTRA_JOB, job.id)
             b.addAction(

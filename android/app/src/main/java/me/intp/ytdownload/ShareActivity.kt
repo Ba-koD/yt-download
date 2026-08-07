@@ -37,6 +37,8 @@ class ShareActivity : AppCompatActivity() {
             setBackgroundColor(Color.TRANSPARENT)
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            // 앱 업데이트 후 낡은 asset 페이지가 캐시로 살아남지 않게 한다
+            settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
             webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(
                     view: WebView,

@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:label="yt-download"
@@ -26,16 +27,20 @@
             </intent-filter>
         </activity>
 
+        <!-- 유튜브 로그인 → cookies.txt. 비공개·연령제한 영상에만 필요. -->
+        <activity
+            android:name=".LoginActivity"
+            android:exported="false" />
+
         <!-- 다운로드 수명 앵커. Android 14+ 는 타입 명시가 필수다. -->
         <service
             android:name=".DownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
-        <!-- 0단계 스파이크: UI 없이 로그로만 구간 다운로드를 검증한다.
-             통과 후 ShareActivity 로 대체된다. -->
+        <!-- 런처 = 온보딩·설정 확인. 평소 쓰임새는 공유 시트다. -->
         <activity
-            android:name=".SpikeActivity"
+            android:name=".MainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

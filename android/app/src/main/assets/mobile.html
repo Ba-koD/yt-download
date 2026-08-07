@@ -310,9 +310,12 @@ $("cta").addEventListener("click", (ev) => {
     return;
   }
   if (cta.classList.contains("done")) { app.close(); return; }
-  jobId = app.start(url, String(s), e === null ? "" : String(e), fmtExpr(), $("title").textContent);
   est = estBytes();
   samples = [];
+  jobId = app.start(
+    url, String(s), e === null ? "" : String(e), fmtExpr(),
+    $("title").textContent, String(Math.round(est)),
+  );
   cta.classList.add("running");
   $("err").style.display = "none";
   setLabel("0%");
@@ -377,6 +380,7 @@ $("login").addEventListener("click", () => app.openLogin());
   for (const j of JSON.parse(app.jobs())) {
     if (j.state === "running" && j.url === url) {
       jobId = j.id;
+      est = j.est || 0; // 재진입: 예상 용량을 작업에서 복원
       $("cta").classList.add("running");
       onJob(j);
     }

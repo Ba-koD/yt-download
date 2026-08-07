@@ -88,6 +88,27 @@ class DownloadService : Service() {
         }
     }
 
+    // 알림 속도·남은 시간 계산용. 작업이 바뀌면 리셋한다.
+    private var speedJobId: String? = null
+    private var lastT = 0L
+    private var lastB = 0L
+    private var ema = 0.0
+
+    private fun speedOf(job: Engine.Job): Double {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (speedJobId != job.id || job.bytes < lastB) {
+            speedJobId = job.id; lastT = now; lastB = job.bytes; ema = 0.0
+            return 0.0
+        }
+        val dt = (now - lastT) / 1000.0
+        if (dt >= 0.8) {
+            val v = (job.bytes - lastB) / dt
+            ema = if (ema == 0.0) v else 0.7 * ema + 0.3 * v
+            lastT = now; lastB = job.bytes
+        }
+        return ema
+    }
+
     private fun notification(job: Engine.Job?): android.app.Notification {
         val b = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download)
@@ -95,10 +116,31 @@ class DownloadService : Service() {
             .setOnlyAlertOnce(true)
             .setOngoing(true)
         if (job != null) {
-            val pct = job.pct.toInt()
+            // 실측이 예상을 넘으면 분모를 올린다 — 100% 넘는 표시 방지
+            val est = maxOf(job.estBytes, job.bytes)
+            val pct = when {
+                job.pct > 0 -> job.pct.toInt()
+                est > 0 && job.bytes > 0 -> (job.bytes * 99 / est).toInt()
+                else -> 0
+            }
             if (pct > 0) b.setProgress(100, pct, false) else b.setProgress(0, 0, true)
+            val mb = job.bytes / 1048576.0
+            val v = speedOf(job)
             b.setContentText(
-                if (job.bytes > 0) "%.1f MB".format(job.bytes / 1048576.0) else "준비 중",
+                when {
+                    job.bytes <= 0 -> "준비 중"
+                    else -> buildString {
+                        append("%.1f".format(mb))
+                        if (job.estBytes > 0) append(" / %.1f".format(est / 1048576.0))
+                        append(" MB")
+                        if (v > 1) {
+                            append(" · %.1f MB/s".format(v / 1048576.0))
+                            if (est > job.bytes) {
+                                append(" · %d초 남음".format(((est - job.bytes) / v).toLong()))
+                            }
+                        }
+                    }
+                },
             )
             val cancel = Intent(this, DownloadService::class.java)
                 .setAction(ACTION_CANCEL).putExtra(EXTRA_JOB, job.id)

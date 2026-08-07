@@ -50,6 +50,8 @@ object Engine {
         val startSec: Long,
         val endSec: Long?,
         val title: String = "",
+        /** UI 가 화질 비트레이트 × 구간 길이로 잰 예상 용량. 알림 진행 바의 분모. */
+        val estBytes: Long = 0,
         @Volatile var state: String = "running", // running | done | error | cancelled
         @Volatile var pct: Float = 0f,
         /** 구간 다운로드는 전체 크기를 몰라 pct 가 -1 인 채로 돈다 — 원시 진행 줄로 보완 */
@@ -64,7 +66,7 @@ object Engine {
             .put("id", id).put("url", url)
             .put("startSec", startSec).put("endSec", endSec ?: JSONObject.NULL)
             .put("state", state).put("pct", pct)
-            .put("bytes", bytes)
+            .put("bytes", bytes).put("est", estBytes)
             .put("text", text ?: JSONObject.NULL)
             .put("file", file ?: JSONObject.NULL)
             .put("error", error ?: JSONObject.NULL)
@@ -248,9 +250,10 @@ object Engine {
         endSec: Long?,
         quality: String,
         title: String,
+        estBytes: Long = 0,
     ): String {
         val id = "job${++jobSeq}-${System.currentTimeMillis()}"
-        val job = Job(id, url, startSec, endSec, title)
+        val job = Job(id, url, startSec, endSec, title, estBytes)
         jobs[id] = job
         DownloadService.start(ctx)
         scope.launch { run(ctx.applicationContext, job, quality) }

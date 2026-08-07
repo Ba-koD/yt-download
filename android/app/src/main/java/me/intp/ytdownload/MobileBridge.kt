@@ -42,10 +42,19 @@ class MobileBridge(
         )
     }
 
-    /** 즉시 jobId 반환, 진행은 푸시로. */
+    /** 즉시 jobId 반환, 진행은 푸시로. est 는 UI 가 잰 예상 용량(바이트). */
     @JavascriptInterface
-    fun start(url: String, startSec: String, endSec: String, quality: String, title: String): String =
-        Engine.start(ctx, url, startSec.toLong(), endSec.toLongOrNull(), quality, title)
+    fun start(
+        url: String,
+        startSec: String,
+        endSec: String,
+        quality: String,
+        title: String,
+        est: String,
+    ): String = Engine.start(
+        ctx, url, startSec.toLong(), endSec.toLongOrNull(), quality, title,
+        est.toLongOrNull() ?: 0,
+    )
 
     @JavascriptInterface
     fun cancel(jobId: String) = Engine.cancel(jobId)

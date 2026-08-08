@@ -224,9 +224,8 @@ pub(crate) async fn fetch_live_section(
                     let body = fetch_url(&client, &url).await?.0;
                     tokio::fs::write(stream_dir.join(format!("{order:08}.bin")), &body).await?;
                     let finished = done.fetch_add(1, Ordering::SeqCst) + 1;
-                    let total_bytes =
-                        fetched_bytes.fetch_add(body.len() as u64, Ordering::SeqCst)
-                            + body.len() as u64;
+                    let total_bytes = fetched_bytes.fetch_add(body.len() as u64, Ordering::SeqCst)
+                        + body.len() as u64;
                     update_job(&jobs, &job_id, |job| {
                         job.progress =
                             Some(((finished as f64 / total as f64) * 90.0).clamp(0.0, 90.0));

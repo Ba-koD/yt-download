@@ -71,10 +71,13 @@
   store.cleanup().catch(() => {});
 
   // 다운로드 속도 계량기. 통로를 지나간 바이트를 최근 8초 창으로 재서 속도를 만든다.
-  const meter = { events: [] };
+  // 누적치(bytes·count)는 라이브에서 받은 용량과 조각당 평균 크기를 보여줄 때 쓴다.
+  const meter = { events: [], bytes: 0, count: 0 };
   const METER_WINDOW = 8000;
   const meterAdd = (count) => {
     meter.events.push({ at: Date.now(), count });
+    meter.bytes += count;
+    meter.count += 1;
   };
   const meterSpeed = () => {
     const now = Date.now();
@@ -1035,10 +1038,18 @@
     }
     const percent = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
     let text = `받는 중 ${percent}%`;
-    // 일반 영상은 바이트 단위라 용량을, 라이브는 조각 개수를 같이 적는다.
+    // 일반 영상은 진행량이 바이트라 그대로 적는다. 라이브는 조각 개수로 받아서
+    // 전체 용량을 미리 모르므로, 지금까지 받은 용량과 조각당 평균 크기로 어림한
+    // 전체 용량을 적는다(진행률 막대는 여전히 조각 개수 기준이라 정확하다).
     const inBytes = total > 1_000_000;
     if (inBytes) text += ` · ${showMb(done)}/${showMb(total)} MB`;
-    else text += ` · 조각 ${done}/${total}`;
+    else {
+      text += ` · ${showMb(meter.bytes)}`;
+      if (meter.count >= 3 && total > 0) {
+        text += `/약 ${showMb((meter.bytes / meter.count) * total)}`;
+      }
+      text += " MB";
+    }
     if (state.control?.paused) {
       setStatus(`${text} (멈춤)`);
       return;
@@ -1069,6 +1080,8 @@
     const resumable = media.kind === "disk";
     const resumeHint = resumable ? " · 받은 만큼은 남아 있어 다시 누르면 이어받습니다" : "";
     meter.events.length = 0;
+    meter.bytes = 0;
+    meter.count = 0;
     pace.events.length = 0;
     lastProgress = null;
     const ticker = setInterval(showProgress, 500);

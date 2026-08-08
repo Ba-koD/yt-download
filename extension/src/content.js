@@ -108,18 +108,19 @@
   const direct = net.directTransport();
   const viaPage = net.pageTransport();
   // 북마클릿은 이미 페이지 안이라 다리를 건널 것 없이 그대로 부르면 된다.
-  // 대신 배경 일꾼이 없어서 CORS 로 막히면 예비 통로가 없다(재시도로만 버틴다).
+  // 대신 배경 일꾼이 없어서 CORS 로 막히면 예비 통로가 없다(alr 안내와 재시도로 버틴다).
   const media = runtime
     ? net.withFallback(viaPage.bytes, net.workerBytes(runtime))
     : direct.bytes;
   net.useTransport({
     json: direct.json,
     text: direct.text,
-    // googlevideo 가 다른 호스트로 넘기면 페이지 쪽이 CORS 로 막힐 때가 있다.
-    // 그때는 배경 일꾼이 대신 받아온다(느리지만 확실하다).
+    // googlevideo 가 다른 호스트로 넘길 때 302 를 타면 페이지 쪽이 CORS 로 막힌다.
+    // 그래서 alr=yes 로 "본문 안내" 를 받아 리다이렉트 자체를 피한다(withAppRedirect).
+    // 그래도 막히면 배경 일꾼이 대신 받아온다(느리지만 확실하다 — withFallback).
     // 라이브 조각은 서버가 일시적으로 503 을 주는 일이 흔해서, 어느 통로든
     // 일시적인 실패는 잠깐 쉬었다 몇 번 더 받아 본다.
-    bytes: net.withMeter(net.withRetry(media), meterAdd),
+    bytes: net.withMeter(net.withRetry(net.withAppRedirect(media)), meterAdd),
   });
 
   const state = {

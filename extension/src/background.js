@@ -29,7 +29,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 async function fetchBytes({ url, headers }) {
   const response = await fetch(url, { headers, credentials: "omit" });
   if (!response.ok) return { ok: false, error: `HTTP ${response.status}` };
-  return { ok: true, base64: toBase64(new Uint8Array(await response.arrayBuffer())) };
+  // finalUrl 은 리다이렉트를 따라간 최종 주소다. 페이지 쪽이 이 주소를 기억해 두면
+  // 다음 요청부터 도착지 서버를 곧장 불러(리다이렉트 없음) CORS 로 막히지 않는다.
+  return {
+    ok: true,
+    base64: toBase64(new Uint8Array(await response.arrayBuffer())),
+    finalUrl: response.url,
+  };
 }
 
 function toBase64(bytes) {

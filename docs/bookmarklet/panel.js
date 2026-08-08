@@ -121,10 +121,12 @@ function pageTransport(target = window, timeoutMs = 120_000) {
 }
 
 /**
- * 예비 통로. 배경 일꾼이 대신 받아 base64 로 돌려준다.
+ * 예비 통로. 배경 일꾼이 대신 받아 base64 와 최종 도착 주소를 돌려준다.
  *
  * 페이지 쪽이 CORS 로 막혔을 때만 쓴다. 바이트를 문자로 바꿔 넘기느라 느리지만,
  * 배경 일꾼은 host_permissions 덕분에 리다이렉트를 타도 막히지 않는다.
+ * finalUrl 은 리다이렉트를 따라간 도착지다 — withFallback 이 기억해 두고
+ * 다음부터는 빠른 통로로 도착지를 곧장 부른다.
  */
 function workerBytes(runtime) {
   return (url, headers) =>
@@ -133,7 +135,7 @@ function workerBytes(runtime) {
         const failure = runtime.lastError;
         if (failure) return reject(new Error(failure.message));
         if (!reply?.ok) return reject(new Error(reply?.error || "요청 실패"));
-        resolve(decodeBase64(reply.base64));
+        resolve({ bytes: decodeBase64(reply.base64), finalUrl: reply.finalUrl });
       });
     });
 }
@@ -148,17 +150,24 @@ function decodeBase64(text) {
 /**
  * 먼저 빠른 쪽으로 받아보고, 막히면 예비 통로로 다시 받는다.
  *
- * 통로가 막히는 원인(라이브 서버 교대의 리다이렉트 등)은 대개 일시적이다.
- * 그래서 영영 갈아타지 않고, 잠깐 식힌 뒤에는 빠른 통로를 다시 두드려 본다.
- * 예비 통로는 base64 를 거쳐서 눈에 띄게 느리다 — 긴 받기가 통째로 느려지면 아깝다.
+ * 빠른 통로가 막히는 원인은 대개 서버 교대의 리다이렉트다(리다이렉트를 탄 요청은
+ * CORS 헤더 주입이 안 먹는다). 그런데 리다이렉트의 **도착지를 곧장 부르면** 리다이렉트가
+ * 없어 막히지 않는다. 그래서 예비 통로(배경 일꾼)가 알려준 도착지를 기억해 두고,
+ * 다음 요청부터는 빠른 통로로 도착지를 직접 두드린다 — 느린 base64 예비 통로는
+ * 서버가 바뀌는 순간 한 번만 쓰게 된다.
+ *
+ * 도착지를 아직 모르는 채 막혔을 때만 예전처럼 잠깐 식힌 뒤 빠른 통로를 다시 두드린다.
  */
 function withFallback(primary, secondary, { coolOffMs = 60_000, now = Date.now } = {}) {
   let blocked = false;
   let blockedAt = 0;
+  const memory = redirectMemory();
   return async (url, headers) => {
-    if (!blocked || now() - blockedAt >= coolOffMs) {
+    const direct = memory.resolve(url);
+    // 도착지로 직행하는 요청은 리다이렉트가 없으니, 막혔던 중이라도 바로 시도한다.
+    if (direct !== url || !blocked || now() - blockedAt >= coolOffMs) {
       try {
-        const bytes = await primary(url, headers);
+        const bytes = await primary(direct, headers);
         blocked = false;
         return bytes;
       } catch (error) {
@@ -173,10 +182,95 @@ function withFallback(primary, secondary, { coolOffMs = 60_000, now = Date.now }
         }
         blocked = true;
         blockedAt = now();
+        // 기억해 둔 도착지마저 막혔다면 서버가 또 바뀐 것이다. 버리고 새로 배운다.
+        if (direct !== url) memory.forget(url);
       }
     }
-    return secondary(url, headers);
+    const { bytes, finalUrl } = await secondary(url, headers);
+    if (memory.learn(url, finalUrl)) {
+      console.info("[yt-download] 옮겨간 서버를 기억했습니다. 다음 조각부터 곧장 받습니다.");
+    }
+    return bytes;
   };
+}
+
+/**
+ * 리다이렉트 도착지를 기억한다: 원래 주소(sq 제외) → 도착지 주소(sq 제외).
+ *
+ * 라이브 조각은 같은 밑 주소에 &sq=번호 만 바뀌므로, sq 를 떼서 짝을 지어 두면
+ * 어느 조각이든 도착지 주소에 sq 만 다시 붙여 만들 수 있다(sq 는 서명 대상이 아니다).
+ * sq 가 없는 일반 영상 주소는 통째로 짝이 된다.
+ */
+function redirectMemory() {
+  const learned = new Map();
+  const keyOf = (url) => url.replace(/[?&]sq=\d+/, "");
+  const sqOf = (url) => /[?&]sq=(\d+)/.exec(url)?.[1];
+  return {
+    resolve(url) {
+      const target = learned.get(keyOf(url));
+      if (!target) return url;
+      const sq = sqOf(url);
+      return sq === undefined ? target : `${target}&sq=${sq}`;
+    },
+    learn(url, finalUrl) {
+      if (!finalUrl || keyOf(finalUrl) === keyOf(url)) return false;
+      learned.set(keyOf(url), keyOf(finalUrl));
+      return true;
+    },
+    forget(url) {
+      learned.delete(keyOf(url));
+    },
+  };
+}
+
+/**
+ * 서버 교대 리다이렉트를 302 대신 "본문 안내"로 받아 CORS 차단을 원천 봉쇄한다.
+ *
+ * googlevideo 는 주소에 `alr=yes` 를 붙이면(유튜브 플레이어 자신이 쓰는 방식)
+ * 302 로 넘기는 대신 HTTP 200 에 **새 주소를 본문 텍스트로** 담아 준다.
+ * 리다이렉트가 아예 없으니 페이지 fetch 가 CORS 로 막힐 일도 없다 — 배경 일꾼이
+ * 없는 북마클릿에서도 통한다. 안내받은 도착지는 기억해 두고 다음 조각부터 직행한다.
+ * (alr 은 서명 대상이 아니라 붙여도 안전하고, 서버가 모르는 값이면 그냥 무시된다.)
+ */
+function withAppRedirect(fetcher) {
+  const memory = redirectMemory();
+  const withAlr = (url) => (/[?&]alr=/.test(url) ? url : `${url}&alr=yes`);
+  return async (url, headers) => {
+    let target = memory.resolve(url);
+    let moved = target !== url;
+    for (let hop = 0; hop < 4; hop += 1) {
+      let bytes;
+      try {
+        bytes = await fetcher(withAlr(target), headers);
+      } catch (error) {
+        // 기억해 둔 도착지가 죽었으면(만료 등) 잊고 원래 주소로 한 번 되돌아간다.
+        if (moved && hop === 0) {
+          memory.forget(url);
+          target = url;
+          moved = false;
+          continue;
+        }
+        throw error;
+      }
+      const next = appRedirectUrl(bytes);
+      if (!next) {
+        if (moved && memory.learn(url, target)) {
+          console.info("[yt-download] 서버가 옮겨갔습니다. 다음 조각부터 새 서버로 곧장 받습니다.");
+        }
+        return bytes;
+      }
+      target = next;
+      moved = true;
+    }
+    throw new Error("서버가 안내한 주소가 너무 여러 번 바뀝니다");
+  };
+}
+
+/** alr=yes 응답이 "새 주소 안내" 인지 판별한다. 미디어 조각이 통째로 주소일 수는 없다. */
+function appRedirectUrl(bytes) {
+  if (bytes.length < 12 || bytes.length > 8192) return null;
+  const text = new TextDecoder().decode(bytes).trim();
+  return /^https:\/\/\S+$/.test(text) ? text : null;
 }
 
 /** 통로를 지나간 바이트를 세어 준다. 다운로드 속도 표시는 이 숫자로 만든다. */
@@ -233,7 +327,7 @@ function withRetry(fetcher, { tries = 6, waitMs = 1000, maxWaitMs = 8000, sleep 
   };
 }
 
-return {directTransport: directTransport, useTransport: useTransport, request: request, pageTransport: pageTransport, workerBytes: workerBytes, decodeBase64: decodeBase64, withFallback: withFallback, withMeter: withMeter, httpStatusOf: httpStatusOf, withRetry: withRetry};
+return {directTransport: directTransport, useTransport: useTransport, request: request, pageTransport: pageTransport, workerBytes: workerBytes, decodeBase64: decodeBase64, withFallback: withFallback, redirectMemory: redirectMemory, withAppRedirect: withAppRedirect, appRedirectUrl: appRedirectUrl, withMeter: withMeter, httpStatusOf: httpStatusOf, withRetry: withRetry};
 });
 __define("innertube.js", (__need) => {
 // 유튜브 내부 API(InnerTube)에서 실제 다운로드 주소를 받아온다.
@@ -2384,18 +2478,19 @@ window.__ytdlPageTeardown = () => {
   const direct = net.directTransport();
   const viaPage = net.pageTransport();
   // 북마클릿은 이미 페이지 안이라 다리를 건널 것 없이 그대로 부르면 된다.
-  // 대신 배경 일꾼이 없어서 CORS 로 막히면 예비 통로가 없다(재시도로만 버틴다).
+  // 대신 배경 일꾼이 없어서 CORS 로 막히면 예비 통로가 없다(alr 안내와 재시도로 버틴다).
   const media = runtime
     ? net.withFallback(viaPage.bytes, net.workerBytes(runtime))
     : direct.bytes;
   net.useTransport({
     json: direct.json,
     text: direct.text,
-    // googlevideo 가 다른 호스트로 넘기면 페이지 쪽이 CORS 로 막힐 때가 있다.
-    // 그때는 배경 일꾼이 대신 받아온다(느리지만 확실하다).
+    // googlevideo 가 다른 호스트로 넘길 때 302 를 타면 페이지 쪽이 CORS 로 막힌다.
+    // 그래서 alr=yes 로 "본문 안내" 를 받아 리다이렉트 자체를 피한다(withAppRedirect).
+    // 그래도 막히면 배경 일꾼이 대신 받아온다(느리지만 확실하다 — withFallback).
     // 라이브 조각은 서버가 일시적으로 503 을 주는 일이 흔해서, 어느 통로든
     // 일시적인 실패는 잠깐 쉬었다 몇 번 더 받아 본다.
-    bytes: net.withMeter(net.withRetry(media), meterAdd),
+    bytes: net.withMeter(net.withRetry(net.withAppRedirect(media)), meterAdd),
   });
 
   const state = {

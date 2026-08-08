@@ -182,7 +182,7 @@ Deno.test("페이지 요청이 막히면 예비 통로로 넘어가고 그 뒤�
     },
     async () => {
       secondaryCalls += 1;
-      return new Uint8Array([1, 2, 3]);
+      return { bytes: new Uint8Array([1, 2, 3]) };
     },
   );
 
@@ -298,7 +298,7 @@ Deno.test("예비 통로로 갈아탔어도 식힌 뒤에는 빠른 통로를 �
       if (primaryBlocked) throw new Error("Failed to fetch");
       return new Uint8Array([5]);
     },
-    async () => new Uint8Array([1]),
+    async () => ({ bytes: new Uint8Array([1]) }),
     { coolOffMs: 1000, now: () => clock },
   );
 

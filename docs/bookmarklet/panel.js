@@ -1620,13 +1620,18 @@ async function fetchLiveSegments(format, start, end, onProgress, control, track)
   // 이미 받아둔 조각은 건너뛴다. 진행률에는 처음부터 받은 것으로 잡힌다.
   const missing = numbers.filter((sq) => !track.has(liveName(sq)));
   let done = numbers.length - missing.length;
-  onProgress?.(done, numbers.length);
+  // 이번에 실제로 받은 용량과 조각 수. 조각당 평균 크기로 전체 용량을 어림하는 데 쓴다.
+  let gotBytes = 0;
+  let fetched = 0;
+  onProgress?.(done, numbers.length, { bytes: 0, fetched: 0 });
 
   await mapWithLimit(missing, CONCURRENCY, async (sq) => {
     const bytes = await request.bytes(`${format.url}&sq=${sq}`, {});
     await track.write(liveName(sq), bytes);
     done += 1;
-    onProgress?.(done, numbers.length);
+    gotBytes += bytes.length;
+    fetched += 1;
+    onProgress?.(done, numbers.length, { bytes: gotBytes, fetched });
   }, control);
 
   // 앞머리(ftyp+moov)가 든 첫 조각을 찾는다. 대개 첫 번째 조각에 있다.
@@ -1937,13 +1942,28 @@ async function downloadSection({
   };
 
   // 두 트랙의 진행률을 하나로 합쳐 보여준다.
-  const progress = { video: [0, 1], audio: [0, 1] };
-  const report = (kind) => (received, expected) => {
-    progress[kind] = [received, expected];
+  const progress = { video: [0, 1, null], audio: [0, 1, null] };
+  // 전체 용량 어림은 트랙별로 따로 낸 뒤 합친다. 영상·음성 조각은 크기가 크게 달라서,
+  // 섞어서 평균을 내면 작은 음성이 먼저 끝난 뒤 평균이 계속 올라가 어림값이 불어난다.
+  const sizeEstimate = () => {
+    const tracks = [progress.video, progress.audio];
+    if (!tracks.some(([, , size]) => size)) return null;
+    let got = 0;
+    let estimated = 0;
+    for (const [, expected, size] of tracks) {
+      if (!size) continue;
+      got += size.bytes;
+      if (size.fetched > 0) estimated += (size.bytes / size.fetched) * expected;
+    }
+    return { got, estimated };
+  };
+  const report = (kind) => (received, expected, size) => {
+    progress[kind] = [received, expected, size || null];
     onProgress?.(
       progress.video[0] + progress.audio[0],
       progress.video[1] + progress.audio[1],
       "받는 중",
+      sizeEstimate(),
     );
   };
 
@@ -2009,7 +2029,16 @@ async function downloadSection({
 async function downloadTrack({ format, kind, start, end, onProgress, control, store }) {
   const media = store || openMemory();
   const cache = await media.track(format.itag);
-  const report = (done, total) => onProgress?.(done, total, "받는 중");
+  const report = (done, total, size) =>
+    onProgress?.(
+      done,
+      total,
+      "받는 중",
+      size && {
+        got: size.bytes,
+        estimated: size.fetched > 0 ? (size.bytes / size.fetched) * total : 0,
+      },
+    );
 
   const live = format.segmentSeconds > 0 && !format.indexRange;
   let track;
@@ -2441,13 +2470,12 @@ window.__ytdlPageTeardown = () => {
   store.cleanup().catch(() => {});
 
   // 다운로드 속도 계량기. 통로를 지나간 바이트를 최근 8초 창으로 재서 속도를 만든다.
-  // 누적치(bytes·count)는 라이브에서 받은 용량과 조각당 평균 크기를 보여줄 때 쓴다.
-  const meter = { events: [], bytes: 0, count: 0 };
+  // 누적치(bytes)는 받는 쪽이 용량을 알려주지 않을 때의 예비 표시로 쓴다.
+  const meter = { events: [], bytes: 0 };
   const METER_WINDOW = 8000;
   const meterAdd = (count) => {
     meter.events.push({ at: Date.now(), count });
     meter.bytes += count;
-    meter.count += 1;
   };
   const meterSpeed = () => {
     const now = Date.now();
@@ -3400,7 +3428,7 @@ window.__ytdlPageTeardown = () => {
 
   function showProgress() {
     if (!lastProgress) return;
-    const { done, total, stage } = lastProgress;
+    const { done, total, stage, size } = lastProgress;
     if (stage !== "받는 중") {
       // 합치기 같은 단계도 몇째 조각인지 같이 적는다.
       setStatus(total > 1 ? `${stage} ${done}/${total}` : stage);
@@ -3409,16 +3437,16 @@ window.__ytdlPageTeardown = () => {
     const percent = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
     let text = `받는 중 ${percent}%`;
     // 일반 영상은 진행량이 바이트라 그대로 적는다. 라이브는 조각 개수로 받아서
-    // 전체 용량을 미리 모르므로, 지금까지 받은 용량과 조각당 평균 크기로 어림한
-    // 전체 용량을 적는다(진행률 막대는 여전히 조각 개수 기준이라 정확하다).
+    // 전체 용량을 미리 모르므로, 받는 쪽이 트랙별 평균 조각 크기로 어림해 준
+    // 용량(size)을 적는다(진행률 막대는 여전히 조각 개수 기준이라 정확하다).
     const inBytes = total > 1_000_000;
     if (inBytes) text += ` · ${showMb(done)}/${showMb(total)} MB`;
-    else {
-      text += ` · ${showMb(meter.bytes)}`;
-      if (meter.count >= 3 && total > 0) {
-        text += `/약 ${showMb((meter.bytes / meter.count) * total)}`;
-      }
+    else if (size) {
+      text += ` · ${showMb(size.got)}`;
+      if (size.estimated > 0) text += `/약 ${showMb(size.estimated)}`;
       text += " MB";
+    } else {
+      text += ` · ${showMb(meter.bytes)} MB`;
     }
     if (state.control?.paused) {
       setStatus(`${text} (멈춤)`);
@@ -3451,7 +3479,6 @@ window.__ytdlPageTeardown = () => {
     const resumeHint = resumable ? " · 받은 만큼은 남아 있어 다시 누르면 이어받습니다" : "";
     meter.events.length = 0;
     meter.bytes = 0;
-    meter.count = 0;
     pace.events.length = 0;
     lastProgress = null;
     const ticker = setInterval(showProgress, 500);
@@ -3462,8 +3489,8 @@ window.__ytdlPageTeardown = () => {
         end: state.end,
         control: state.control,
         store: media,
-        onProgress: (done, total, stage) => {
-          lastProgress = { done, total, stage };
+        onProgress: (done, total, stage, size) => {
+          lastProgress = { done, total, stage, size };
           if (stage === "받는 중") paceAdd(done);
           showProgress();
         },

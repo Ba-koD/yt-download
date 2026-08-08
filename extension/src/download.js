@@ -71,13 +71,18 @@ export async function fetchLiveSegments(format, start, end, onProgress, control,
   // 이미 받아둔 조각은 건너뛴다. 진행률에는 처음부터 받은 것으로 잡힌다.
   const missing = numbers.filter((sq) => !track.has(liveName(sq)));
   let done = numbers.length - missing.length;
-  onProgress?.(done, numbers.length);
+  // 이번에 실제로 받은 용량과 조각 수. 조각당 평균 크기로 전체 용량을 어림하는 데 쓴다.
+  let gotBytes = 0;
+  let fetched = 0;
+  onProgress?.(done, numbers.length, { bytes: 0, fetched: 0 });
 
   await mapWithLimit(missing, CONCURRENCY, async (sq) => {
     const bytes = await request.bytes(`${format.url}&sq=${sq}`, {});
     await track.write(liveName(sq), bytes);
     done += 1;
-    onProgress?.(done, numbers.length);
+    gotBytes += bytes.length;
+    fetched += 1;
+    onProgress?.(done, numbers.length, { bytes: gotBytes, fetched });
   }, control);
 
   // 앞머리(ftyp+moov)가 든 첫 조각을 찾는다. 대개 첫 번째 조각에 있다.
@@ -388,13 +393,28 @@ export async function downloadSection({
   };
 
   // 두 트랙의 진행률을 하나로 합쳐 보여준다.
-  const progress = { video: [0, 1], audio: [0, 1] };
-  const report = (kind) => (received, expected) => {
-    progress[kind] = [received, expected];
+  const progress = { video: [0, 1, null], audio: [0, 1, null] };
+  // 전체 용량 어림은 트랙별로 따로 낸 뒤 합친다. 영상·음성 조각은 크기가 크게 달라서,
+  // 섞어서 평균을 내면 작은 음성이 먼저 끝난 뒤 평균이 계속 올라가 어림값이 불어난다.
+  const sizeEstimate = () => {
+    const tracks = [progress.video, progress.audio];
+    if (!tracks.some(([, , size]) => size)) return null;
+    let got = 0;
+    let estimated = 0;
+    for (const [, expected, size] of tracks) {
+      if (!size) continue;
+      got += size.bytes;
+      if (size.fetched > 0) estimated += (size.bytes / size.fetched) * expected;
+    }
+    return { got, estimated };
+  };
+  const report = (kind) => (received, expected, size) => {
+    progress[kind] = [received, expected, size || null];
     onProgress?.(
       progress.video[0] + progress.audio[0],
       progress.video[1] + progress.audio[1],
       "받는 중",
+      sizeEstimate(),
     );
   };
 
@@ -460,7 +480,16 @@ export async function downloadSection({
 export async function downloadTrack({ format, kind, start, end, onProgress, control, store }) {
   const media = store || openMemory();
   const cache = await media.track(format.itag);
-  const report = (done, total) => onProgress?.(done, total, "받는 중");
+  const report = (done, total, size) =>
+    onProgress?.(
+      done,
+      total,
+      "받는 중",
+      size && {
+        got: size.bytes,
+        estimated: size.fetched > 0 ? (size.bytes / size.fetched) * total : 0,
+      },
+    );
 
   const live = format.segmentSeconds > 0 && !format.indexRange;
   let track;

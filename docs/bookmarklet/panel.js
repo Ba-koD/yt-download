@@ -3519,9 +3519,11 @@ window.__ytdlPageTeardown = () => {
       // 소리만 받은 파일은 확장자(m4a)가, 소리 없는 영상은 이름표가 내용을 알려준다.
       const marker = mode === "video" ? " [영상만]" : "";
       const ext = mode === "audio" ? "m4a" : "mp4";
+      // 어떤 화질로 받았는지 파일 이름만 봐도 알 수 있게 앞에 붙인다. 예: [2160p60 AV1]
+      const quality = formatLabel(chosenFormat);
       save(
         file,
-        `${safeFileName(state.formats.title)} ` +
+        `[${quality}] ${safeFileName(state.formats.title)} ` +
           `[${clockLabel(realStart)}~${clockLabel(realEnd)}]${marker}.${ext}`,
       );
       // 저장까지 됐으면 조각은 더 필요 없다. 지워서 디스크를 돌려준다.

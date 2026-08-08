@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-08
+
 ### 고침 — 북마클릿·확장
 
 - **유튜브 미디어 서버가 교대(리다이렉트)할 때 CORS 로 막혀 다운로드가 느려지거나 에러가
@@ -524,7 +526,8 @@
   비교했는데, 압축을 풀어서 받은 파일은 아카이브의 옛 시각을 물려받는다.
   이제 크기와 시각을 함께 확인한다.
 
-[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/Ba-koD/yt-download/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/Ba-koD/yt-download/releases/tag/v0.12.0
 [0.11.0]: https://github.com/Ba-koD/yt-download/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Ba-koD/yt-download/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/Ba-koD/yt-download/compare/v0.8.0...v0.9.0

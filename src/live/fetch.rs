@@ -164,6 +164,8 @@ pub(crate) async fn fetch_live_section(
         .context("could not create http client")?;
 
     let mut outputs = Vec::new();
+    // 영상/음성 스트림을 통틀어 받은 용량. 표시가 중간에 0으로 되돌아가지 않게 한다.
+    let fetched_bytes = Arc::new(std::sync::atomic::AtomicU64::new(0));
     for (index, source) in info.live_sources.iter().enumerate() {
         let stream_dir = dir.join(format!("stream{index}"));
         let _ = tokio::fs::remove_dir_all(&stream_dir).await;
@@ -189,6 +191,7 @@ pub(crate) async fn fetch_live_section(
                 let client = client.clone();
                 let stream_dir = stream_dir.clone();
                 let done = done.clone();
+                let fetched_bytes = fetched_bytes.clone();
                 let jobs = jobs.clone();
                 let job_id = job_id.to_string();
                 let cancel = cancel.clone();
@@ -199,10 +202,14 @@ pub(crate) async fn fetch_live_section(
                     let body = fetch_url(&client, &url).await?.0;
                     tokio::fs::write(stream_dir.join(format!("{order:08}.bin")), &body).await?;
                     let finished = done.fetch_add(1, Ordering::SeqCst) + 1;
+                    let total_bytes =
+                        fetched_bytes.fetch_add(body.len() as u64, Ordering::SeqCst)
+                            + body.len() as u64;
                     update_job(&jobs, &job_id, |job| {
                         job.progress =
                             Some(((finished as f64 / total as f64) * 90.0).clamp(0.0, 90.0));
-                        job.message = format!("라이브 구간을 받는 중 {finished}/{total} 조각");
+                        job.message =
+                            format!("라이브 구간을 받는 중 {}", format_size(total_bytes));
                     })
                     .await;
                     Ok(())
@@ -239,6 +246,18 @@ pub(crate) async fn fetch_live_section(
     }
 
     Ok(outputs)
+}
+
+// 받은 용량을 사람이 읽기 쉬운 단위로 표시한다.
+fn format_size(bytes: u64) -> String {
+    let bytes = bytes as f64;
+    if bytes >= 1_000_000_000.0 {
+        format!("{:.2} GB", bytes / 1_000_000_000.0)
+    } else if bytes >= 1_000_000.0 {
+        format!("{:.1} MB", bytes / 1_000_000.0)
+    } else {
+        format!("{:.0} KB", bytes / 1_000.0)
+    }
 }
 
 // 조각을 몇 개 더 받아 시간 계산 오차를 흡수한다(조각 하나가 5초라 비용이 작다).

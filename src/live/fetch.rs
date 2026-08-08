@@ -16,7 +16,7 @@ use super::capture::capture_output_path;
 use super::source::{parse_hls_playlist, HlsSegment, LiveSource, LiveSourceKind, TargetInfo};
 use crate::download::{download_section_duration, DownloadRequest};
 use crate::jobs::{finish_download_job, push_log, update_job, JobStatus};
-use crate::media::{cut_media_inputs, format_time, probe_capture_stream};
+use crate::media::{cut_media_inputs, format_size, format_time, probe_capture_stream};
 use crate::tools::app_temp_dir;
 
 // 조각을 동시에 몇 개까지 받을지.
@@ -186,6 +186,9 @@ pub(crate) async fn fetch_live_section(
 
         let total = targets.len();
         let done = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        // 이 스트림을 받기 전까지 쌓인 용량. 전체 용량을 어림할 때 앞선 스트림 몫은
+        // 실측값을 그대로 얹고, 지금 스트림 몫만 조각당 평균 크기로 어림한다.
+        let stream_base = fetched_bytes.load(Ordering::SeqCst);
         let mut tasks = futures_util::stream::iter(targets.into_iter().enumerate())
             .map(|(order, url)| {
                 let client = client.clone();
@@ -208,8 +211,20 @@ pub(crate) async fn fetch_live_section(
                     update_job(&jobs, &job_id, |job| {
                         job.progress =
                             Some(((finished as f64 / total as f64) * 90.0).clamp(0.0, 90.0));
-                        job.message =
-                            format!("라이브 구간을 받는 중 {}", format_size(total_bytes));
+                        // 전체 용량은 미리 알 수 없어서, 조각 몇 개를 받아본 뒤부터
+                        // "받은 용량/어림한 전체 용량" 으로 보여준다.
+                        job.message = if finished >= 3 {
+                            let stream_bytes = total_bytes - stream_base;
+                            let estimated = stream_base
+                                + (stream_bytes as f64 / finished as f64 * total as f64) as u64;
+                            format!(
+                                "라이브 구간을 받는 중 {}/약 {}",
+                                format_size(total_bytes),
+                                format_size(estimated)
+                            )
+                        } else {
+                            format!("라이브 구간을 받는 중 {}", format_size(total_bytes))
+                        };
                     })
                     .await;
                     Ok(())
@@ -246,18 +261,6 @@ pub(crate) async fn fetch_live_section(
     }
 
     Ok(outputs)
-}
-
-// 받은 용량을 사람이 읽기 쉬운 단위로 표시한다.
-fn format_size(bytes: u64) -> String {
-    let bytes = bytes as f64;
-    if bytes >= 1_000_000_000.0 {
-        format!("{:.2} GB", bytes / 1_000_000_000.0)
-    } else if bytes >= 1_000_000.0 {
-        format!("{:.1} MB", bytes / 1_000_000.0)
-    } else {
-        format!("{:.0} KB", bytes / 1_000.0)
-    }
 }
 
 // 조각을 몇 개 더 받아 시간 계산 오차를 흡수한다(조각 하나가 5초라 비용이 작다).

@@ -14,7 +14,7 @@ use tokio::{
 
 use crate::jobs::{push_log, update_job, JobStatus};
 use crate::live::CaptureCtx;
-use crate::media::format_time;
+use crate::media::{format_size, format_time};
 
 // 받기 92%, 합치기 8%로 나눠서 하나의 진행률로 보여준다.
 pub(crate) const DOWNLOAD_SHARE: f64 = 92.0;
@@ -148,25 +148,32 @@ impl DownloadProgress {
     }
 
     pub(crate) fn download_percent(&self) -> f64 {
+        let (downloaded, total, _) = self.byte_totals();
+        let Some(total) = total.filter(|value| *value > 0) else {
+            return 0.0;
+        };
+        ((downloaded as f64 / total as f64) * DOWNLOAD_SHARE).clamp(0.0, DOWNLOAD_SHARE)
+    }
+
+    // 지금까지 받은 용량과 전체 용량. 전체가 어림값이면 마지막 값이 true 다.
+    pub(crate) fn byte_totals(&self) -> (u64, Option<u64>, bool) {
         let state = self.lock_state();
         let downloaded: u64 = state.streams.values().map(|value| value.downloaded).sum();
         let known_total: u64 = state.streams.values().filter_map(|value| value.total).sum();
         let all_started = self.expected_streams > 0 && state.streams.len() >= self.expected_streams;
-        let total = match self.expected_bytes {
-            Some(expected) if expected > 0 => expected.max(known_total),
-            _ if all_started && known_total > 0 => known_total,
+        let all_known =
+            !state.streams.is_empty() && state.streams.values().all(|value| value.total.is_some());
+        match self.expected_bytes {
+            Some(expected) if expected > 0 => (downloaded, Some(expected.max(known_total)), false),
+            _ if all_started && known_total > 0 => (downloaded, Some(known_total), !all_known),
             _ if known_total > 0 => {
                 // 아직 시작 안 한 스트림이 있으면 남은 몫을 대충 남겨둔다.
                 let started = state.streams.len().max(1) as u64;
                 let expected = self.expected_streams.max(started as usize) as u64;
-                known_total * expected / started
+                (downloaded, Some(known_total * expected / started), true)
             }
-            _ => 0,
-        };
-        if total == 0 {
-            return 0.0;
+            _ => (downloaded, None, true),
         }
-        ((downloaded as f64 / total as f64) * DOWNLOAD_SHARE).clamp(0.0, DOWNLOAD_SHARE)
     }
 
     // ffmpeg가 파일로 남기는 진행률을 읽어 합치기 단계 퍼센트를 만든다.
@@ -220,7 +227,23 @@ impl DownloadProgress {
 
         match phase {
             DownloadPhase::Downloading => {
-                let label = stream_label(index, count);
+                let mut label = stream_label(index, count);
+                // "받은 용량/전체 용량" 을 같이 적는다. 전체가 어림값이면 "약" 을 붙인다.
+                let (received, total, estimated) = self.byte_totals();
+                match total {
+                    Some(total) if total > 0 => {
+                        let mark = if estimated { "약 " } else { "" };
+                        label = format!(
+                            "{label} · {}/{mark}{}",
+                            format_size(received),
+                            format_size(total)
+                        );
+                    }
+                    _ if received > 0 => {
+                        label = format!("{label} · {}", format_size(received));
+                    }
+                    _ => {}
+                }
                 (download, label, speed, eta)
             }
             DownloadPhase::Merging => {
@@ -602,7 +625,8 @@ mod tests {
         assert!(progress.note_line("@P@downloading|400|800|800|1048576.0|3.0|137"));
         assert!(progress.has_data());
         let (percent, label, speed, eta) = progress.snapshot();
-        assert_eq!(label, "영상 받는 중 (1/2)");
+        // 받은 용량/전체 용량이 같이 적힌다(전체는 미리 받은 크기 정보라 "약" 없이 적는다).
+        assert_eq!(label, "영상 받는 중 (1/2) · 0 KB/1 KB");
         assert_eq!(speed.as_deref(), Some("1.0 MB/s"));
         assert_eq!(eta.as_deref(), Some("00:00:03"));
         assert!((percent - 36.8).abs() < 0.1, "percent was {percent}");

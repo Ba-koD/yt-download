@@ -224,6 +224,18 @@ pub(crate) async fn probe_duration_value(path: &str, selector: &[&str]) -> Optio
         .ok()
 }
 
+// 받은 용량을 사람이 읽기 쉬운 단위로 표시한다.
+pub(crate) fn format_size(bytes: u64) -> String {
+    let bytes = bytes as f64;
+    if bytes >= 1_000_000_000.0 {
+        format!("{:.2} GB", bytes / 1_000_000_000.0)
+    } else if bytes >= 1_000_000.0 {
+        format!("{:.1} MB", bytes / 1_000_000.0)
+    } else {
+        format!("{:.0} KB", bytes / 1_000.0)
+    }
+}
+
 pub(crate) fn format_time(seconds: f64) -> String {
     let millis = (seconds * 1000.0).round() as u64;
     let hours = millis / 3_600_000;

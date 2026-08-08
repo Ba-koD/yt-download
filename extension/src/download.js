@@ -72,9 +72,13 @@ export async function fetchLiveSegments(format, start, end, onProgress, control,
   const missing = numbers.filter((sq) => !track.has(liveName(sq)));
   let done = numbers.length - missing.length;
   // 이번에 실제로 받은 용량과 조각 수. 조각당 평균 크기로 전체 용량을 어림하는 데 쓴다.
+  // 조각 크기는 트랙 안에서 균일해서, 몇 개만 받아보면 평균이 자리를 잡는다.
+  // 그 시점에 평균을 고정해(avg) 전체 용량 표시가 다운로드 내내 움직이지 않게 한다.
+  const SIZE_SAMPLE = 5;
   let gotBytes = 0;
   let fetched = 0;
-  onProgress?.(done, numbers.length, { bytes: 0, fetched: 0 });
+  let lockedAvg = 0;
+  onProgress?.(done, numbers.length, { bytes: 0, fetched: 0, avg: 0 });
 
   await mapWithLimit(missing, CONCURRENCY, async (sq) => {
     const bytes = await request.bytes(`${format.url}&sq=${sq}`, {});
@@ -82,7 +86,10 @@ export async function fetchLiveSegments(format, start, end, onProgress, control,
     done += 1;
     gotBytes += bytes.length;
     fetched += 1;
-    onProgress?.(done, numbers.length, { bytes: gotBytes, fetched });
+    if (!lockedAvg && fetched >= Math.min(SIZE_SAMPLE, missing.length)) {
+      lockedAvg = gotBytes / fetched;
+    }
+    onProgress?.(done, numbers.length, { bytes: gotBytes, fetched, avg: lockedAvg });
   }, control);
 
   // 앞머리(ftyp+moov)가 든 첫 조각을 찾는다. 대개 첫 번째 조각에 있다.
@@ -404,7 +411,9 @@ export async function downloadSection({
     for (const [, expected, size] of tracks) {
       if (!size) continue;
       got += size.bytes;
-      if (size.fetched > 0) estimated += (size.bytes / size.fetched) * expected;
+      // 고정된 평균(avg)이 나온 뒤로는 그 값만 쓴다 — 전체 용량이 흔들리지 않는다.
+      const average = size.avg || (size.fetched > 0 ? size.bytes / size.fetched : 0);
+      if (average > 0) estimated += average * expected;
     }
     return { got, estimated };
   };
@@ -480,16 +489,15 @@ export async function downloadSection({
 export async function downloadTrack({ format, kind, start, end, onProgress, control, store }) {
   const media = store || openMemory();
   const cache = await media.track(format.itag);
-  const report = (done, total, size) =>
+  const report = (done, total, size) => {
+    const average = size ? size.avg || (size.fetched > 0 ? size.bytes / size.fetched : 0) : 0;
     onProgress?.(
       done,
       total,
       "받는 중",
-      size && {
-        got: size.bytes,
-        estimated: size.fetched > 0 ? (size.bytes / size.fetched) * total : 0,
-      },
+      size && { got: size.bytes, estimated: average > 0 ? average * total : 0 },
     );
+  };
 
   const live = format.segmentSeconds > 0 && !format.indexRange;
   let track;

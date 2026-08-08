@@ -163,14 +163,10 @@ pub(crate) async fn fetch_live_section(
         .build()
         .context("could not create http client")?;
 
-    let mut outputs = Vec::new();
-    // 영상/음성 스트림을 통틀어 받은 용량. 표시가 중간에 0으로 되돌아가지 않게 한다.
-    let fetched_bytes = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    for (index, source) in info.live_sources.iter().enumerate() {
-        let stream_dir = dir.join(format!("stream{index}"));
-        let _ = tokio::fs::remove_dir_all(&stream_dir).await;
-        tokio::fs::create_dir_all(&stream_dir).await?;
-
+    // 받을 조각 목록을 스트림별로 먼저 전부 계산한다. 받기 전에 전체 용량을 재서
+    // 다운로드 내내 고정된 "받은 용량/전체 용량" 을 보여주기 위해서다.
+    let mut plans = Vec::new();
+    for source in info.live_sources.iter() {
         // 받을 조각 목록 / 파일이 시작하는 지점 / 어디까지 담기는지.
         let (targets, offset, covered_end) = match source.kind {
             LiveSourceKind::Dash { target_seconds } => {
@@ -183,6 +179,29 @@ pub(crate) async fn fetch_live_section(
         if targets.is_empty() {
             return Err(anyhow!("받을 조각이 없습니다"));
         }
+        plans.push((source, targets, offset, covered_end));
+    }
+
+    // 스트림마다 조각 몇 개의 크기를 물어(HEAD) 전체 용량을 잰다. 조각 크기가 균일해서
+    // 몇 개만 재도 충분하다. 하나라도 크기를 안 알려주면 0(모름)으로 두고,
+    // 받는 동안 평균으로 어림하는 방식으로 물러난다.
+    let mut expected_total = 0u64;
+    for (_, targets, _, _) in &plans {
+        let size = probe_stream_size(&client, targets).await;
+        if size == 0 {
+            expected_total = 0;
+            break;
+        }
+        expected_total += size;
+    }
+
+    let mut outputs = Vec::new();
+    // 영상/음성 스트림을 통틀어 받은 용량. 표시가 중간에 0으로 되돌아가지 않게 한다.
+    let fetched_bytes = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    for (index, (source, targets, offset, covered_end)) in plans.into_iter().enumerate() {
+        let stream_dir = dir.join(format!("stream{index}"));
+        let _ = tokio::fs::remove_dir_all(&stream_dir).await;
+        tokio::fs::create_dir_all(&stream_dir).await?;
 
         let total = targets.len();
         let done = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -211,9 +230,15 @@ pub(crate) async fn fetch_live_section(
                     update_job(&jobs, &job_id, |job| {
                         job.progress =
                             Some(((finished as f64 / total as f64) * 90.0).clamp(0.0, 90.0));
-                        // 전체 용량은 미리 알 수 없어서, 조각 몇 개를 받아본 뒤부터
-                        // "받은 용량/어림한 전체 용량" 으로 보여준다.
-                        job.message = if finished >= 3 {
+                        // 시작 전에 재둔 전체 용량이 있으면 그 값으로 고정해서 보여준다.
+                        // 없으면 조각 몇 개를 받아본 뒤부터 평균으로 어림한다.
+                        job.message = if expected_total > 0 {
+                            format!(
+                                "라이브 구간을 받는 중 {}/약 {}",
+                                format_size(total_bytes),
+                                format_size(expected_total)
+                            )
+                        } else if finished >= 3 {
                             let stream_bytes = total_bytes - stream_base;
                             let estimated = stream_base
                                 + (stream_bytes as f64 / finished as f64 * total as f64) as u64;
@@ -261,6 +286,36 @@ pub(crate) async fn fetch_live_section(
     }
 
     Ok(outputs)
+}
+
+// 조각 몇 개의 크기를 물어(HEAD) 스트림 전체 용량을 어림한다. 못 재면 0.
+// 조각 크기가 균일해서 몇 개만 재도 충분하다. 첫 조각은 초기화 정보(DASH sq=0)라
+// 유난히 작으니 표본에서 뺀다.
+async fn probe_stream_size(client: &reqwest::Client, targets: &[String]) -> u64 {
+    let count = targets.len();
+    let mut picks = vec![count / 4, count / 2, (count * 3) / 4];
+    picks.retain(|&index| index > 0 && index < count);
+    picks.dedup();
+    if picks.is_empty() {
+        picks.push(count - 1);
+    }
+    let sizes = futures_util::future::join_all(picks.iter().map(|&index| {
+        let url = targets[index].clone();
+        let client = client.clone();
+        async move {
+            let response = client.head(&url).send().await.ok()?;
+            if !response.status().is_success() {
+                return None;
+            }
+            response.content_length().filter(|length| *length > 0)
+        }
+    }))
+    .await;
+    let known: Vec<u64> = sizes.into_iter().flatten().collect();
+    if known.is_empty() {
+        return 0;
+    }
+    known.iter().sum::<u64>() / known.len() as u64 * count as u64
 }
 
 // 조각을 몇 개 더 받아 시간 계산 오차를 흡수한다(조각 하나가 5초라 비용이 작다).

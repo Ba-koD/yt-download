@@ -267,12 +267,44 @@
 .ytdl-clock {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
   margin-left: auto;
   margin-right: 8px;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   cursor: default;
+}
+
+/* 빗금 양옆은 넉넉히 — "지금 / 전체"가 한 덩어리로 붙어 읽히면 어느 쪽이 어느 것인지 흐려진다. */
+.ytdl-slash {
+  margin: 0 5px;
+}
+
+/* 한 장씩 옮기는 단추. 시계 양옆에 서므로 작고 조용하게 두되, 눈에는 띄어야 한다. */
+.ytdl-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  padding: 0;
+  cursor: pointer;
+}
+
+.ytdl-step svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+}
+
+.ytdl-step:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.08);
 }
 
 .ytdl-now {
@@ -285,7 +317,8 @@
   padding: 0 5px;
   font: inherit;
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  /* 양옆에 단추가 서 있으므로 가운데로 둔다. 오른쪽으로 붙이면 왼쪽 단추와 멀어져 어색하다. */
+  text-align: center;
 }
 
 /* 평소에는 그냥 글자처럼 두고, 손이 닿을 때만 고칠 수 있는 칸이라고 알려준다. */
@@ -368,21 +401,35 @@
   text-align: center;
 }
 
+/*
+ * 꺾쇠를 우리가 그린다.
+ *
+ * 크롬이 그리는 기본 꺾쇠는 `padding-right` 를 무시하고 테두리에 붙어버린다
+ * (여백을 늘리면 글자만 왼쪽으로 밀릴 뿐 꺾쇠는 그 자리다). 떨어뜨릴 방법이 없어서
+ * `appearance: none` 으로 끄고 배경 그림으로 직접 놓는다 — 자리를 우리가 정한다.
+ */
 .ytdl-quality {
   height: 34px;
-  min-width: 150px;
+  min-width: 162px;
   max-width: 100%;
   border: 1px solid rgba(0, 0, 0, 0.18);
   border-radius: 8px;
-  background: #fff;
+  background-color: #fff;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1.5 2 6 6.5 10.5 2' fill='none' stroke='%23606060' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 12px 8px;
   color: inherit;
-  padding: 0 8px;
+  /* 오른쪽은 꺾쇠 자리(12px) + 테두리와의 간격(12px) + 글자와의 간격만큼 비워 둔다. */
+  padding: 0 34px 0 10px;
   font: inherit;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 /* 받을 내용(영상+소리/영상만/소리만). 화질칸과 같은 생김새, 폭만 좁다. */
 .ytdl-media {
-  min-width: 96px;
+  min-width: 108px;
 }
 
 .ytdl-go {
@@ -474,8 +521,13 @@ html[dark] .ytdl-time,
 html[dark] .ytdl-quality,
 html[dark] .ytdl-mark {
   border-color: rgba(255, 255, 255, 0.22);
-  background: #121212;
+  background-color: #121212;
   color: #f1f1f1;
+}
+
+/* 어두운 테마에서는 꺾쇠도 밝게. 배경 그림이라 currentColor 가 먹지 않아 따로 그린다. */
+html[dark] .ytdl-quality {
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1.5 2 6 6.5 10.5 2' fill='none' stroke='%23d0d0d0' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 html[dark] .ytdl-mark:hover {
@@ -487,6 +539,10 @@ html[dark] .ytdl-slash,
 html[dark] .ytdl-total,
 html[dark] .ytdl-status {
   color: rgba(255, 255, 255, 0.6);
+}
+
+html[dark] .ytdl-step:hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 html[dark] .ytdl-now:hover {

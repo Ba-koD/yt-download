@@ -384,6 +384,30 @@
     "M12 2a1 1 0 00-1 1v11.586l-4.293-4.293a1 1 0 10-1.414 1.414L12 18.414l6.707-6.707a1 1 0 " +
     "10-1.414-1.414L13 14.586V3a1 1 0 00-1-1Zm7 18H5a1 1 0 000 2h14a1 1 0 000-2Z";
 
+  /**
+   * 한 장 이동 아이콘. 편집 프로그램에서 쓰는 모양 그대로 — 막대에 삼각형이 붙어 있다.
+   * 막대가 "여기서 멈춘다", 삼각형이 "이쪽으로 한 칸"을 뜻한다.
+   *
+   * 글자(‹ ›)로 그리면 그냥 화살표로 보여서 한 장씩 간다는 뜻이 드러나지 않는다.
+   */
+  function frameIcon(back) {
+    const NS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("focusable", "false");
+    svg.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS(NS, "path");
+    path.setAttribute("fill", "currentColor");
+    path.setAttribute(
+      "d",
+      back
+        ? "M12.2 3.4v9.2L5.6 8l6.6-4.6ZM3.2 3.2h1.6v9.6H3.2Z"
+        : "M3.8 3.4v9.2L10.4 8 3.8 3.4ZM11.2 3.2h1.6v9.6h-1.6Z",
+    );
+    svg.append(path);
+    return svg;
+  }
+
   function downloadIcon() {
     const NS = "http://www.w3.org/2000/svg";
     const svg = document.createElementNS(NS, "svg");
@@ -513,6 +537,50 @@
     if (video && Number.isFinite(seconds) && boundsSpan() > 0) video.currentTime = seconds;
   }
 
+  /**
+   * 그 시각으로 영상을 옮기고, **실제로 화면에 뜬 프레임**의 시각을 돌려준다.
+   *
+   * 영상은 프레임 단위로만 존재한다(30fps 면 33.37ms 마다 한 장). 그래서 `7.14` 처럼
+   * 적어 넣으면 화면에 뜨는 것은 그보다 조금 앞선 장이고, 받는 파일도 그 장부터 시작한다.
+   * 여기서 실제 값을 받아 칸에 되적으면 눈에 보이는 숫자와 받을 파일이 어긋나지 않는다.
+   *
+   * `requestVideoFrameCallback` 이 뜬 프레임의 정확한 시각을 알려준다. 없는 브라우저나
+   * 배경 탭에서는 콜백이 안 오므로 옮긴 자리로 갈음한다.
+   */
+  function seekToFrame(seconds) {
+    const video = player();
+    if (!video || !Number.isFinite(seconds)) return Promise.resolve(seconds);
+    video.currentTime = seconds;
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = (value) => {
+        if (settled) return;
+        settled = true;
+        resolve(Number.isFinite(value) ? value : seconds);
+      };
+      video.requestVideoFrameCallback?.((_, info) => done(info.mediaTime));
+      video.addEventListener("seeked", () => done(video.currentTime), { once: true });
+      setTimeout(() => done(video.currentTime), 500);
+    });
+  }
+
+  /**
+   * 한 장 앞이나 뒤로 옮긴다. 유튜브도 `,` `.` 로 같은 일을 하지만 아는 사람이 드물다.
+   *
+   * 프레임률은 화질 목록이 알려준다. 다만 29.97 을 30 으로 적어 보내므로 정확하지 않다.
+   * 그래서 "한 장 반 앞" 또는 "반 장 뒤"로 건너뛴 다음, 실제로 뜬 장의 시각을 받아 온다.
+   * 그 정도 여유면 프레임률이 조금 어긋나도 이웃한 장에 정확히 떨어진다.
+   */
+  async function stepFrame(direction) {
+    const video = player();
+    if (!video || boundsSpan() <= 0) return;
+    const fps = Number(qualityChoices()[0]?.fps) || 30;
+    const here = await seekToFrame(video.currentTime);
+    const edge = bounds();
+    const to = here + (direction > 0 ? 1.5 : -0.5) / fps;
+    await seekToFrame(Math.max(edge.start, Math.min(to, edge.end)));
+  }
+
   function buildPanel(floating) {
     el.inputs = {
       start: make("input", { class: "ytdl-time", value: "0:00.00", dataset: { time: "start" } }),
@@ -564,6 +632,16 @@
     });
     el.status = make("div", { class: "ytdl-status", text: "화질 목록을 불러오는 중입니다" });
     // 제목 줄의 시계. 왼쪽은 고쳐 넣을 수 있는 칸이라 그 자리로 바로 건너뛴다.
+    el.prevFrame = make(
+      "button",
+      { class: "ytdl-step", type: "button", title: "한 장 앞으로 · 유튜브 단축키 ," },
+      [frameIcon(true)],
+    );
+    el.nextFrame = make(
+      "button",
+      { class: "ytdl-step", type: "button", title: "한 장 뒤로 · 유튜브 단축키 ." },
+      [frameIcon(false)],
+    );
     el.now = make("input", {
       class: "ytdl-now",
       value: "0:00.00",
@@ -576,10 +654,14 @@
     close.addEventListener("click", togglePanel);
 
     const clock = make("div", { class: "ytdl-clock" }, [
+      el.prevFrame,
       el.now,
+      el.nextFrame,
       make("span", { class: "ytdl-slash", text: "/" }),
       el.total,
     ]);
+    el.prevFrame.addEventListener("click", () => stepFrame(-1));
+    el.nextFrame.addEventListener("click", () => stepFrame(1));
     // 시계를 잡고 끌면 패널이 딸려 온다. 칸에 글자를 넣으려는 것이지 옮기려는 게 아니다.
     clock.addEventListener("pointerdown", (event) => event.stopPropagation());
 
@@ -635,7 +717,12 @@
           render();
           return;
         }
-        setRange(which === "start" ? value : state.start, which === "end" ? value : state.end);
+        // 적어 넣은 시각으로 영상을 옮기고, 화면에 실제로 뜬 장의 시각을 받아 그것을 쓴다.
+        // 눈에 보이는 숫자와 받게 될 파일이 어긋나지 않게 하려는 것이다.
+        const edge = bounds();
+        seekToFrame(Math.max(edge.start, Math.min(value, edge.end))).then((at) => {
+          setRange(which === "start" ? at : state.start, which === "end" ? at : state.end);
+        });
       });
     }
 
@@ -647,7 +734,9 @@
         el.now.value = showClock(playedSeconds(), 2);
         return;
       }
-      seek(Math.max(edge.start, Math.min(value, edge.end)));
+      seekToFrame(Math.max(edge.start, Math.min(value, edge.end))).then((at) => {
+        if (document.activeElement !== el.now) el.now.value = showClock(at, 2);
+      });
     });
     // Enter 로 확정하면 칸에서 손을 뗀다(다시 시계가 흐르기 시작한다).
     el.now.addEventListener("keydown", (event) => {

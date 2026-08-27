@@ -388,6 +388,9 @@ const FALLBACK_CLIENTS = [
   },
 ];
 
+/** 기본 클라이언트부터 차례로 돌 목록. 몫이 떨어지면 다음 것으로 갈아탄다. */
+const ROTATION = [CLIENT, ...FALLBACK_CLIENTS];
+
 function buildPlayerRequest(videoId, visitorData, client = CLIENT) {
   return {
     videoId,
@@ -578,7 +581,7 @@ function shortCodec(codec) {
   return codec;
 }
 
-return {CLIENT: CLIENT, FALLBACK_CLIENTS: FALLBACK_CLIENTS, buildPlayerRequest: buildPlayerRequest, fetchVisitorData: fetchVisitorData, extractVisitorData: extractVisitorData, fetchPlayerResponse: fetchPlayerResponse, authHeaders: authHeaders, sha1: sha1, readFormats: readFormats, formatLabel: formatLabel, shortCodec: shortCodec};
+return {CLIENT: CLIENT, FALLBACK_CLIENTS: FALLBACK_CLIENTS, ROTATION: ROTATION, buildPlayerRequest: buildPlayerRequest, fetchVisitorData: fetchVisitorData, extractVisitorData: extractVisitorData, fetchPlayerResponse: fetchPlayerResponse, authHeaders: authHeaders, sha1: sha1, readFormats: readFormats, formatLabel: formatLabel, shortCodec: shortCodec};
 });
 __define("mp4index.js", (__need) => {
 // DASH mp4 의 조각 색인(sidx) 을 읽어 "시간 ↔ 바이트" 표를 만든다.
@@ -3795,12 +3798,30 @@ window.__ytdlPageTeardown = () => {
     try {
       // 몫이 떨어져 403 이 나면 다른 클라이언트로 물어 새 주소를 받아 온다.
       // 같은 itag 면 어느 클라이언트에서 받아도 바이트가 같아서 받던 자리에서 이어진다.
-      let clientAt = -1;
+      //
+      // 목록을 다 돌면 몫이 다시 찰 때까지 기다렸다가 처음부터 또 돈다. 기다리는 동안
+      // 남은 시간을 적어 주고, 정지를 누르면 그 자리에서 끝난다(받아둔 조각은 남는다).
+      // 지금 쓰고 있는 자리. 처음 목록을 받을 때 쓴 것이 0번이므로 거기서 시작한다.
+      let clientAt = 0;
+      let rounds = 0;
+      const waitForQuota = async (seconds) => {
+        for (let left = seconds; left > 0; left -= 1) {
+          await state.control?.gate(); // 정지를 눌렀으면 여기서 끝난다
+          setStatus(`유튜브가 준 몫을 다 썼습니다 · ${left}초 뒤 이어받습니다`);
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      };
       const renewUrl = async () => {
         clientAt += 1;
-        const next = innertube.FALLBACK_CLIENTS[clientAt];
-        if (!next) return null;
-        setStatus(`유튜브가 준 몫을 다 썼습니다 · ${next.clientName} 로 갈아타 이어받습니다`);
+        if (clientAt >= innertube.ROTATION.length) {
+          rounds += 1;
+          // 몫은 몇 분이면 되돌아온다(실측). 한 바퀴 돌 때마다 조금씩 더 기다린다.
+          if (rounds > 3) return null;
+          await waitForQuota(60 * rounds);
+          clientAt = 0;
+        }
+        const next = innertube.ROTATION[clientAt];
+        setStatus(`몫이 떨어져 ${next.clientName} 로 갈아타 이어받습니다`);
         // 이 클라이언트들의 주소에는 `n` 이 붙지 않아 해독기가 필요 없다(확인했다).
         const fresh = await getFormats(state.videoId, null, null, next);
         const table = new Map(

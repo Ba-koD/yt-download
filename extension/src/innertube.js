@@ -55,6 +55,9 @@ export const FALLBACK_CLIENTS = [
   },
 ];
 
+/** 기본 클라이언트부터 차례로 돌 목록. 몫이 떨어지면 다음 것으로 갈아탄다. */
+export const ROTATION = [CLIENT, ...FALLBACK_CLIENTS];
+
 export function buildPlayerRequest(videoId, visitorData, client = CLIENT) {
   return {
     videoId,

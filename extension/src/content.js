@@ -575,54 +575,67 @@
    * 적어 넣으면 화면에 뜨는 것은 그보다 조금 앞선 장이고, 받는 파일도 그 장부터 시작한다.
    * 여기서 실제 값을 받아 칸에 되적으면 눈에 보이는 숫자와 받을 파일이 어긋나지 않는다.
    *
-   * `requestVideoFrameCallback` 이 뜬 프레임의 정확한 시각을 알려준다. 없는 브라우저나
-   * 배경 탭에서는 콜백이 안 오므로 옮긴 자리로 갈음한다.
+   * `requestVideoFrameCallback` 이 **새로 그려진** 장의 정확한 시각을 알려준다. 여기서
+   * "새로"가 중요하다 — 같은 장 안으로 옮기면 다시 그릴 것이 없어 콜백이 아예 오지 않는다.
+   * 그때 `seeked` 가 주는 값(= 우리가 요청한 자리)을 장 시각으로 쓰면 실제로는 없는 시각이
+   * 된다. 실측으로 겪었다: 한 장 이동이 13ms 만 움직이고 멈춰, 시계가 흔들려 보였다.
+   * 그래서 콜백이 왔는지를 `fresh` 로 함께 알린다.
+   *
+   * @returns {Promise<{media: number, fresh: boolean}>}
+   *   `fresh` 가 거짓이면 장이 바뀌지 않은 것이다(또는 콜백을 받지 못한 것이다).
    */
   function seekToFrame(seconds) {
     const video = player();
-    if (!video || !Number.isFinite(seconds)) return Promise.resolve(seconds);
+    if (!video || !Number.isFinite(seconds)) {
+      return Promise.resolve({ media: seconds, fresh: false });
+    }
     video.currentTime = seconds;
     return new Promise((resolve) => {
       let settled = false;
-      const done = (value) => {
+      const finish = (media, fresh) => {
         if (settled) return;
         settled = true;
-        const at = Number.isFinite(value) ? value : seconds;
-        // 화면에 실제로 뜬 장의 시각을 적어 둔다. 시계가 이 값을 쓴다 —
-        // `currentTime` 은 우리가 요청한 자리 그대로라 프레임 한가운데일 수 있다.
-        state.shownFrame = { media: at, at: Number(video.currentTime) };
-        resolve(at);
+        const at = Number(video.currentTime);
+        // 장이 그대로면 시각은 두고 "어느 자리에서 본 것인지"만 새로 적는다.
+        // 그래야 시계가 계속 그 장의 시각을 적는다.
+        if (fresh) state.shownFrame = { media, at };
+        else if (state.shownFrame) state.shownFrame = { media: state.shownFrame.media, at };
+        resolve({ media: fresh ? media : (state.shownFrame?.media ?? seconds), fresh });
       };
-      video.requestVideoFrameCallback?.((_, info) => done(info.mediaTime));
-      video.addEventListener("seeked", () => done(video.currentTime), { once: true });
-      setTimeout(() => done(video.currentTime), 500);
+      video.requestVideoFrameCallback?.((_, info) => finish(info.mediaTime, true));
+      // 새 장이면 콜백이 `seeked` 보다 먼저 온다(실측 6~10ms 대 12~16ms). 그래도 조금 더
+      // 기다렸다 끊는다 — 같은 장이면 콜백은 영영 오지 않으므로 여기서 끝내야 한다.
+      video.addEventListener("seeked", () => setTimeout(() => finish(null, false), 50), {
+        once: true,
+      });
+      setTimeout(() => finish(null, false), 500);
     });
   }
 
   /**
    * 한 장 앞이나 뒤로 옮긴다. 유튜브도 `,` `.` 로 같은 일을 하지만 아는 사람이 드물다.
    *
-   * 프레임률은 화질 목록이 알려준다. 다만 29.97 을 30 으로 적어 보내므로 정확하지 않다.
-   * 그래서 "한 장 반 앞" 또는 "반 장 뒤"로 건너뛴 다음, 실제로 뜬 장의 시각을 받아 온다.
-   * 그 정도 여유면 프레임률이 조금 어긋나도 이웃한 장에 정확히 떨어진다.
+   * 화질 목록이 알려주는 프레임률은 정확하지 않다 — 29.97 을 30 이라고 적어 보낸다.
+   * 그래서 한 번에 크게 뛰지 않고 조금씩 밀어 보며, **새 장이 그려지면** 멈춘다.
+   * 크게 뛰면 두 장을 건너뛰고, 작게만 뛰면 제자리다.
    */
   async function stepFrame(direction) {
     const video = player();
     if (!video || boundsSpan() <= 0) return;
-    // 화질 목록이 알려주는 프레임률은 정확하지 않다(29.97 을 30 으로 적어 보낸다).
-    // 그래서 한 번에 크게 뛰지 않고 조금씩 밀어 보며 장이 실제로 바뀌면 멈춘다.
-    // 크게 뛰면 두 장을 건너뛰고, 작게만 뛰면 제자리에 머문다.
+    // 재생 중에는 옮겨봐야 곧 흘러가 버린다. 유튜브의 `,` `.` 도 멈춘 뒤에야 뜻이 있다.
+    video.pause();
     const fps = Number(qualityChoices()[0]?.fps) || 30;
     const edge = bounds();
-    const here = await seekToFrame(video.currentTime);
-    for (let step = 1; step <= 6; step += 1) {
-      const to = here + (direction * step * 0.4) / fps;
-      const landed = await seekToFrame(Math.max(edge.start, Math.min(to, edge.end)));
-      if (Math.abs(landed - here) > 1e-4) return;
-      // 구간 끝에 닿아 더 갈 데가 없으면 그만둔다.
-      if (to <= edge.start || to >= edge.end) return;
+    const from = (await seekToFrame(video.currentTime)).media;
+    for (let step = 1; step <= 8; step += 1) {
+      const to = from + (direction * step * 0.4) / fps;
+      const limited = Math.max(edge.start, Math.min(to, edge.end));
+      const landed = await seekToFrame(limited);
+      if (landed.fresh && Math.abs(landed.media - from) > 1e-4) return;
+      if (limited <= edge.start || limited >= edge.end) return;
     }
   }
+
 
   function buildPanel(floating) {
     el.inputs = {
@@ -763,8 +776,8 @@
         // 적어 넣은 시각으로 영상을 옮기고, 화면에 실제로 뜬 장의 시각을 받아 그것을 쓴다.
         // 눈에 보이는 숫자와 받게 될 파일이 어긋나지 않게 하려는 것이다.
         const edge = bounds();
-        seekToFrame(Math.max(edge.start, Math.min(value, edge.end))).then((at) => {
-          setRange(which === "start" ? at : state.start, which === "end" ? at : state.end);
+        seekToFrame(Math.max(edge.start, Math.min(value, edge.end))).then(({ media }) => {
+          setRange(which === "start" ? media : state.start, which === "end" ? media : state.end);
         });
       });
     }
@@ -777,8 +790,8 @@
         el.now.value = showClock(playedSeconds(), 2);
         return;
       }
-      seekToFrame(Math.max(edge.start, Math.min(value, edge.end))).then((at) => {
-        if (document.activeElement !== el.now) el.now.value = showClock(at, 2);
+      seekToFrame(Math.max(edge.start, Math.min(value, edge.end))).then(({ media }) => {
+        if (document.activeElement !== el.now) el.now.value = showClock(media, 2);
       });
     });
     // Enter 로 확정하면 칸에서 손을 뗀다(다시 시계가 흐르기 시작한다).

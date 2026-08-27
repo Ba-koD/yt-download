@@ -421,7 +421,8 @@ Deno.test("일부만 받아뒀으면 없는 조각만 받는다", async () => {
 });
 
 // --- 소리 조각 뒤 잘라내기 ---
-import { concat, dropLeadingSamples, dropTrailingSamples, listBoxes, makeBox } from "../src/mp4mux.js";
+import { concat, listBoxes, makeBox, readSamples } from "../src/mp4mux.js";
+import { writeProgressive } from "../src/download.js";
 
 const beU32 = (value) => {
   const bytes = new Uint8Array(4);
@@ -429,87 +430,163 @@ const beU32 = (value) => {
   return bytes;
 };
 
-/** 유튜브 소리 조각과 같은 뼈대의 작은 조각. 샘플마다 3바이트, 길이는 전부 같다. */
-function fakeAudioFragment({ samples = 10, size = 3, sampleDuration = 1024, base = 1000 } = {}) {
-  const tfhd = makeBox("tfhd", beU32(0x000008), beU32(2), beU32(sampleDuration));
+/**
+ * 유튜브 **영상** 조각과 같은 뼈대. trun 이 길이·크기·플래그·화면순서 보정을 모두 담는다
+ * (유튜브 H.264 조각의 flags 는 0xe01 이다). 소리 조각만 다루던 옛 파서는 이 모양을
+ * 아예 읽지 못해서, 영상은 조각째 담는 수밖에 없었다.
+ *
+ * 샘플 i 의 바이트는 전부 i 로 채운다 — 어느 바이트가 어느 샘플인지 알아보려고.
+ */
+function fakeVideoFragment({ count = 6, dur = 256, base = 0, ctos = null, syncAt = [0] } = {}) {
+  const sizes = Array.from({ length: count }, (_, i) => 4 + i);
+  // B프레임이 하나 낀 흔한 배치. 디코딩 순서 0,1,2,3 이 화면에서는 1,3,2,4 로 나온다.
+  // 이렇게 해야 화면 시각이 서로 겹치지 않는다(유튜브 H.264 도 첫 화면 시각이 256이다).
+  const offsets = ctos || Array.from({ length: count }, (_, i) => [256, 512, 0, 256][i % 4]);
+  const entries = [];
+  for (let i = 0; i < count; i += 1) {
+    // sample_flags 의 16번 비트가 1이면 "키프레임 아님".
+    const flags = syncAt.includes(i) ? 0 : 0x00010000;
+    entries.push(beU32(dur), beU32(sizes[i]), beU32(flags), beU32(offsets[i]));
+  }
+  const tfhd = makeBox("tfhd", beU32(0x020000), beU32(1)); // default-base-is-moof
   const tfdt = makeBox("tfdt", beU32(0), beU32(base));
-  const trun = makeBox(
-    "trun",
-    beU32(0x000201), // data_offset + sample_size
-    beU32(samples),
-    beU32(0),
-    ...Array.from({ length: samples }, () => beU32(size)),
+  const trun = makeBox("trun", beU32(0x000f01), beU32(count), beU32(0), ...entries);
+  const moof = makeBox("moof", makeBox("traf", tfhd, tfdt, trun));
+  // data_offset 은 moof 시작이 기준이다. moof 를 다 짓고 나서야 값을 알 수 있다.
+  const traf = listBoxes(moof, 8, moof.length).find((x) => x.type === "traf");
+  const at = listBoxes(moof, traf.start + 8, traf.end).find((x) => x.type === "trun");
+  new DataView(moof.buffer, moof.byteOffset).setUint32(at.start + 16, moof.length + 8);
+
+  const payload = new Uint8Array(sizes.reduce((a, b) => a + b, 0));
+  let o = 0;
+  sizes.forEach((size, i) => {
+    payload.fill(i, o, o + size);
+    o += size;
+  });
+  return { bytes: concat([moof, makeBox("mdat", payload)]), sizes, offsets };
+}
+
+/** 앞머리(ftyp+moov) 흉내. 표는 비어 있어도 된다 — 우리가 채워 넣을 자리다. */
+function fakeInit({ timescale = 15360, movieTimescale = 1000 } = {}) {
+  const mvhd = makeBox("mvhd", beU32(0), beU32(0), beU32(0), beU32(movieTimescale),
+    beU32(0), beU32(0x00010000), new Uint8Array(76), beU32(2));
+  const tkhd = makeBox("tkhd", beU32(0), beU32(0), beU32(0), beU32(1), beU32(0), beU32(0),
+    new Uint8Array(60));
+  const mdhd = makeBox("mdhd", beU32(0), beU32(0), beU32(0), beU32(timescale), beU32(0), beU32(0));
+  const hdlr = makeBox("hdlr", beU32(0), beU32(0), new TextEncoder().encode("vide"),
+    new Uint8Array(13));
+  const stbl = makeBox("stbl", makeBox("stsd", beU32(0), beU32(0)));
+  const minf = makeBox("minf", makeBox("dinf"), stbl);
+  const trak = makeBox("trak", tkhd, makeBox("mdia", mdhd, hdlr, minf));
+  return concat([makeBox("ftyp", new TextEncoder().encode("isom")), makeBox("moov", mvhd, trak)]);
+}
+
+/** 지어진 파일 속에서 표 하나를 찾아 준다. */
+function findTable(file, type) {
+  let found = null;
+  const walk = (from, to) => {
+    for (const box of listBoxes(file, from, to)) {
+      if (box.type === type) found = found || box;
+      else if (["moov", "trak", "mdia", "minf", "stbl", "edts"].includes(box.type)) {
+        walk(box.start + 8, box.end);
+      }
+    }
+  };
+  walk(0, file.length);
+  return found;
+}
+
+/** 조각 하나를 저장소에 넣고 트랙 하나짜리 파일을 짓는다. */
+async function buildOne({ start, end, count = 6, timescale = 15360, ctos = null }) {
+  const { bytes } = fakeVideoFragment({ count, ctos });
+  const store = openMemory();
+  const cache = await store.track("t");
+  await cache.write("f0", bytes);
+  const output = await store.output();
+  const span = await writeProgressive(
+    output,
+    [{
+      cache,
+      init: fakeInit({ timescale }),
+      segments: [{ time: 0, duration: (count * 256) / timescale, name: "f0" }],
+      firstTime: 0,
+      snap: true,
+    }],
+    { start, end },
+    null,
+    null,
   );
-  const payload = new Uint8Array(samples * size).map((_, i) => i);
-  return concat([makeBox("moof", makeBox("traf", tfhd, tfdt, trun)), makeBox("mdat", payload)]);
+  const blob = await output.close();
+  return { file: new Uint8Array(await blob.arrayBuffer()), span };
 }
 
-function trunSampleCount(fragment) {
-  const moof = listBoxes(fragment).find((b) => b.type === "moof");
-  const traf = listBoxes(fragment, moof.start + 8, moof.end).find((b) => b.type === "traf");
-  const trun = listBoxes(fragment, traf.start + 8, traf.end).find((b) => b.type === "trun");
-  return new DataView(fragment.buffer, fragment.byteOffset + trun.start + 8 + 4).getUint32(0);
-}
+Deno.test("영상 조각의 trun 을 샘플 단위로 읽는다", () => {
+  const { bytes, sizes, offsets } = fakeVideoFragment({ count: 6, syncAt: [0, 3] });
+  const read = readSamples(bytes);
 
-Deno.test("소리 조각의 뒤를 잘라 영상 끝에 맞춘다", () => {
-  const fragment = fakeAudioFragment(); // 10 샘플 × 1024/44100초
-  const keepSeconds = (4 * 1024) / 44100; // 딱 4샘플 어치
-  const cut = dropTrailingSamples(fragment, keepSeconds, 44100);
-
-  assertEquals(trunSampleCount(cut), 4);
-  const mdat = listBoxes(cut).find((b) => b.type === "mdat");
-  assertEquals(mdat.end - mdat.start - 8, 4 * 3); // 남은 샘플 바이트만
-  // 시작 시각(tfdt)은 그대로다 — 뒤만 잘랐다.
-  const moof = listBoxes(cut).find((b) => b.type === "moof");
-  const traf = listBoxes(cut, moof.start + 8, moof.end).find((b) => b.type === "traf");
-  const tfdt = listBoxes(cut, traf.start + 8, traf.end).find((b) => b.type === "tfdt");
-  assertEquals(new DataView(cut.buffer, cut.byteOffset + tfdt.start + 8 + 4).getUint32(0), 1000);
-
-  // 조각이 남길 길이보다 짧으면 손대지 않고, 남길 것이 없으면 통째로 버린다.
-  assertEquals(dropTrailingSamples(fragment, 999, 44100), fragment);
-  assertEquals(dropTrailingSamples(fragment, Infinity, 44100), fragment);
-  assertEquals(dropTrailingSamples(fragment, 0, 44100), null);
+  assertEquals(read.samples.length, 6);
+  assertEquals(read.samples.map((s) => s.size), sizes);
+  assertEquals(read.samples.map((s) => s.cto), offsets);
+  assertEquals(read.samples.map((s) => s.sync), [true, false, false, true, false, false]);
+  // 샘플 바이트가 정말 그 자리에 있는지. i 번 샘플은 전부 i 로 채워 두었다.
+  read.samples.forEach((sample, i) => {
+    const slice = bytes.subarray(sample.at, sample.at + sample.size);
+    assert(slice.every((byte) => byte === i), `${i}번 샘플이 엉뚱한 자리를 가리킨다`);
+  });
 });
 
-/** 조각 안 moof 짝들의 (샘플 수, 시작 시각) 목록. */
-function fragmentsInfo(bytes) {
-  const out = [];
-  for (const box of listBoxes(bytes)) {
-    if (box.type !== "moof") continue;
-    const traf = listBoxes(bytes, box.start + 8, box.end).find((b) => b.type === "traf");
-    const kids = listBoxes(bytes, traf.start + 8, traf.end);
-    const trun = kids.find((b) => b.type === "trun");
-    const tfdt = kids.find((b) => b.type === "tfdt");
-    const view = new DataView(bytes.buffer, bytes.byteOffset);
-    out.push({
-      samples: view.getUint32(trun.start + 8 + 4),
-      time: view.getUint32(tfdt.start + 8 + 4),
-    });
-  }
-  return out;
-}
+Deno.test("조각화 흔적 없는 일반 mp4 로 짓는다", async () => {
+  const { file } = await buildOne({ start: 0, end: 1 });
+  // moof 나 mvex 가 남아 있으면 재생기가 편집 목록을 무시한다(실측으로 확인한 함정이다).
+  assertEquals(listBoxes(file).map((b) => b.type), ["ftyp", "moov", "mdat"]);
+  assertEquals(findTable(file, "mvex"), null);
+});
 
-Deno.test("moof 짝이 여러 개인 조각(라이브 출신)도 앞뒤를 자를 수 있다", () => {
-  // 5샘플짜리 짝 둘 = 총 10샘플. 라이브 조각을 이어붙인 다시보기가 이런 모양이다.
-  const multi = concat([
-    fakeAudioFragment({ samples: 5, base: 1000 }),
-    fakeAudioFragment({ samples: 5, base: 1000 + 5 * 1024 }),
-  ]);
+Deno.test("덩어리 위치가 진짜 샘플 바이트를 가리킨다", async () => {
+  const { file } = await buildOne({ start: 0, end: 1 });
+  const dv = new DataView(file.buffer, file.byteOffset, file.byteLength);
+  const stco = findTable(file, "stco");
+  const at = dv.getUint32(stco.start + 16);
+  const stsz = findTable(file, "stsz");
+  const firstSize = dv.getUint32(stsz.start + 20);
+  assert(file.subarray(at, at + firstSize).every((b) => b === 0), "덩어리가 엉뚱한 자리를 가리킨다");
+});
 
-  // 뒤 자르기: 7샘플 어치만 남기면 → 첫 짝은 통째로, 둘째 짝은 2샘플만.
-  const tail = dropTrailingSamples(multi, (7 * 1024) / 44100, 44100);
-  assertEquals(fragmentsInfo(tail), [
-    { samples: 5, time: 1000 },
-    { samples: 2, time: 1000 + 5 * 1024 },
-  ]);
+Deno.test("키프레임 자리를 표로 옮긴다", async () => {
+  const { file } = await buildOne({ start: 0, end: 1 });
+  const dv = new DataView(file.buffer, file.byteOffset, file.byteLength);
+  const stss = findTable(file, "stss");
+  assertEquals(dv.getUint32(stss.start + 12), 1); // 항목 하나
+  assertEquals(dv.getUint32(stss.start + 16), 1); // 1번 샘플(1부터 센다)
+  assert(findTable(file, "ctts"), "화면순서 보정이 있으면 ctts 를 넣어야 한다");
+});
 
-  // 앞 자르기: 6샘플 어치를 버리면 → 첫 짝은 통째로 사라지고, 둘째 짝은 1샘플을 잃고
-  // 시작 시각이 그만큼 뒤로 밀린다.
-  const head = dropLeadingSamples(multi, (6 * 1024) / 44100, 44100);
-  assertEquals(fragmentsInfo(head), [{ samples: 4, time: 1000 + 6 * 1024 }]);
+Deno.test("보정값이 전부 0이면 ctts 를 넣지 않는다", async () => {
+  const { file } = await buildOne({ start: 0, end: 1, count: 4, ctos: [0, 0, 0, 0] });
+  assertEquals(findTable(file, "ctts"), null);
+});
 
-  // 전부 버려야 하면 null.
-  assertEquals(dropLeadingSamples(multi, 999, 44100), null);
+Deno.test("뒤는 실제로 잘라내고 앞은 편집 목록으로 가린다", async () => {
+  const timescale = 15360;
+  const frame = 256 / timescale; // 16.67ms
+  const { file, span } = await buildOne({ start: 0.02, end: 0.05, count: 8, timescale });
+  const dv = new DataView(file.buffer, file.byteOffset, file.byteLength);
+
+  const kept = dv.getUint32(findTable(file, "stsz").start + 16);
+  assert(kept < 8, `뒤가 잘리지 않았다 (${kept}개 그대로)`);
+
+  const elst = findTable(file, "elst");
+  assert(elst, "편집 목록이 없다");
+  assert(dv.getInt32(elst.start + 20) > 0, "앞을 건너뛰라고 적혀 있어야 한다");
+  // 고른 지점보다 뒤에서 시작하면 그 순간 화면에 떠 있던 프레임을 잃는다.
+  assert(span.start <= 0.02 + 1e-9, "고른 지점을 지나쳐 시작했다");
+  assert(0.02 - span.start < frame + 1e-9, "한 프레임 넘게 앞당겼다");
+});
+
+Deno.test("고른 지점이 프레임 한가운데면 그 프레임부터 시작한다", async () => {
+  // 화면에 나오는 순서로 프레임은 0ms, 16.67ms, 33.3ms … 25ms 를 고르면 둘째 장 안이다.
+  const { span } = await buildOne({ start: 0.025, end: 0.09, count: 8 });
+  assertEquals(span.start.toFixed(5), (256 / 15360).toFixed(5));
 });
 
 Deno.test("SAPISIDHASH 해시가 유튜브 방식과 같다", async () => {

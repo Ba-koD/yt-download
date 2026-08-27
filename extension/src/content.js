@@ -1106,8 +1106,9 @@
             })
           : await downloadTrack({ ...request, format: chosenFormat, kind: mode });
 
-      // 영상은 키프레임(조각 경계)에서만 자를 수 있어 실제 파일은 고른 지점보다
-      // 조금 앞에서 시작하고 조금 뒤에서 끝난다. 이름도 실제 내용에 맞춰 붙인다.
+      // 파일은 고른 구간 그대로다. 다만 영상은 프레임 단위로만 존재해서(60fps 면
+      // 16.67ms 마다 한 장) 시작이 한 프레임 안쪽에서 당겨질 수 있다. 고른 그 순간
+      // 화면에 떠 있던 장을 살리려는 것이다. 이름도 실제 내용에 맞춰 붙인다.
       const realStart = Number.isFinite(mediaStart) ? mediaStart : state.start;
       const realEnd = Number.isFinite(mediaEnd) ? mediaEnd : state.end;
       // 소리만 받은 파일은 확장자(m4a)가, 소리 없는 영상은 이름표가 내용을 알려준다.

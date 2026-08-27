@@ -687,14 +687,12 @@ function mergeRanges(segments, maxBytesPerRequest = 8 * 1024 * 1024) {
 return {findBox: findBox, parseSidx: parseSidx, segmentsForRange: segmentsForRange, mergeRanges: mergeRanges};
 });
 __define("mp4mux.js", (__need) => {
-// 따로 받은 영상 트랙과 소리 트랙을 mp4 파일 하나로 묶는다.
+// mp4 바이트를 읽는 연장들. 상자를 훑고, 조각(fragment) 안의 샘플 표를 꺼낸다.
 //
-// 유튜브가 주는 조각은 이미 조각 mp4(fragmented mp4)라서 다시 인코딩할 필요가 없다.
-// 앞머리(ftyp+moov)만 트랙 두 개짜리로 새로 쓰고, 그 뒤에 두 트랙의 조각을
-// 시간 순서대로 붙이면 그대로 재생되는 파일이 된다.
+// 여기는 "읽기"만 한다. 읽어낸 표로 파일을 짓는 일은 mp4file.js 가 맡는다.
 //
-// 트랙 번호가 겹치는 것만 조심하면 된다. 유튜브는 두 트랙 모두 1번으로 주기 때문에,
-// 소리 쪽을 2번으로 바꾸고 조각 안의 번호까지 같이 고쳐야 한다.
+// mp4 는 온통 상자(box)다. 상자마다 앞 4바이트가 크기, 다음 4바이트가 이름이고,
+// 그 안에 또 상자가 들어 있다. 그래서 훑는 함수 하나면 어디든 닿을 수 있다.
 
 const HEADER = 8;
 
@@ -768,157 +766,12 @@ function concat(parts) {
   return out;
 }
 
-/** tkhd 가 들고 있는 트랙 번호. tkhd 는 version 에 따라 위치가 다르다. */
-function readTrackId(bytes, trakBox) {
-  const tkhd = findPath(bytes, ["tkhd"], trakBox.start + HEADER, trakBox.end);
-  if (!tkhd) throw new Error("tkhd 를 찾지 못했습니다");
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const version = bytes[tkhd.start + HEADER];
-  // version(1) + flags(3) + creation/modification(4 또는 8 씩) 다음이 track_ID.
-  const offset = tkhd.start + HEADER + 4 + (version === 1 ? 16 : 8);
-  return { value: view.getUint32(offset), offset };
-}
-
-function writeU32At(bytes, offset, value) {
-  new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setUint32(offset, value);
-}
-
-/** trak 안의 트랙 번호를 바꾼다(복사본을 돌려준다). */
-function withTrackId(bytes, trakBox, newId) {
-  const copy = boxBytes(bytes, trakBox).slice();
-  const { offset } = readTrackId(bytes, trakBox);
-  writeU32At(copy, offset - trakBox.start, newId);
-  return copy;
-}
-
-/** mvex 안의 trex(조각 기본값) 트랙 번호를 바꾼다. */
-function trexWithTrackId(bytes, moovBox, newId) {
-  const mvex = findPath(bytes, ["mvex"], moovBox.start + HEADER, moovBox.end);
-  if (!mvex) throw new Error("mvex 를 찾지 못했습니다");
-  const trex = findPath(bytes, ["trex"], mvex.start + HEADER, mvex.end);
-  if (!trex) throw new Error("trex 를 찾지 못했습니다");
-  const copy = boxBytes(bytes, trex).slice();
-  // trex: version+flags(4) 다음이 track_ID
-  writeU32At(copy, HEADER + 4, newId);
-  return copy;
-}
-
-/**
- * 조각(moof+mdat) 안의 트랙 번호를 바꾼다.
- *
- * moof/traf/tfhd 의 track_ID 만 고치면 된다. 크기가 변하지 않으므로 제자리에서 쓴다.
- */
-function retagFragments(bytes, newId) {
-  const copy = bytes.slice();
-  for (const box of listBoxes(copy)) {
-    if (box.type !== "moof") continue;
-    for (const traf of listBoxes(copy, box.start + HEADER, box.end)) {
-      if (traf.type !== "traf") continue;
-      const tfhd = listBoxes(copy, traf.start + HEADER, traf.end).find((b) => b.type === "tfhd");
-      if (tfhd) writeU32At(copy, tfhd.start + HEADER + 4, newId);
-    }
-  }
-  return copy;
-}
-
-function writeU64At(bytes, offset, value) {
-  new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setBigUint64(offset, BigInt(value));
-}
-
 function readU64At(bytes, offset) {
   return Number(new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getBigUint64(offset));
 }
 
 function readU32At(bytes, offset) {
   return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(offset);
-}
-
-/** 조각들이 들고 있는 첫 재생 시각(tfdt). 구간을 잘라내면 이 값이 0이 아니다. */
-function firstDecodeTime(bytes) {
-  for (const moof of listBoxes(bytes)) {
-    if (moof.type !== "moof") continue;
-    for (const traf of listBoxes(bytes, moof.start + HEADER, moof.end)) {
-      if (traf.type !== "traf") continue;
-      const tfdt = listBoxes(bytes, traf.start + HEADER, traf.end).find((b) => b.type === "tfdt");
-      if (!tfdt) continue;
-      const version = bytes[tfdt.start + HEADER];
-      const at = tfdt.start + HEADER + 4;
-      return version === 1 ? readU64At(bytes, at) : readU32At(bytes, at);
-    }
-  }
-  return 0;
-}
-
-/**
- * 모든 조각의 재생 시각을 앞으로 당긴다.
- *
- * 구간만 잘라낸 파일은 원본의 시각을 그대로 물고 있어서, 재생기가
- * "10분짜리인데 1분 지점부터 30초만 있는 파일"로 본다. 0에서 시작하도록 옮긴다.
- */
-function rebaseDecodeTimes(bytes, delta) {
-  if (!delta) return bytes;
-  const copy = bytes.slice();
-  for (const moof of listBoxes(copy)) {
-    if (moof.type !== "moof") continue;
-    for (const traf of listBoxes(copy, moof.start + HEADER, moof.end)) {
-      if (traf.type !== "traf") continue;
-      const tfdt = listBoxes(copy, traf.start + HEADER, traf.end).find((b) => b.type === "tfdt");
-      if (!tfdt) continue;
-      const version = copy[tfdt.start + HEADER];
-      const at = tfdt.start + HEADER + 4;
-      if (version === 1) {
-        writeU64At(copy, at, Math.max(0, readU64At(copy, at) - delta));
-      } else {
-        writeU32At(copy, at, Math.max(0, readU32At(copy, at) - delta));
-      }
-    }
-  }
-  return copy;
-}
-
-/** mvhd / tkhd / mdhd 에 적힌 길이를 실제로 담은 구간 길이로 바꾼다. */
-function patchDurations(init, seconds) {
-  const copy = init.slice();
-  const moov = findPath(copy, ["moov"]);
-  if (!moov) return copy;
-
-  const mvhd = findPath(copy, ["mvhd"], moov.start + HEADER, moov.end);
-  if (mvhd) setHeaderDuration(copy, mvhd, seconds, true);
-
-  for (const trak of listBoxes(copy, moov.start + HEADER, moov.end)) {
-    if (trak.type !== "trak") continue;
-    const tkhd = findPath(copy, ["tkhd"], trak.start + HEADER, trak.end);
-    // tkhd 는 영화 전체 시간 단위(mvhd 의 timescale)를 쓴다.
-    if (tkhd && mvhd) setTkhdDuration(copy, tkhd, seconds, movieTimescale(copy, mvhd));
-    const mdhd = findPath(copy, ["mdia", "mdhd"], trak.start + HEADER, trak.end);
-    if (mdhd) setHeaderDuration(copy, mdhd, seconds, true);
-  }
-  return copy;
-}
-
-function movieTimescale(bytes, mvhd) {
-  const version = bytes[mvhd.start + HEADER];
-  return readU32At(bytes, mvhd.start + HEADER + 4 + (version === 1 ? 16 : 8));
-}
-
-// mvhd 와 mdhd 는 구조가 같다: version/flags, 생성/수정 시각, timescale, duration.
-function setHeaderDuration(bytes, box, seconds) {
-  const version = bytes[box.start + HEADER];
-  const base = box.start + HEADER + 4 + (version === 1 ? 16 : 8);
-  const timescale = readU32At(bytes, base);
-  const at = base + 4;
-  const value = Math.round(seconds * timescale);
-  if (version === 1) writeU64At(bytes, at, value);
-  else writeU32At(bytes, at, value);
-}
-
-// tkhd: version/flags, 생성/수정 시각, track_ID, 예약(4), duration.
-function setTkhdDuration(bytes, tkhd, seconds, timescale) {
-  const version = bytes[tkhd.start + HEADER];
-  const at = tkhd.start + HEADER + 4 + (version === 1 ? 16 : 8) + 4 + 4;
-  const value = Math.round(seconds * timescale);
-  if (version === 1) writeU64At(bytes, at, value);
-  else writeU32At(bytes, at, value);
 }
 
 /** 앞머리(init)에 담긴 트랙의 시간 단위. 조각의 tfdt 와 샘플 길이가 이 단위를 쓴다. */
@@ -936,235 +789,118 @@ function readMediaTimescale(bytes, trakBox) {
   return readU32At(bytes, mdhd.start + HEADER + 4 + (version === 1 ? 16 : 8));
 }
 
-/** 박스 하나를 다른 박스 바로 뒤에 끼워 넣고 바깥 크기를 고친다. */
-function insertBoxAfter(parentBytes, afterType, newBox) {
-  const children = listBoxes(parentBytes, HEADER, parentBytes.length);
-  const target = children.find((child) => child.type === afterType);
-  if (!target) return parentBytes;
-
-  const head = parentBytes.subarray(0, target.end);
-  const tail = parentBytes.subarray(target.end);
-  const out = concat([head, newBox, tail]);
-  writeU32At(out, 0, out.length);
-  return out;
-}
-
-/** 같은 종류의 박스가 이미 있으면 갈아 끼우고, 없으면 끼워 넣는다. */
-function replaceOrInsert(parentBytes, type, afterType, newBox) {
-  const existing = listBoxes(parentBytes, HEADER, parentBytes.length).find(
-    (child) => child.type === type,
-  );
-  if (!existing) return insertBoxAfter(parentBytes, afterType, newBox);
-
-  const out = concat([
-    parentBytes.subarray(0, existing.start),
-    newBox,
-    parentBytes.subarray(existing.end),
-  ]);
-  writeU32At(out, 0, out.length);
-  return out;
-}
-
-/** 이미 들어 있는 편집 목록의 media_time. 인코더 지연 보정 등이 담겨 있다. */
-function existingMediaTime(trakBytes) {
-  const edts = listBoxes(trakBytes, HEADER, trakBytes.length).find((box) => box.type === "edts");
-  if (!edts) return 0;
-  const elst = listBoxes(trakBytes, edts.start + HEADER, edts.end).find((box) => box.type === "elst");
-  if (!elst) return 0;
-  const version = trakBytes[elst.start + HEADER];
-  const count = readU32At(trakBytes, elst.start + HEADER + 4);
-  if (!count) return 0;
-  const at = elst.start + HEADER + 8;
-  // version 0: duration(4) + media_time(4), version 1: duration(8) + media_time(8)
-  const mediaTime = version === 1 ? readU64At(trakBytes, at + 8) : readU32At(trakBytes, at + 4);
-  // 음수(빈 구간 표시)는 그대로 두면 곤란하니 무시한다.
-  return mediaTime > 0x7fffffff ? 0 : mediaTime;
-}
-
 /**
- * 잘라낸 구간을 정확히 가리키는 편집 목록(elst)을 트랙에 붙인다.
+ * 조각 안의 샘플을 하나하나 읽어 표로 만든다.
  *
- * 조각은 통째로만 받을 수 있어서 앞뒤로 몇 초씩 더 담기게 된다.
- * 편집 목록은 "이 파일에서 실제로 보여줄 곳은 여기부터 이만큼"이라고 알려주는 표라,
- * 다시 인코딩하지 않고도 요청한 구간만 재생되게 만든다.
+ * `trun` 은 무엇을 담을지 플래그로 정한다. 소리 조각은 "크기만" 담은 단순한 모양이지만
+ * 영상 조각은 길이·플래그·화면순서 보정까지 담는다(유튜브 영상은 `0xe01`). 그래서
+ * 소리 전용으로 짜여 있던 `readTrunSizes` 로는 영상 조각을 아예 못 건드렸다.
  *
- * @param mediaTime  트랙 시간 단위로, 조각 시작에서 얼마나 건너뛸지
- * @param duration   영화 시간 단위로, 보여줄 길이
+ * 라이브에서 온 조각은 moof+mdat 짝이 여러 개다. 순서대로 이어 읽는다.
+ *
+ * @returns {{decodeTime: number, samples: Array<{at, size, duration, cto, sync}>}|null}
+ *   `at` 은 조각 안에서 그 샘플의 바이트가 시작하는 자리다. 다루지 못하는 모양이면 null.
  */
-function withEditList(trakBytes, mediaTime, duration) {
-  // 원래 있던 값(인코더 지연 보정)에 우리가 건너뛸 만큼을 더한다.
-  const total = existingMediaTime(trakBytes) + Math.max(0, Math.round(mediaTime));
-
-  const payload = new Uint8Array(20);
-  const view = new DataView(payload.buffer);
-  view.setUint32(0, 0); // version 0 + flags
-  view.setUint32(4, 1); // entry_count
-  view.setUint32(8, Math.max(0, Math.round(duration)));
-  view.setInt32(12, total);
-  view.setUint16(16, 1); // media_rate_integer = 1배속
-  view.setUint16(18, 0);
-
-  const edts = makeBox("edts", makeBox("elst", payload));
-  return replaceOrInsert(trakBytes, "edts", "tkhd", edts);
-}
-
-/**
- * 두 앞머리를 트랙 두 개짜리 앞머리 하나로 합친다.
- *
- * @param edits  {video: {skip, seconds}, audio: {skip, seconds}} — 초 단위. 없으면 붙이지 않는다.
- * @returns {{init: Uint8Array, audioTrackId: number}}
- */
-function combineInit(videoInit, audioInit, edits) {
-  const videoFtyp = findPath(videoInit, ["ftyp"]);
-  const videoMoov = findPath(videoInit, ["moov"]);
-  const audioMoov = findPath(audioInit, ["moov"]);
-  if (!videoFtyp || !videoMoov || !audioMoov) throw new Error("ftyp/moov 를 찾지 못했습니다");
-
-  const videoTrak = findPath(videoInit, ["trak"], videoMoov.start + HEADER, videoMoov.end);
-  const audioTrak = findPath(audioInit, ["trak"], audioMoov.start + HEADER, audioMoov.end);
-  if (!videoTrak || !audioTrak) throw new Error("trak 을 찾지 못했습니다");
-
-  const videoId = readTrackId(videoInit, videoTrak).value;
-  const audioId = readTrackId(audioInit, audioTrak).value;
-  const audioTrackId = audioId === videoId ? videoId + 1 : audioId;
-
-  const mvhd = findPath(videoInit, ["mvhd"], videoMoov.start + HEADER, videoMoov.end);
-  if (!mvhd) throw new Error("mvhd 를 찾지 못했습니다");
-
-  const videoMvex = findPath(videoInit, ["mvex"], videoMoov.start + HEADER, videoMoov.end);
-  if (!videoMvex) throw new Error("mvex 를 찾지 못했습니다");
-  const videoTrex = findPath(videoInit, ["trex"], videoMvex.start + HEADER, videoMvex.end);
-  if (!videoTrex) throw new Error("trex 를 찾지 못했습니다");
-
-  const mvex = makeBox(
-    "mvex",
-    boxBytes(videoInit, videoTrex),
-    trexWithTrackId(audioInit, audioMoov, audioTrackId),
-  );
-
-  const movieScale = movieTimescale(videoInit, mvhd);
-  let videoTrakBytes = boxBytes(videoInit, videoTrak).slice();
-  let audioTrakBytes = withTrackId(audioInit, audioTrak, audioTrackId);
-  if (edits) {
-    videoTrakBytes = withEditList(
-      videoTrakBytes,
-      edits.video.skip * readMediaTimescale(videoInit, videoTrak),
-      edits.video.seconds * movieScale,
-    );
-    audioTrakBytes = withEditList(
-      audioTrakBytes,
-      edits.audio.skip * readMediaTimescale(audioInit, audioTrak),
-      edits.audio.seconds * movieScale,
-    );
-  }
-
-  const moov = makeBox(
-    "moov",
-    boxBytes(videoInit, mvhd),
-    videoTrakBytes,
-    audioTrakBytes,
-    mvex,
-  );
-
-  return { init: concat([boxBytes(videoInit, videoFtyp), moov]), audioTrackId };
-}
-
-/**
- * 조각 앞부분의 샘플을 실제로 잘라낸다.
- *
- * 영상과 소리는 조각 길이가 달라서(영상 5초, 소리 10초 같은 식) 구간을 잡으면
- * 두 트랙의 시작 시각이 서로 어긋난다. 편집 목록으로 가리려 해도 그걸 무시하는
- * 재생기에서는 소리가 몇 초씩 앞서 나온다. 그래서 소리 쪽 앞 샘플을 아예 버려
- * 두 트랙이 같은 지점에서 시작하게 만든다.
- *
- * 소리(AAC)는 샘플마다 독립이라 아무 데서나 잘라도 되지만, 영상은 키프레임에서만
- * 자를 수 있어서 이 함수는 소리에만 쓴다.
- *
- * @param seconds  버릴 길이(초). 0 이하면 그대로 돌려준다.
- * @returns 잘라낸 조각. 통째로 버려야 하면 `null`.
- */
-function dropLeadingSamples(fragment, seconds, timescale) {
-  if (!(seconds > 0)) return fragment;
+function readSamples(fragment) {
   const pairs = fragmentPairs(fragment);
-  if (!pairs) return fragment;
+  if (!pairs) return null;
 
-  // 라이브에서 온 조각은 moof+mdat 짝이 여러 개다(원래 방송 조각들을 이어붙인 것).
-  // 짝을 순서대로 걸어가며 통째로 버리다가, 경계에 걸친 짝만 안에서 자른다.
-  let dropLeft = seconds * timescale;
-  const parts = [];
-  let started = false;
+  const samples = [];
+  let decodeTime = null;
+
   for (const pair of pairs) {
-    const whole = fragment.subarray(pair.moof.start, pair.mdat.end);
-    if (started) {
-      parts.push(whole);
-      continue;
+    const traf = listBoxes(fragment, pair.moof.start + HEADER, pair.moof.end)
+      .find((box) => box.type === "traf");
+    if (!traf) return null;
+    const children = listBoxes(fragment, traf.start + HEADER, traf.end);
+    const tfhd = children.find((box) => box.type === "tfhd");
+    if (!tfhd) return null;
+
+    const head = readTfhd(fragment, tfhd, pair.moof.start);
+    if (decodeTime === null) {
+      const tfdt = children.find((box) => box.type === "tfdt");
+      decodeTime = tfdt ? readDecodeTime(fragment, tfdt) : 0;
     }
-    const info = pairSamples(fragment, pair.moof);
-    if (!info) {
-      // 못 읽는 짝은 자르지 않고 그대로 둔다(모자라게 버리는 쪽이 안전하다).
-      parts.push(whole);
-      started = true;
-      continue;
+
+    for (const trun of children.filter((box) => box.type === "trun")) {
+      const read = readTrun(fragment, trun, head, pair);
+      if (!read) return null;
+      samples.push(...read);
     }
-    const total = info.sizes.length * info.sampleDuration;
-    if (dropLeft >= total) {
-      dropLeft -= total; // 짝을 통째로 버린다
-      continue;
-    }
-    started = true;
-    const drop = Math.floor(dropLeft / info.sampleDuration);
-    if (drop <= 0) parts.push(whole);
-    else parts.push(slicePair(fragment, pair, info, drop, info.sizes.length));
   }
-  if (!parts.length) return null;
-  return concat(parts);
+  return samples.length ? { decodeTime: decodeTime || 0, samples } : null;
 }
 
-/**
- * 조각 뒷부분의 샘플을 실제로 잘라낸다.
- *
- * 소리 조각이 영상 트랙보다 뒤까지 이어지면 영상이 멈춘 채 소리만 계속 나온다
- * (조각이 긴 라이브에서 두드러진다 — 실측 9초). 그래서 영상이 끝나는 지점 뒤의
- * 소리 샘플을 아예 버려 두 트랙이 같은 지점에서 끝나게 만든다.
- *
- * @param seconds  남길 길이(초, 조각의 시작 샘플부터). 조각이 그보다 짧으면 그대로 둔다.
- *                 유한한 수가 아니면 자르지 않는다.
- * @returns 잘라낸 조각. 남길 것이 없으면 `null`.
- */
-function dropTrailingSamples(fragment, seconds, timescale) {
-  if (!Number.isFinite(seconds)) return fragment;
-  if (!(seconds > 0)) return null;
-  const pairs = fragmentPairs(fragment);
-  if (!pairs) return fragment;
-
-  // 짝을 순서대로 담다가, 남길 길이를 넘어서는 짝에서 자르고 그 뒤는 통째로 버린다.
-  // 딱 떨어지지 않으면 한 샘플(수십 ms)을 더 남기는 쪽으로 둔다. 모자라면 소리가 먼저 끊긴다.
-  let keepLeft = seconds * timescale;
-  const parts = [];
-  let ended = false;
-  for (const pair of pairs) {
-    if (ended) break;
-    const whole = fragment.subarray(pair.moof.start, pair.mdat.end);
-    const info = pairSamples(fragment, pair.moof);
-    if (!info) {
-      // 못 읽는 짝은 자르지 않고 그대로 둔다(길이도 모르니 세지 않는다).
-      parts.push(whole);
-      continue;
-    }
-    const total = info.sizes.length * info.sampleDuration;
-    if (total <= keepLeft) {
-      parts.push(whole);
-      keepLeft -= total;
-      continue;
-    }
-    ended = true;
-    const keep = Math.ceil(keepLeft / info.sampleDuration);
-    if (keep >= info.sizes.length) parts.push(whole);
-    else if (keep > 0) parts.push(slicePair(fragment, pair, info, 0, keep));
+/** tfhd 의 기본값들. 여기 없는 값은 샘플마다 trun 이 들고 있다. */
+function readTfhd(bytes, tfhd, moofStart) {
+  const flags = readU32At(bytes, tfhd.start + HEADER) & 0xffffff;
+  let at = tfhd.start + HEADER + 4 + 4; // version/flags + track_ID
+  // 샘플 바이트가 어디부터인지의 기준점. 0x020000 은 "moof 시작이 기준"이라는 뜻이고,
+  // 유튜브 조각이 그렇다. 기준점이 따로 적혀 있으면 그것을 쓴다.
+  let base = moofStart;
+  if (flags & 0x000001) {
+    base = readU64At(bytes, at);
+    at += 8;
   }
-  if (!ended) return fragment; // 전부 남길 길이 안에 든다 — 손대지 않는다
-  if (!parts.length) return null;
-  return concat(parts);
+  if (flags & 0x000002) at += 4; // sample_description_index
+  const duration = flags & 0x000008 ? readU32At(bytes, (at += 4) - 4) : 0;
+  const size = flags & 0x000010 ? readU32At(bytes, (at += 4) - 4) : 0;
+  const sampleFlags = flags & 0x000020 ? readU32At(bytes, (at += 4) - 4) : null;
+  return { base, duration, size, sampleFlags };
+}
+
+function readDecodeTime(bytes, tfdt) {
+  const at = tfdt.start + HEADER + 4;
+  return bytes[tfdt.start + HEADER] === 1 ? readU64At(bytes, at) : readU32At(bytes, at);
+}
+
+/** `sample_is_non_sync_sample` 은 sample_flags 의 16번 비트다. 없으면 키프레임으로 본다. */
+const isSync = (flags) => (flags === null || flags === undefined ? true : ((flags >>> 16) & 1) === 0);
+
+function readTrun(bytes, trun, head, pair) {
+  const word = readU32At(bytes, trun.start + HEADER);
+  const version = word >>> 24;
+  const flags = word & 0xffffff;
+  const count = readU32At(bytes, trun.start + HEADER + 4);
+  let at = trun.start + HEADER + 8;
+
+  let cursor = head.base;
+  if (flags & 0x000001) {
+    cursor += new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getInt32(at);
+    at += 4;
+  }
+  let firstFlags = null;
+  if (flags & 0x000004) {
+    firstFlags = readU32At(bytes, at);
+    at += 4;
+  }
+
+  const out = [];
+  for (let i = 0; i < count; i += 1) {
+    const duration = flags & 0x000100 ? readU32At(bytes, (at += 4) - 4) : head.duration;
+    const size = flags & 0x000200 ? readU32At(bytes, (at += 4) - 4) : head.size;
+    const own = flags & 0x000400 ? readU32At(bytes, (at += 4) - 4) : head.sampleFlags;
+    // 화면 순서 보정. version 1 은 음수를 허용한다(B프레임이 앞뒤로 오갈 때 쓴다).
+    let cto = 0;
+    if (flags & 0x000800) {
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      cto = version === 0 ? view.getUint32(at) : view.getInt32(at);
+      at += 4;
+    }
+    if (!size) return null; // 크기를 모르면 샘플을 떼어낼 수 없다
+    out.push({
+      at: cursor,
+      size,
+      duration,
+      cto,
+      sync: isSync(i === 0 && firstFlags !== null ? firstFlags : own),
+    });
+    cursor += size;
+  }
+  // 샘플 바이트가 mdat 밖을 가리키면 우리가 잘못 읽은 것이다. 조용히 틀리느니 포기한다.
+  const last = out[out.length - 1];
+  if (out[0] && (out[0].at < pair.mdat.start || last.at + last.size > pair.mdat.end)) return null;
+  return out;
 }
 
 /** 조각 속의 moof+mdat 짝들. 하나짜리(일반 영상)도, 여러 개짜리(라이브 출신)도 있다. */
@@ -1178,128 +914,6 @@ function fragmentPairs(bytes) {
     pairs.push({ moof: boxes[i], mdat: next });
   }
   return pairs.length ? pairs : null;
-}
-
-/** 짝 하나의 샘플 정보. 다루지 못하는 형태면 null. */
-function pairSamples(bytes, moof) {
-  const traf = listBoxes(bytes, moof.start + HEADER, moof.end).find((b) => b.type === "traf");
-  if (!traf) return null;
-  const children = listBoxes(bytes, traf.start + HEADER, traf.end);
-  const tfhd = children.find((b) => b.type === "tfhd");
-  const trun = children.find((b) => b.type === "trun");
-  if (!tfhd || !trun) return null;
-  const sampleDuration = defaultSampleDuration(bytes, tfhd);
-  if (!sampleDuration) return null;
-  const sizes = readTrunSizes(bytes, trun);
-  if (!sizes) return null;
-  return { traf, trun, sampleDuration, sizes };
-}
-
-/**
- * 짝 하나에서 샘플 [from, to) 만 남긴 바이트를 만든다.
- *
- * trun 을 남은 샘플만으로 다시 쓰고(크기 목록만 줄이면 된다), data_offset 을 다시 재고,
- * mdat 은 남은 샘플 바이트만 담는다. 앞을 잘랐으면 시작 시각(tfdt)을 그만큼 뒤로 민다.
- */
-function slicePair(bytes, pair, info, from, to) {
-  const keptSizes = info.sizes.slice(from, to);
-  const leadBytes = info.sizes.slice(0, from).reduce((sum, size) => sum + size, 0);
-  const keptBytes = keptSizes.reduce((sum, size) => sum + size, 0);
-
-  const newTrun = concat([
-    boxBytes(bytes, info.trun).subarray(0, HEADER + 4), // size+type+version/flags
-    u32be(keptSizes.length),
-    new Uint8Array(4), // data_offset 자리. 아래에서 다시 계산한다.
-    ...keptSizes.map(u32be),
-  ]);
-  writeU32At(newTrun, 0, newTrun.length);
-
-  const newTraf = rebuildBox(bytes, info.traf, (child) =>
-    child.type === "trun" ? newTrun : boxBytes(bytes, child),
-  );
-  const newMoof = rebuildBox(bytes, pair.moof, (child) =>
-    child.type === "traf" ? newTraf : boxBytes(bytes, child),
-  );
-
-  // 샘플 데이터는 moof 바로 뒤(mdat 안)에서 시작한다.
-  const dataOffset = newMoof.length + HEADER;
-  const trunInNew = listBoxes(newMoof, HEADER, newMoof.length)
-    .filter((b) => b.type === "traf")
-    .flatMap((t) => listBoxes(newMoof, t.start + HEADER, t.end))
-    .find((b) => b.type === "trun");
-  writeU32At(newMoof, trunInNew.start + HEADER + 8, dataOffset);
-
-  const newMdat = concat([
-    u32be(HEADER + keptBytes),
-    ascii("mdat"),
-    bytes.subarray(
-      pair.mdat.start + HEADER + leadBytes,
-      pair.mdat.start + HEADER + leadBytes + keptBytes,
-    ),
-  ]);
-
-  const result = concat([newMoof, newMdat]);
-  if (from > 0) shiftDecodeTime(result, from * info.sampleDuration);
-  return result;
-}
-
-function u32be(value) {
-  return u32(value);
-}
-
-/** 상자의 자식들을 하나씩 바꿔 새로 만든다. */
-function rebuildBox(bytes, box, mapChild) {
-  const head = bytes.subarray(box.start, box.start + HEADER);
-  const children = listBoxes(bytes, box.start + HEADER, box.end).map(mapChild);
-  const out = concat([head, ...children]);
-  writeU32At(out, 0, out.length);
-  return out;
-}
-
-/** tfhd 의 default_sample_duration. 소리 조각은 이 값 하나로 모든 샘플 길이를 정한다. */
-function defaultSampleDuration(bytes, tfhd) {
-  const flags = readU32At(bytes, tfhd.start + HEADER) & 0xffffff;
-  let offset = tfhd.start + HEADER + 4 + 4; // version/flags + track_ID
-  if (flags & 0x000001) offset += 8; // base_data_offset
-  if (flags & 0x000002) offset += 4; // sample_description_index
-  if (!(flags & 0x000008)) return 0; // default_sample_duration 없음
-  return readU32At(bytes, offset);
-}
-
-/** trun 의 샘플 크기 목록. 크기 항목이 없으면 손대지 않는다. */
-function readTrunSizes(bytes, trun) {
-  const flags = readU32At(bytes, trun.start + HEADER) & 0xffffff;
-  if (!(flags & 0x000200)) return null; // sample-size 없음
-  // 이 함수는 "크기만 있는" 단순한 형태만 다룬다(유튜브 소리 조각이 그렇다).
-  if (flags & (0x000100 | 0x000400 | 0x000800)) return null;
-
-  const count = readU32At(bytes, trun.start + HEADER + 4);
-  let offset = trun.start + HEADER + 8;
-  if (flags & 0x000001) offset += 4; // data_offset
-  if (flags & 0x000004) offset += 4; // first_sample_flags
-
-  const sizes = [];
-  for (let i = 0; i < count; i += 1) {
-    sizes.push(readU32At(bytes, offset));
-    offset += 4;
-  }
-  return sizes;
-}
-
-/** 조각의 시작 시각을 뒤로 민다(앞을 잘라냈으면 그만큼 늦게 시작한다). */
-function shiftDecodeTime(bytes, delta) {
-  for (const moof of listBoxes(bytes)) {
-    if (moof.type !== "moof") continue;
-    for (const traf of listBoxes(bytes, moof.start + HEADER, moof.end)) {
-      if (traf.type !== "traf") continue;
-      const tfdt = listBoxes(bytes, traf.start + HEADER, traf.end).find((b) => b.type === "tfdt");
-      if (!tfdt) continue;
-      const version = bytes[tfdt.start + HEADER];
-      const at = tfdt.start + HEADER + 4;
-      if (version === 1) writeU64At(bytes, at, readU64At(bytes, at) + delta);
-      else writeU32At(bytes, at, readU32At(bytes, at) + delta);
-    }
-  }
 }
 
 /**
@@ -1323,7 +937,344 @@ function splitLiveSegment(bytes) {
   };
 }
 
-return {listBoxes: listBoxes, findPath: findPath, boxBytes: boxBytes, makeBox: makeBox, concat: concat, readTrackId: readTrackId, withTrackId: withTrackId, trexWithTrackId: trexWithTrackId, retagFragments: retagFragments, firstDecodeTime: firstDecodeTime, rebaseDecodeTimes: rebaseDecodeTimes, patchDurations: patchDurations, mediaTimescaleOf: mediaTimescaleOf, readMediaTimescale: readMediaTimescale, withEditList: withEditList, combineInit: combineInit, dropLeadingSamples: dropLeadingSamples, dropTrailingSamples: dropTrailingSamples, splitLiveSegment: splitLiveSegment};
+return {listBoxes: listBoxes, findPath: findPath, boxBytes: boxBytes, makeBox: makeBox, concat: concat, mediaTimescaleOf: mediaTimescaleOf, readMediaTimescale: readMediaTimescale, readSamples: readSamples, splitLiveSegment: splitLiveSegment};
+});
+__define("mp4file.js", (__need) => {
+// 받아온 조각들을 "일반 mp4"(샘플 표가 있는 보통 파일) 하나로 짓는다.
+//
+// 왜 조각 그대로가 아니라 일반 mp4 인가:
+//
+// 영상은 키프레임에서만 시작할 수 있어서, 고른 지점보다 앞선 조각 경계에서 파일이
+// 시작한다. 그 앞부분을 잘라내면 남은 프레임들이 참조할 그림이 사라져 화면이 안 나온다
+// (실측: 13.000초부터 자르면 15.650초까지 160프레임이 아예 안 그려졌다).
+//
+// mp4 에는 이걸 위한 장치가 있다 — 편집 목록(elst). "파일은 여기서 시작하지만 보여줄
+// 곳은 여기부터 이만큼"이라고 적어두면, 앞부분은 디코딩에만 쓰이고 화면에는 안 나온다.
+// 바이트를 한 비트도 건드리지 않고 정확한 구간이 된다.
+//
+// 그런데 편집 목록은 **조각화 mp4(fMP4)에서는 거의 지원되지 않는다**. ffmpeg 도 크롬도
+// 무시한다(실측). 일반 mp4 에서는 제대로 동작한다 — QuickTime 시절부터 쓰던 길이다.
+// 그래서 조각을 그대로 이어 붙이는 대신, 샘플 표(stbl)를 만들어 일반 mp4 로 담는다.
+// 샘플 바이트는 원본 그대로 옮겨 담을 뿐이라 다시 인코딩하는 곳은 한 군데도 없다.
+
+const { boxBytes, concat, findPath, listBoxes, makeBox } = __need("mp4mux.js");
+const HEADER = 8;
+
+const u32 = (value) => {
+  const out = new Uint8Array(4);
+  new DataView(out.buffer).setUint32(0, value);
+  return out;
+};
+
+const view = (bytes) => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+/** 표 하나를 만든다: version/flags(0) + 항목 수 + 항목들. mp4 의 표는 죄다 이 모양이다. */
+function table(type, entries, width, fill) {
+  const body = new Uint8Array(8 + entries.length * width);
+  const dv = new DataView(body.buffer);
+  dv.setUint32(0, 0);
+  dv.setUint32(4, entries.length);
+  entries.forEach((entry, i) => fill(dv, 8 + i * width, entry));
+  return makeBox(type, body);
+}
+
+/** 같은 값이 이어지면 하나로 묶는다. stts·ctts·stsc 가 모두 이 방식이다. */
+function runLength(values) {
+  const out = [];
+  for (const value of values) {
+    const last = out[out.length - 1];
+    if (last && last.value === value) last.count += 1;
+    else out.push({ count: 1, value });
+  }
+  return out;
+}
+
+/**
+ * 샘플들을 담을 표들을 만든다.
+ *
+ * @param samples [{size, duration, cto, sync}] — 트랙 전체, 디코딩 순서
+ * @param chunks  덩어리별 샘플 수. 덩어리 하나가 stco 의 자리 하나다.
+ */
+function sampleTableBoxes(samples, chunks, largeOffsets) {
+  const boxes = [];
+
+  // stts — 샘플 길이. 대개 전부 같아서 항목 하나로 줄어든다.
+  boxes.push(
+    table("stts", runLength(samples.map((s) => s.duration)), 8, (dv, at, e) => {
+      dv.setUint32(at, e.count);
+      dv.setUint32(at + 4, e.value);
+    }),
+  );
+
+  // ctts — 화면 순서 보정. B프레임이 없으면(AV1 등) 전부 0이라 아예 넣지 않는다.
+  if (samples.some((s) => s.cto !== 0)) {
+    const negative = samples.some((s) => s.cto < 0);
+    const runs = runLength(samples.map((s) => s.cto));
+    const body = new Uint8Array(8 + runs.length * 8);
+    const dv = new DataView(body.buffer);
+    dv.setUint8(0, negative ? 1 : 0); // 음수 보정은 version 1 에서만 쓸 수 있다
+    dv.setUint32(4, runs.length);
+    runs.forEach((run, i) => {
+      dv.setUint32(8 + i * 8, run.count);
+      if (negative) dv.setInt32(12 + i * 8, run.value);
+      else dv.setUint32(12 + i * 8, run.value);
+    });
+    boxes.push(makeBox("ctts", body));
+  }
+
+  // stss — 키프레임 자리(1부터 센다). 소리처럼 전부 키프레임이면 넣지 않는다
+  // (없는 것이 곧 "전부 키프레임"이라는 뜻이다).
+  const syncs = [];
+  samples.forEach((s, i) => {
+    if (s.sync) syncs.push(i + 1);
+  });
+  if (syncs.length !== samples.length) {
+    boxes.push(table("stss", syncs, 4, (dv, at, n) => dv.setUint32(at, n)));
+  }
+
+  // stsc — 덩어리마다 샘플이 몇 개인지.
+  const perChunk = runLength(chunks);
+  let chunkNo = 1;
+  const stsc = perChunk.map((run) => {
+    const entry = { first: chunkNo, count: run.value };
+    chunkNo += run.count;
+    return entry;
+  });
+  boxes.push(
+    table("stsc", stsc, 12, (dv, at, e) => {
+      dv.setUint32(at, e.first);
+      dv.setUint32(at + 4, e.count);
+      dv.setUint32(at + 8, 1); // sample_description_index
+    }),
+  );
+
+  // stsz — 샘플 크기. 전부 같으면 값 하나로 끝난다.
+  const uniform = samples.every((s) => s.size === samples[0].size);
+  const stszBody = new Uint8Array(12 + (uniform ? 0 : samples.length * 4));
+  const sdv = new DataView(stszBody.buffer);
+  sdv.setUint32(0, 0);
+  sdv.setUint32(4, uniform ? samples[0].size : 0);
+  sdv.setUint32(8, samples.length);
+  if (!uniform) samples.forEach((s, i) => sdv.setUint32(12 + i * 4, s.size));
+  boxes.push(makeBox("stsz", stszBody));
+
+  // stco/co64 — 덩어리가 파일 어디에 있는지. 자리는 비워 두고 나중에 채운다
+  // (머리 크기를 알아야 mdat 이 어디서 시작하는지 알 수 있다).
+  const width = largeOffsets ? 8 : 4;
+  const body = new Uint8Array(8 + chunks.length * width);
+  new DataView(body.buffer).setUint32(4, chunks.length);
+  boxes.push(makeBox(largeOffsets ? "co64" : "stco", body));
+
+  return boxes;
+}
+
+/**
+ * 앞머리가 이미 적어둔 "내용은 여기서 시작한다" 값(미디어 시간 단위).
+ *
+ * 코덱은 앞머리에 버릴 것을 얹어 보낸다 — AAC 는 인코더가 워밍업으로 만든 샘플
+ * 1024개(48kHz 에서 21.33ms), H.264 는 B프레임 재정렬 때문에 생기는 어긋남이다.
+ * 이 값을 무시하면 그만큼 소리가 늦게 나온다(실측 21.33ms).
+ *
+ * 빈 구간을 뜻하는 음수는 0으로 본다.
+ */
+function editStartOf(init) {
+  const moov = findPath(init, ["moov"]);
+  if (!moov) return 0;
+  const trak = findPath(init, ["trak"], moov.start + HEADER, moov.end);
+  if (!trak) return 0;
+  const edts = listBoxes(init, trak.start + HEADER, trak.end).find((b) => b.type === "edts");
+  if (!edts) return 0;
+  const elst = listBoxes(init, edts.start + HEADER, edts.end).find((b) => b.type === "elst");
+  if (!elst || !view(init).getUint32(elst.start + HEADER + 4)) return 0;
+  const wide = init[elst.start + HEADER] === 1;
+  const at = elst.start + HEADER + 8;
+  const mediaTime = wide
+    ? Number(view(init).getBigInt64(at + 8))
+    : view(init).getInt32(at + 4);
+  return mediaTime > 0 ? mediaTime : 0;
+}
+
+/** 박스 하나를 자식들만 바꿔 다시 만든다. 크기는 다시 잰다. */
+function rebuild(bytes, box, mapChild) {
+  const head = bytes.subarray(box.start, box.start + HEADER);
+  const children = listBoxes(bytes, box.start + HEADER, box.end).map(mapChild).filter(Boolean);
+  const out = concat([head, ...children]);
+  view(out).setUint32(0, out.length);
+  return out;
+}
+
+/** mvhd·mdhd 는 구조가 같다: version/flags, 시각 둘, timescale, duration. */
+function setScaleDuration(bytes, box, seconds) {
+  const version = bytes[box.start + HEADER];
+  const base = box.start + HEADER + 4 + (version === 1 ? 16 : 8);
+  const timescale = view(bytes).getUint32(base);
+  const value = Math.round(seconds * timescale);
+  if (version === 1) view(bytes).setBigUint64(base + 4, BigInt(value));
+  else view(bytes).setUint32(base + 4, value);
+}
+
+/** tkhd: version/flags, 시각 둘, track_ID, 예약(4), duration. 길이는 영화 시간 단위다. */
+function setTrackHeader(bytes, tkhd, trackId, seconds, movieTimescale) {
+  const version = bytes[tkhd.start + HEADER];
+  const idAt = tkhd.start + HEADER + 4 + (version === 1 ? 16 : 8);
+  view(bytes).setUint32(idAt, trackId);
+  const durAt = idAt + 4 + 4;
+  const value = Math.round(seconds * movieTimescale);
+  if (version === 1) view(bytes).setBigUint64(durAt, BigInt(value));
+  else view(bytes).setUint32(durAt, value);
+}
+
+/**
+ * 편집 목록. "미디어 시간축의 여기부터 이만큼을 보여줘라".
+ *
+ * @param mediaTime  트랙의 미디어 시간 단위. 앞머리에서 얼마나 건너뛸지.
+ * @param seconds    보여줄 길이(초).
+ */
+function editList(mediaTime, seconds, movieTimescale) {
+  const body = new Uint8Array(20);
+  const dv = new DataView(body.buffer);
+  dv.setUint32(0, 0); // version 0 + flags
+  dv.setUint32(4, 1); // 항목 하나
+  dv.setUint32(8, Math.max(0, Math.round(seconds * movieTimescale)));
+  dv.setInt32(12, Math.max(0, Math.round(mediaTime)));
+  dv.setUint16(16, 1); // 1배속
+  dv.setUint16(18, 0);
+  return makeBox("edts", makeBox("elst", body));
+}
+
+/**
+ * 트랙 하나의 `trak` 을 짓는다. 원본 앞머리의 trak 을 본으로 삼아,
+ * 표가 비어 있던 `stbl` 만 진짜 표로 갈아 끼우고 편집 목록을 붙인다.
+ *
+ * `stsd`(코덱 설명)는 원본 것을 그대로 옮긴다 — 그래야 avc1 이든 av01 이든
+ * 코덱을 가리지 않는다. 우리가 손대는 것은 "어느 바이트가 몇 번째 샘플인가" 뿐이다.
+ */
+function buildTrak(track, movieTimescale) {
+  const { init, trackId, samples, chunks, editMediaTime, presentSeconds, largeOffsets } = track;
+  const moov = findPath(init, ["moov"]);
+  const source = findPath(init, ["trak"], moov.start + HEADER, moov.end);
+  if (!source) throw new Error("앞머리에서 trak 을 찾지 못했습니다");
+
+  const mediaSeconds = samples.reduce((sum, s) => sum + s.duration, 0) / track.timescale;
+  const tables = sampleTableBoxes(samples, chunks, largeOffsets);
+
+  const bytes = rebuild(init, source, (child) => {
+    if (child.type === "edts") return null; // 우리가 새로 붙인다
+    if (child.type !== "mdia") return boxBytes(init, child);
+    return rebuild(init, child, (inner) => {
+      if (inner.type !== "minf") return boxBytes(init, inner);
+      return rebuild(init, inner, (leaf) => {
+        if (leaf.type !== "stbl") return boxBytes(init, leaf);
+        // stsd 만 남기고 나머지 표는 우리가 만든 것으로 바꾼다.
+        const stsd = listBoxes(init, leaf.start + HEADER, leaf.end).find((b) => b.type === "stsd");
+        if (!stsd) throw new Error("stsd 를 찾지 못했습니다");
+        const out = concat([
+          init.subarray(leaf.start, leaf.start + HEADER),
+          boxBytes(init, stsd),
+          ...tables,
+        ]);
+        view(out).setUint32(0, out.length);
+        return out;
+      });
+    });
+  });
+
+  // tkhd/mdhd 의 길이와 번호를 실제 내용에 맞춘다. 그 다음 편집 목록을 tkhd 뒤에 끼운다.
+  const tkhd = findPath(bytes, ["tkhd"], HEADER, bytes.length);
+  if (tkhd) setTrackHeader(bytes, tkhd, trackId, mediaSeconds, movieTimescale);
+  const mdhd = findPath(bytes, ["mdia", "mdhd"], HEADER, bytes.length);
+  if (mdhd) setScaleDuration(bytes, mdhd, mediaSeconds);
+
+  const edts = editList(editMediaTime, presentSeconds, movieTimescale);
+  const head = bytes.subarray(0, tkhd ? tkhd.end : HEADER);
+  const rest = bytes.subarray(tkhd ? tkhd.end : HEADER);
+  const out = concat([head, edts, rest]);
+  view(out).setUint32(0, out.length);
+  return out;
+}
+
+/**
+ * 파일의 머리(ftyp + moov)를 짓는다. 이 뒤에 mdat 이 이어진다.
+ *
+ * @param tracks 트랙마다:
+ *   init            원본 앞머리(ftyp+moov)
+ *   timescale       미디어 시간 단위
+ *   samples         디코딩 순서의 전체 샘플 [{size, duration, cto, sync}]
+ *   chunks          덩어리별 샘플 수(stco 자리 수와 같다)
+ *   editMediaTime   앞머리에서 건너뛸 만큼(미디어 시간 단위)
+ * @param presentSeconds 실제로 보여줄 길이(초) — 편집 목록에 적힌다.
+ */
+function buildHead({ tracks, presentSeconds, largeOffsets = false }) {
+  const first = tracks[0];
+  const ftyp = findPath(first.init, ["ftyp"]);
+  const moov = findPath(first.init, ["moov"]);
+  if (!ftyp || !moov) throw new Error("ftyp/moov 를 찾지 못했습니다");
+  const mvhd = findPath(first.init, ["mvhd"], moov.start + HEADER, moov.end);
+  if (!mvhd) throw new Error("mvhd 를 찾지 못했습니다");
+  const movieTimescale = view(first.init).getUint32(
+    mvhd.start + HEADER + 4 + (first.init[mvhd.start + HEADER] === 1 ? 16 : 8),
+  );
+
+  const mvhdBytes = boxBytes(first.init, mvhd).slice();
+  setScaleDuration(mvhdBytes, { start: 0, end: mvhdBytes.length }, presentSeconds);
+  // next_track_ID 는 mvhd 의 맨 끝 4바이트다. 우리가 쓴 번호보다 커야 한다.
+  view(mvhdBytes).setUint32(mvhdBytes.length - 4, tracks.length + 1);
+
+  const traks = tracks.map((track, index) =>
+    buildTrak({ ...track, trackId: index + 1, largeOffsets }, movieTimescale),
+  );
+  const moovBytes = makeBox("moov", mvhdBytes, ...traks);
+  return { head: concat([boxBytes(first.init, ftyp), moovBytes]), movieTimescale };
+}
+
+/**
+ * 덩어리들이 파일 어디에 앉는지를 표에 적어 넣는다.
+ *
+ * 머리를 다 짓고 나서야 mdat 이 어디서 시작하는지 알 수 있어서, 표에는 자리만 비워
+ * 두었다가 여기서 채운다. 항목 폭이 고정이라 채워 넣어도 머리 크기는 그대로다.
+ *
+ * @param offsets 트랙 순서대로, 그 트랙의 덩어리 위치 목록
+ */
+function fillChunkOffsets(head, offsets) {
+  const found = [];
+  const walk = (from, to) => {
+    for (const box of listBoxes(head, from, to)) {
+      if (box.type === "stco" || box.type === "co64") found.push(box);
+      else if (["moov", "trak", "mdia", "minf", "stbl"].includes(box.type)) {
+        walk(box.start + HEADER, box.end);
+      }
+    }
+  };
+  walk(0, head.length);
+  if (found.length !== offsets.length) {
+    throw new Error(`덩어리 표 수가 맞지 않습니다 (${found.length} ≠ ${offsets.length})`);
+  }
+  found.forEach((box, index) => {
+    const wide = box.type === "co64";
+    const list = offsets[index];
+    const dv = view(head);
+    list.forEach((value, i) => {
+      const at = box.start + HEADER + 8 + i * (wide ? 8 : 4);
+      if (wide) dv.setBigUint64(at, BigInt(value));
+      else dv.setUint32(at, value);
+    });
+  });
+  return head;
+}
+
+/** mdat 상자의 머리. 4GB 를 넘으면 64비트 크기 형식을 쓴다. */
+function mdatHeader(size) {
+  if (size + HEADER <= 0xfffffffe) {
+    return concat([u32(size + HEADER), new Uint8Array([0x6d, 0x64, 0x61, 0x74])]);
+  }
+  const out = new Uint8Array(16);
+  view(out).setUint32(0, 1); // 크기 1 = "진짜 크기는 뒤에 64비트로"
+  out.set([0x6d, 0x64, 0x61, 0x74], 4);
+  view(out).setBigUint64(8, BigInt(size + 16));
+  return out;
+}
+
+return {sampleTableBoxes: sampleTableBoxes, editStartOf: editStartOf, buildHead: buildHead, fillChunkOffsets: fillChunkOffsets, mdatHeader: mdatHeader};
 });
 __define("store.js", (__need) => {
 // 받은 조각을 디스크(OPFS)에 쌓아 두는 곳.
@@ -1570,17 +1521,8 @@ const { fetchPlayerResponse, fetchVisitorData, readFormats } = __need("innertube
 const { mergeRanges, parseSidx, segmentsForRange } = __need("mp4index.js");
 const { request } = __need("net.js");
 const { openMemory } = __need("store.js");
-const {
-  combineInit,
-  splitLiveSegment,
-  dropLeadingSamples,
-  dropTrailingSamples,
-  firstDecodeTime,
-  mediaTimescaleOf,
-  patchDurations,
-  rebaseDecodeTimes,
-  retagFragments,
-} = __need("mp4mux.js");
+const { buildHead, editStartOf, fillChunkOffsets, mdatHeader } = __need("mp4file.js");
+const { mediaTimescaleOf, readSamples, splitLiveSegment } = __need("mp4mux.js");
 /** 한 번에 보내는 요청 수. 너무 늘리면 유튜브가 속도를 깎는다. */
 const CONCURRENCY = 6;
 
@@ -1804,132 +1746,199 @@ async function fetchSegments(format, index, start, end, onProgress, control, tra
   return { segments, totalBytes, firstTime: wanted[0].time };
 }
 
-/**
- * 영상 조각과 소리 조각을 하나의 mp4 로 엮어 출력에 흘려 쓴다.
- *
- * 앞머리는 트랙 두 개짜리로 새로 쓰고, 조각은 시간 순서대로 번갈아 넣는다.
- * 같은 시각이면 영상을 먼저 둔다(재생기가 화면부터 준비하도록).
- * 조각 바이트는 저장소에서 하나씩 읽어 쓰므로 메모리에는 한 번에 조각 하나만 있다.
- */
-async function writeMp4(output, caches, video, audio, section, control, onStep) {
-  // 영상과 소리는 조각 길이가 달라서(영상 5초, 소리 10초 같은 식) 구간을 잡으면
-  // 두 트랙이 서로 다른 지점에서 시작한다. 영상은 키프레임에서만 자를 수 있으므로
-  // 영상 조각의 시작을 기준으로 삼고, 소리 쪽 앞부분을 그만큼 실제로 버린다.
-  // 이렇게 해두면 편집 목록을 무시하는 재생기에서도 소리가 어긋나지 않는다.
-  const mediaStart = video.segments[0]?.time ?? 0;
-  const audioStart = audio.segments[0]?.time ?? 0;
-  const audioLead = Math.max(0, mediaStart - audioStart);
-  const audioTimescale = mediaTimescaleOf(audio.init);
-  // 영상 트랙이 끝나는 지점. 소리도 여기서 끝나야 한다 — 소리 조각이 더 길면
-  // (조각이 긴 라이브에서 두드러진다) 영상이 멈춘 채 소리만 계속 나온다.
-  const lastVideo = video.segments[video.segments.length - 1];
-  const videoEnd = lastVideo ? lastVideo.time + (lastVideo.duration || 0) : Infinity;
-
-  const readMedia = async (kind, segment) => {
-    const bytes = await caches[kind].read(segment.name);
-    // 라이브 조각은 통째로 저장돼 있다(앞머리 포함). 본체만 꺼낸다.
-    return segment.live ? splitLiveSegment(bytes).media : bytes;
-  };
-
-  // 소리 조각별로 앞에서 얼마나 잘라낼지 미리 정한다(바이트는 아직 읽지 않는다).
-  const audioPlan = [];
-  let toDrop = audioLead;
-  for (const segment of audio.segments) {
-    if (toDrop <= 0) {
-      audioPlan.push({ segment, trim: 0, time: segment.time });
-    } else {
-      audioPlan.push({ segment, trim: toDrop, time: Math.max(segment.time, mediaStart) });
-      toDrop -= segment.duration || 0;
-    }
-  }
-  const trimmedAudio = async (plan) => {
-    let bytes = await readMedia("audio", plan.segment);
-    // 통째로 버려야 하는 조각이면 null 이 돌아온다.
-    if (plan.trim > 0) bytes = dropLeadingSamples(bytes, plan.trim, audioTimescale);
-    if (!bytes) return null;
-    // 영상이 끝나는 지점 뒤의 소리는 잘라낸다(남은 앞부분 기준으로 남길 길이를 잰다).
-    return dropTrailingSamples(bytes, videoEnd - (plan.segment.time + plan.trim), audioTimescale);
-  };
-
-  // 기준 시각을 얻기 위해 첫 조각들만 먼저 읽는다. 읽은 것은 아래에서 한 번만 다시 쓴다.
-  //
-  // 두 트랙 모두 같은 지점을 0으로 삼아야 서로 어긋나지 않는다.
-  // 소리가 영상보다 늦게 시작할 수도 있다(조각 경계가 서로 다르니까).
-  // 그때 소리를 0초에 붙여버리면 그 차이만큼 소리가 앞서 간다. 늦은 만큼 뒤로 민다.
-  const firstVideoBytes = video.segments.length
-    ? await readMedia("video", video.segments[0])
-    : null;
-  let firstAudio = null; // { index, bytes } — 잘라내고도 살아남은 첫 소리 조각
-  for (let i = 0; i < audioPlan.length; i += 1) {
-    const bytes = await trimmedAudio(audioPlan[i]);
-    if (bytes) {
-      firstAudio = { index: i, bytes };
-      break;
-    }
-  }
-  const videoBase = firstVideoBytes ? firstDecodeTime(firstVideoBytes) : 0;
-  const audioBase = firstAudio ? firstDecodeTime(firstAudio.bytes) : 0;
-  const audioLate = Math.max(
-    0,
-    (firstAudio ? audioPlan[firstAudio.index].time : mediaStart) - mediaStart,
-  );
-  const audioOrigin = audioBase - audioLate * audioTimescale;
-
-  // 앞부분을 편집 목록(elst)으로 건너뛰게 하면 안 된다.
-  //
-  // 영상은 키프레임에서만 자를 수 있어 요청한 지점보다 조금 앞에서 시작한다.
-  // 예전에는 그 앞부분을 건너뛰라고 편집 목록에 적어뒀는데, 재생기가 그 지시를
-  // **소리에만** 적용하고 영상은 앞부분을 그대로 두더라(디코딩에 필요하니까).
-  // 그래서 소리가 5초쯤 앞서 갔다. 실측한 값이다.
-  //
-  //   소리 밀림 4.96초 / 화면 밀림 0.00초 → 어긋남 4.96초
-  //
-  // 앞은 손대지 않고 뒤 길이만 맞춘다. 두 트랙이 항상 같이 간다.
-  // 대신 파일이 요청보다 몇 초 앞에서 시작하는데, 그건 부르는 쪽에서 알려준다.
-  // 파일에 적는 길이는 실제 담긴 내용과 같아야 한다. 뒤쪽도 조각 경계까지 담기므로
-  // 요청한 구간이 아니라 영상 트랙의 실제 끝(videoEnd)을 기준으로 잰다.
-  const span = Number.isFinite(videoEnd)
-    ? videoEnd - mediaStart
-    : sectionSeconds(video.segments) || sectionSeconds(audio.segments);
-  const { init, audioTrackId } = combineInit(
-    video.init,
-    audio.init,
-    section ? { video: { skip: 0, seconds: span }, audio: { skip: 0, seconds: span } } : null,
-  );
-  await output.write(patchDurations(init, span));
-
-  // 시간 순서대로 두 트랙을 번갈아 쓴다. 같은 시각이면 영상 먼저.
-  const steps = video.segments.length + audioPlan.length;
-  let written = 0;
-  let vi = 0;
-  let ai = 0;
-  while (vi < video.segments.length || ai < audioPlan.length) {
-    await control?.gate();
-    const v = video.segments[vi];
-    const a = audioPlan[ai];
-    if (v && (!a || v.time <= a.time)) {
-      const bytes = vi === 0 && firstVideoBytes ? firstVideoBytes : await readMedia("video", v);
-      await output.write(rebaseDecodeTimes(bytes, videoBase));
-      vi += 1;
-    } else {
-      let bytes = null;
-      if (firstAudio && ai === firstAudio.index) bytes = firstAudio.bytes;
-      else if (!firstAudio || ai > firstAudio.index) bytes = await trimmedAudio(a);
-      // firstAudio 앞의 조각들은 통째로 버려진 것들이다(bytes = null 그대로).
-      if (bytes) {
-        await output.write(rebaseDecodeTimes(retagFragments(bytes, audioTrackId), audioOrigin));
-      }
-      ai += 1;
-    }
-    written += 1;
-    onStep?.(written, steps);
-  }
+/** 저장해 둔 조각에서 본체(moof+mdat)만 꺼낸다. 라이브 조각에는 앞머리가 붙어 있다. */
+async function readMedia(cache, segment) {
+  const bytes = await cache.read(segment.name);
+  return segment.live ? splitLiveSegment(bytes).media : bytes;
 }
 
-function sectionSeconds(segments) {
-  if (!segments.length) return 0;
-  const last = segments[segments.length - 1];
-  return last.time + (last.duration || 0) - segments[0].time;
+/**
+ * 트랙의 조각들을 훑어 샘플 표를 만든다. 바이트는 아직 옮기지 않는다.
+ *
+ * 여기서 나오는 `c0` 이 편집 목록의 기준점이다. 화면에 처음 나오는 시각(= 조각의 시작
+ * 시각)이 미디어 시간축에서 어디인지를 뜻한다. B프레임이 있으면 0이 아니다 — 디코딩
+ * 순서의 첫 샘플이 화면에서는 첫 장이 아니기 때문이다(유튜브 H.264 는 256, AV1 은 0).
+ *
+ * `runs` 는 "이어 붙은 샘플 묶음"이다. 대개 조각 하나가 묶음 하나지만, 라이브 조각은
+ * moof+mdat 짝이 여럿이라 여러 묶음으로 갈린다. 이 묶음이 곧 mp4 의 덩어리(chunk)다.
+ */
+async function indexTrack(track, control) {
+  const timescale = mediaTimescaleOf(track.init);
+  if (!timescale) throw new Error("트랙의 시간 단위를 읽지 못했습니다");
+
+  const samples = [];
+  const runs = [];
+  let decodeTime = 0;
+  let c0 = Infinity;
+
+  for (const segment of track.segments) {
+    await control?.gate();
+    const read = readSamples(await readMedia(track.cache, segment));
+    if (!read) throw new Error("조각의 샘플 표를 읽지 못했습니다");
+    let run = null;
+    for (const sample of read.samples) {
+      const cts = decodeTime + sample.cto;
+      if (cts < c0) c0 = cts;
+      decodeTime += sample.duration;
+      if (run && sample.at === run.at + run.bytes) {
+        run.bytes += sample.size;
+        run.count += 1;
+      } else {
+        if (run) runs.push(run);
+        run = { segment, at: sample.at, bytes: sample.size, count: 1, time: segment.time };
+      }
+      samples.push({
+        size: sample.size,
+        duration: sample.duration,
+        cto: sample.cto,
+        sync: sample.sync,
+        cts,
+      });
+    }
+    if (run) runs.push(run);
+  }
+  if (!samples.length) throw new Error("해당 구간에 담을 샘플이 없습니다");
+  // 조각의 시작 시각이 미디어 시간축에서 어디인가. 우리가 잰 값(c0)과 앞머리가 적어둔
+  // 값 중 큰 쪽을 쓴다. 둘은 같은 뜻이지만 한쪽만 있을 때가 있다 — 유튜브 H.264 는
+  // 둘 다 256, AV1 은 앞머리에 없어서 c0(0)만, AAC 는 c0 가 0이라 앞머리 값이 있어야 한다.
+  return { ...track, timescale, samples, runs, c0: Math.max(c0, editStartOf(track.init)) };
+}
+
+/**
+ * 뒤쪽을 실제로 잘라낸다. 화면 순서(CTS)로 골라야 B프레임을 빠뜨리지 않는다.
+ *
+ * 뒤를 자르는 데는 손실이 없다 — 프레임은 디코딩 순서상 자기보다 **앞**의 것만
+ * 참조하므로, 뒤를 버려도 남은 것들은 참조할 것을 모두 갖고 있다.
+ * 앞은 그럴 수 없어서 편집 목록으로 가린다.
+ */
+function trimTail(track, endTime) {
+  // 눈금 단위로 반올림해서 센다. 초를 곱해 얻은 값은 아주 조금씩 어긋나서
+  // (13초가 36095.9995 처럼 나온다), 그대로 비교하면 경계에 딱 맞춘 요청이
+  // 프레임 하나만큼 밀린다. 눈금 하나는 0.065ms 라 반올림해도 잃을 것이 없다.
+  const limit = Math.round(track.c0 + (endTime - track.firstTime) * track.timescale);
+  let keep = 0;
+  for (let i = 0; i < track.samples.length; i += 1) {
+    if (track.samples[i].cts < limit) keep = i + 1;
+  }
+  if (!keep) throw new Error("해당 구간에 담을 샘플이 없습니다");
+  if (keep >= track.samples.length) {
+    return { ...track, chunks: track.runs.map((run) => run.count) };
+  }
+
+  const chunks = [];
+  const runs = [];
+  let seen = 0;
+  for (const run of track.runs) {
+    if (seen >= keep) break;
+    const take = Math.min(run.count, keep - seen);
+    let bytes = 0;
+    for (let i = 0; i < take; i += 1) bytes += track.samples[seen + i].size;
+    runs.push({ ...run, count: take, bytes });
+    chunks.push(take);
+    seen += take;
+  }
+  return { ...track, samples: track.samples.slice(0, keep), runs, chunks };
+}
+
+/** 고른 지점을 담고 있는 프레임의 시작 시각(초). 없으면 첫 프레임으로. */
+function snapToFrame(track, time) {
+  const target = Math.round(track.c0 + (time - track.firstTime) * track.timescale);
+  let best = track.c0;
+  for (const sample of track.samples) {
+    if (sample.cts <= target && sample.cts > best) best = sample.cts;
+  }
+  return track.firstTime + (best - track.c0) / track.timescale;
+}
+
+/** 트랙이 화면에 내놓는 마지막 시각(초). 두 트랙 중 이른 쪽에서 파일이 끝나야 한다. */
+function trackEndTime(track) {
+  let last = 0;
+  for (const sample of track.samples) last = Math.max(last, sample.cts + sample.duration);
+  return track.firstTime + (last - track.c0) / track.timescale;
+}
+
+/**
+ * 트랙들을 일반 mp4 하나로 엮어 출력에 흘려 쓴다.
+ *
+ * 앞은 편집 목록으로 가리고(바이트를 지키면서 정확해지는 길은 이것뿐이다),
+ * 뒤는 실제로 잘라낸다(무손실이고, 편집 목록을 무시하는 재생기에서도 정확해진다).
+ *
+ * 덩어리는 두 트랙을 시간 순서로 번갈아 놓는다. 한쪽을 몰아 놓으면 재생기가 소리를
+ * 찾으러 파일 저편까지 건너뛰어야 한다.
+ *
+ * @param tracks [{cache, init, segments, firstTime}]
+ * @returns {{start: number, end: number}} 실제로 담긴 구간(초)
+ */
+async function writeProgressive(output, tracks, section, control, onStep) {
+  const indexed = [];
+  for (const track of tracks) indexed.push(await indexTrack(track, control));
+
+  // 두 트랙이 같은 지점에서 끝나야 한다. 소리 쪽이 더 길면 화면이 멈춘 채 소리만 남는다.
+  const endTime = Math.min(section.end, ...indexed.map(trackEndTime));
+  const wanted = Math.max(section.start, ...indexed.map((track) => track.firstTime));
+  // 영상은 프레임 단위로만 존재한다(60fps 면 16.67ms 마다 한 장). 고른 지점이 프레임
+  // 한가운데면, 그 순간 화면에 떠 있던 프레임부터 시작해야 한다. 그러지 않으면 재생기가
+  // "지정 시각 이상인 첫 프레임"을 골라 그 장을 통째로 건너뛴다(실측으로 확인했다).
+  // 소리는 프레임 제약이 없어 여기 맞추기만 하면 샘플 단위로 정확히 따라온다.
+  const anchor = indexed.find((track) => track.snap);
+  const startTime = anchor ? snapToFrame(anchor, wanted) : wanted;
+  const presentSeconds = Math.max(0, endTime - startTime);
+
+  const parts = indexed.map((track) => {
+    const cut = trimTail(track, endTime);
+    return {
+      ...cut,
+      // 앞머리에서 건너뛸 만큼. 조각 시작(c0)에서 고른 지점까지의 거리다.
+      editMediaTime: Math.round(cut.c0 + Math.max(0, startTime - cut.firstTime) * cut.timescale),
+      presentSeconds,
+    };
+  });
+
+  const totalBytes = parts.reduce(
+    (sum, track) => sum + track.runs.reduce((n, run) => n + run.bytes, 0),
+    0,
+  );
+  // 4GB 를 넘으면 덩어리 위치를 32비트에 못 담는다. 넘칠 것 같으면 64비트 표를 쓴다.
+  const largeOffsets = totalBytes > 0xf0000000;
+  const { head } = buildHead({ tracks: parts, presentSeconds, largeOffsets });
+  const mdat = mdatHeader(totalBytes);
+
+  // 덩어리를 시간 순서로 늘어놓고 자리를 매긴다. 같은 시각이면 영상을 먼저 둔다.
+  const order = [];
+  parts.forEach((track, index) => {
+    track.runs.forEach((run, at) => order.push({ track: index, at, time: run.time, run }));
+  });
+  order.sort((a, b) => a.time - b.time || a.track - b.track);
+  const offsets = parts.map((track) => new Array(track.runs.length));
+  let cursor = head.length + mdat.length;
+  for (const item of order) {
+    offsets[item.track][item.at] = cursor;
+    cursor += item.run.bytes;
+  }
+  fillChunkOffsets(head, offsets);
+
+  await output.write(head);
+  await output.write(mdat);
+  // 바이트는 여기서 처음이자 마지막으로 옮겨진다. 조각 하나씩 읽어 쓰므로
+  // 메모리에는 한 번에 조각 하나만 올라온다.
+  let written = 0;
+  let open = null;
+  for (const item of order) {
+    await control?.gate();
+    const track = parts[item.track];
+    // 같은 조각의 묶음이 이어지면 다시 읽지 않는다(라이브 조각이 그렇다).
+    if (!open || open.track !== item.track || open.name !== item.run.segment.name) {
+      open = {
+        track: item.track,
+        name: item.run.segment.name,
+        bytes: await readMedia(track.cache, item.run.segment),
+      };
+    }
+    await output.write(open.bytes.subarray(item.run.at, item.run.at + item.run.bytes));
+    written += 1;
+    onStep?.(written, order.length);
+  }
+  return { start: startTime, end: endTime };
 }
 
 /** 파일 이름에 쓸 수 없는 글자를 지운다. */
@@ -2032,9 +2041,17 @@ async function downloadSection({
   onProgress?.(0, 1, "합치는 중");
   const output = await media.output();
   let file;
+  let span;
   try {
-    await writeMp4(output, caches, video, audio, { start, end }, control, (step, steps) =>
-      onProgress?.(step, steps, "합치는 중"),
+    span = await writeProgressive(
+      output,
+      [
+        { ...video, cache: caches.video, snap: true },
+        { ...audio, cache: caches.audio },
+      ],
+      { start, end },
+      control,
+      (step, steps) => onProgress?.(step, steps, "합치는 중"),
     );
     file = await output.close();
   } catch (error) {
@@ -2042,11 +2059,14 @@ async function downloadSection({
     throw error;
   }
 
-  // 조각을 통째로 받으므로 파일은 요청보다 앞에서 시작하고 뒤로도 조금 길다. 그대로 알려준다.
-  const mediaStart = video.segments[0]?.time ?? start;
-  const lastSegment = video.segments[video.segments.length - 1];
-  const mediaEnd = lastSegment ? lastSegment.time + (lastSegment.duration || 0) : end;
-  return { file, mediaStart, mediaEnd, mediaSeconds: Math.max(0, mediaEnd - mediaStart) };
+  // 조각은 통째로 받지만 파일은 고른 구간만 내놓는다(앞은 편집 목록, 뒤는 실제로 잘라냄).
+  // 영상은 프레임 단위라 시작이 한 프레임 안쪽에서 당겨질 수 있어, 실제 값을 그대로 알린다.
+  return {
+    file,
+    mediaStart: span.start,
+    mediaEnd: span.end,
+    mediaSeconds: Math.max(0, span.end - span.start),
+  };
 }
 
 /**
@@ -2062,13 +2082,7 @@ async function downloadTrack({ format, kind, start, end, onProgress, control, st
   const media = store || openMemory();
   const cache = await media.track(format.itag);
   const report = (done, total, size) => {
-    const average = size ? size.avg || (size.fetched > 0 ? size.bytes / size.fetched : 0) : 0;
-    onProgress?.(
-      done,
-      total,
-      "받는 중",
-      size && { got: size.bytes, estimated: average > 0 ? average * total : 0 },
-    );
+    onProgress?.(done, total, "받는 중", size && { got: size.bytes, estimated: size.estimated });
   };
 
   const live = format.segmentSeconds > 0 && !format.indexRange;
@@ -2088,8 +2102,13 @@ async function downloadTrack({ format, kind, start, end, onProgress, control, st
   let file;
   let span;
   try {
-    span = await writeTrack(output, cache, track, kind, { start, end }, control, (step, steps) =>
-      onProgress?.(step, steps, "파일 만드는 중"),
+    span = await writeProgressive(
+      output,
+      // 영상만 받을 때는 프레임에 맞춰 당기고, 소리만 받을 때는 그럴 것이 없다.
+      [{ ...track, cache, snap: kind === "video" }],
+      { start, end },
+      control,
+      (step, steps) => onProgress?.(step, steps, "파일 만드는 중"),
     );
     file = await output.close();
   } catch (error) {
@@ -2104,74 +2123,7 @@ async function downloadTrack({ format, kind, start, end, onProgress, control, st
   };
 }
 
-/**
- * 트랙 하나를 출력에 흘려 쓴다. 조각의 시각을 0에서 시작하도록 옮기는 것은
- * writeMp4 와 같지만, 트랙이 하나뿐이라 서로 맞출 상대가 없어 훨씬 단순하다.
- */
-async function writeTrack(output, cache, track, kind, section, control, onStep) {
-  const timescale = mediaTimescaleOf(track.init);
-  const readMedia = async (segment) => {
-    const bytes = await cache.read(segment.name);
-    // 라이브 조각은 통째로 저장돼 있다(앞머리 포함). 본체만 꺼낸다.
-    return segment.live ? splitLiveSegment(bytes).media : bytes;
-  };
-
-  const segments = track.segments;
-  const first = segments[0]?.time ?? section.start;
-  const last = segments[segments.length - 1];
-  const tail = last ? last.time + (last.duration || 0) : section.end;
-
-  // 소리(AAC)는 샘플마다 독립이라 요청한 지점에서 그대로 자른다. 영상은 조각째 둔다.
-  const trim = kind === "audio";
-  const startAt = trim ? Math.min(Math.max(section.start, first), tail) : first;
-  const endAt = trim ? Math.min(tail, Math.max(section.end, startAt)) : tail;
-
-  // 조각별로 앞에서 얼마나 버릴지 정한다(writeMp4 의 소리 계획과 같은 방식).
-  const plan = [];
-  let toDrop = trim ? Math.max(0, startAt - first) : 0;
-  for (const segment of segments) {
-    if (toDrop <= 0) {
-      plan.push({ segment, trim: 0 });
-    } else {
-      plan.push({ segment, trim: toDrop });
-      toDrop -= segment.duration || 0;
-    }
-  }
-  const readKept = async (item) => {
-    let bytes = await readMedia(item.segment);
-    if (item.trim > 0) bytes = dropLeadingSamples(bytes, item.trim, timescale);
-    if (!bytes || !trim) return bytes;
-    // 요청한 끝 지점 뒤의 샘플은 잘라낸다(남은 앞부분 기준으로 남길 길이를 잰다).
-    return dropTrailingSamples(bytes, endAt - (item.segment.time + item.trim), timescale);
-  };
-
-  // 잘라내고도 살아남은 첫 조각이 시간축의 0이 된다.
-  let firstKept = null;
-  for (let index = 0; index < plan.length; index += 1) {
-    const bytes = await readKept(plan[index]);
-    if (bytes) {
-      firstKept = { index, bytes };
-      break;
-    }
-  }
-  if (!firstKept) throw new Error("해당 구간에 남길 조각이 없습니다");
-  const base = firstDecodeTime(firstKept.bytes);
-
-  await output.write(patchDurations(track.init, Math.max(0, endAt - startAt)));
-
-  const steps = plan.length - firstKept.index;
-  let written = 0;
-  for (let index = firstKept.index; index < plan.length; index += 1) {
-    await control?.gate();
-    const bytes = index === firstKept.index ? firstKept.bytes : await readKept(plan[index]);
-    if (bytes) await output.write(rebaseDecodeTimes(bytes, base));
-    written += 1;
-    onStep?.(written, steps);
-  }
-  return { start: startAt, end: endAt };
-}
-
-return {getFormats: getFormats, fetchLiveSegments: fetchLiveSegments, fetchIndex: fetchIndex, Stopped: Stopped, createControl: createControl, fetchSegments: fetchSegments, writeMp4: writeMp4, safeFileName: safeFileName, clockLabel: clockLabel, downloadSection: downloadSection, downloadTrack: downloadTrack, writeTrack: writeTrack};
+return {getFormats: getFormats, fetchLiveSegments: fetchLiveSegments, fetchIndex: fetchIndex, Stopped: Stopped, createControl: createControl, fetchSegments: fetchSegments, writeProgressive: writeProgressive, safeFileName: safeFileName, clockLabel: clockLabel, downloadSection: downloadSection, downloadTrack: downloadTrack};
 });
 __define("nsig.js", (__need) => {
 // 유튜브가 미디어 주소에 붙이는 `n` 파라미터를 푼다.
@@ -2231,7 +2183,7 @@ return {solveUrls: solveUrls, challengeOf: challengeOf};
 });
 window.__ytdlBase = "https://ba-kod.github.io/yt-download/";
 window.__ytdlModules = Object.fromEntries(
-  ["net.js", "innertube.js", "mp4index.js", "mp4mux.js", "store.js", "download.js", "nsig.js"].map((name) => [name, __need(name)]),
+  ["net.js", "innertube.js", "mp4index.js", "mp4mux.js", "mp4file.js", "store.js", "download.js", "nsig.js"].map((name) => [name, __need(name)]),
 );
 const __styleId = 'ytdl-overlay-style';
 document.getElementById(__styleId)?.remove();
@@ -3536,8 +3488,9 @@ window.__ytdlPageTeardown = () => {
             })
           : await downloadTrack({ ...request, format: chosenFormat, kind: mode });
 
-      // 영상은 키프레임(조각 경계)에서만 자를 수 있어 실제 파일은 고른 지점보다
-      // 조금 앞에서 시작하고 조금 뒤에서 끝난다. 이름도 실제 내용에 맞춰 붙인다.
+      // 파일은 고른 구간 그대로다. 다만 영상은 프레임 단위로만 존재해서(60fps 면
+      // 16.67ms 마다 한 장) 시작이 한 프레임 안쪽에서 당겨질 수 있다. 고른 그 순간
+      // 화면에 떠 있던 장을 살리려는 것이다. 이름도 실제 내용에 맞춰 붙인다.
       const realStart = Number.isFinite(mediaStart) ? mediaStart : state.start;
       const realEnd = Number.isFinite(mediaEnd) ? mediaEnd : state.end;
       // 소리만 받은 파일은 확장자(m4a)가, 소리 없는 영상은 이름표가 내용을 알려준다.

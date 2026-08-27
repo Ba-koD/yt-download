@@ -54,6 +54,7 @@ MODULES = [
     "innertube.js",
     "mp4index.js",
     "mp4mux.js",
+    "mp4file.js",
     "store.js",
     "download.js",
     "nsig.js",

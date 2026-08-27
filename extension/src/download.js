@@ -11,17 +11,8 @@ import { fetchPlayerResponse, fetchVisitorData, readFormats } from "./innertube.
 import { mergeRanges, parseSidx, segmentsForRange } from "./mp4index.js";
 import { request } from "./net.js";
 import { openMemory } from "./store.js";
-import {
-  combineInit,
-  splitLiveSegment,
-  dropLeadingSamples,
-  dropTrailingSamples,
-  firstDecodeTime,
-  mediaTimescaleOf,
-  patchDurations,
-  rebaseDecodeTimes,
-  retagFragments,
-} from "./mp4mux.js";
+import { buildHead, editStartOf, fillChunkOffsets, mdatHeader } from "./mp4file.js";
+import { mediaTimescaleOf, readSamples, splitLiveSegment } from "./mp4mux.js";
 
 /** 한 번에 보내는 요청 수. 너무 늘리면 유튜브가 속도를 깎는다. */
 const CONCURRENCY = 6;
@@ -246,132 +237,199 @@ export async function fetchSegments(format, index, start, end, onProgress, contr
   return { segments, totalBytes, firstTime: wanted[0].time };
 }
 
-/**
- * 영상 조각과 소리 조각을 하나의 mp4 로 엮어 출력에 흘려 쓴다.
- *
- * 앞머리는 트랙 두 개짜리로 새로 쓰고, 조각은 시간 순서대로 번갈아 넣는다.
- * 같은 시각이면 영상을 먼저 둔다(재생기가 화면부터 준비하도록).
- * 조각 바이트는 저장소에서 하나씩 읽어 쓰므로 메모리에는 한 번에 조각 하나만 있다.
- */
-export async function writeMp4(output, caches, video, audio, section, control, onStep) {
-  // 영상과 소리는 조각 길이가 달라서(영상 5초, 소리 10초 같은 식) 구간을 잡으면
-  // 두 트랙이 서로 다른 지점에서 시작한다. 영상은 키프레임에서만 자를 수 있으므로
-  // 영상 조각의 시작을 기준으로 삼고, 소리 쪽 앞부분을 그만큼 실제로 버린다.
-  // 이렇게 해두면 편집 목록을 무시하는 재생기에서도 소리가 어긋나지 않는다.
-  const mediaStart = video.segments[0]?.time ?? 0;
-  const audioStart = audio.segments[0]?.time ?? 0;
-  const audioLead = Math.max(0, mediaStart - audioStart);
-  const audioTimescale = mediaTimescaleOf(audio.init);
-  // 영상 트랙이 끝나는 지점. 소리도 여기서 끝나야 한다 — 소리 조각이 더 길면
-  // (조각이 긴 라이브에서 두드러진다) 영상이 멈춘 채 소리만 계속 나온다.
-  const lastVideo = video.segments[video.segments.length - 1];
-  const videoEnd = lastVideo ? lastVideo.time + (lastVideo.duration || 0) : Infinity;
-
-  const readMedia = async (kind, segment) => {
-    const bytes = await caches[kind].read(segment.name);
-    // 라이브 조각은 통째로 저장돼 있다(앞머리 포함). 본체만 꺼낸다.
-    return segment.live ? splitLiveSegment(bytes).media : bytes;
-  };
-
-  // 소리 조각별로 앞에서 얼마나 잘라낼지 미리 정한다(바이트는 아직 읽지 않는다).
-  const audioPlan = [];
-  let toDrop = audioLead;
-  for (const segment of audio.segments) {
-    if (toDrop <= 0) {
-      audioPlan.push({ segment, trim: 0, time: segment.time });
-    } else {
-      audioPlan.push({ segment, trim: toDrop, time: Math.max(segment.time, mediaStart) });
-      toDrop -= segment.duration || 0;
-    }
-  }
-  const trimmedAudio = async (plan) => {
-    let bytes = await readMedia("audio", plan.segment);
-    // 통째로 버려야 하는 조각이면 null 이 돌아온다.
-    if (plan.trim > 0) bytes = dropLeadingSamples(bytes, plan.trim, audioTimescale);
-    if (!bytes) return null;
-    // 영상이 끝나는 지점 뒤의 소리는 잘라낸다(남은 앞부분 기준으로 남길 길이를 잰다).
-    return dropTrailingSamples(bytes, videoEnd - (plan.segment.time + plan.trim), audioTimescale);
-  };
-
-  // 기준 시각을 얻기 위해 첫 조각들만 먼저 읽는다. 읽은 것은 아래에서 한 번만 다시 쓴다.
-  //
-  // 두 트랙 모두 같은 지점을 0으로 삼아야 서로 어긋나지 않는다.
-  // 소리가 영상보다 늦게 시작할 수도 있다(조각 경계가 서로 다르니까).
-  // 그때 소리를 0초에 붙여버리면 그 차이만큼 소리가 앞서 간다. 늦은 만큼 뒤로 민다.
-  const firstVideoBytes = video.segments.length
-    ? await readMedia("video", video.segments[0])
-    : null;
-  let firstAudio = null; // { index, bytes } — 잘라내고도 살아남은 첫 소리 조각
-  for (let i = 0; i < audioPlan.length; i += 1) {
-    const bytes = await trimmedAudio(audioPlan[i]);
-    if (bytes) {
-      firstAudio = { index: i, bytes };
-      break;
-    }
-  }
-  const videoBase = firstVideoBytes ? firstDecodeTime(firstVideoBytes) : 0;
-  const audioBase = firstAudio ? firstDecodeTime(firstAudio.bytes) : 0;
-  const audioLate = Math.max(
-    0,
-    (firstAudio ? audioPlan[firstAudio.index].time : mediaStart) - mediaStart,
-  );
-  const audioOrigin = audioBase - audioLate * audioTimescale;
-
-  // 앞부분을 편집 목록(elst)으로 건너뛰게 하면 안 된다.
-  //
-  // 영상은 키프레임에서만 자를 수 있어 요청한 지점보다 조금 앞에서 시작한다.
-  // 예전에는 그 앞부분을 건너뛰라고 편집 목록에 적어뒀는데, 재생기가 그 지시를
-  // **소리에만** 적용하고 영상은 앞부분을 그대로 두더라(디코딩에 필요하니까).
-  // 그래서 소리가 5초쯤 앞서 갔다. 실측한 값이다.
-  //
-  //   소리 밀림 4.96초 / 화면 밀림 0.00초 → 어긋남 4.96초
-  //
-  // 앞은 손대지 않고 뒤 길이만 맞춘다. 두 트랙이 항상 같이 간다.
-  // 대신 파일이 요청보다 몇 초 앞에서 시작하는데, 그건 부르는 쪽에서 알려준다.
-  // 파일에 적는 길이는 실제 담긴 내용과 같아야 한다. 뒤쪽도 조각 경계까지 담기므로
-  // 요청한 구간이 아니라 영상 트랙의 실제 끝(videoEnd)을 기준으로 잰다.
-  const span = Number.isFinite(videoEnd)
-    ? videoEnd - mediaStart
-    : sectionSeconds(video.segments) || sectionSeconds(audio.segments);
-  const { init, audioTrackId } = combineInit(
-    video.init,
-    audio.init,
-    section ? { video: { skip: 0, seconds: span }, audio: { skip: 0, seconds: span } } : null,
-  );
-  await output.write(patchDurations(init, span));
-
-  // 시간 순서대로 두 트랙을 번갈아 쓴다. 같은 시각이면 영상 먼저.
-  const steps = video.segments.length + audioPlan.length;
-  let written = 0;
-  let vi = 0;
-  let ai = 0;
-  while (vi < video.segments.length || ai < audioPlan.length) {
-    await control?.gate();
-    const v = video.segments[vi];
-    const a = audioPlan[ai];
-    if (v && (!a || v.time <= a.time)) {
-      const bytes = vi === 0 && firstVideoBytes ? firstVideoBytes : await readMedia("video", v);
-      await output.write(rebaseDecodeTimes(bytes, videoBase));
-      vi += 1;
-    } else {
-      let bytes = null;
-      if (firstAudio && ai === firstAudio.index) bytes = firstAudio.bytes;
-      else if (!firstAudio || ai > firstAudio.index) bytes = await trimmedAudio(a);
-      // firstAudio 앞의 조각들은 통째로 버려진 것들이다(bytes = null 그대로).
-      if (bytes) {
-        await output.write(rebaseDecodeTimes(retagFragments(bytes, audioTrackId), audioOrigin));
-      }
-      ai += 1;
-    }
-    written += 1;
-    onStep?.(written, steps);
-  }
+/** 저장해 둔 조각에서 본체(moof+mdat)만 꺼낸다. 라이브 조각에는 앞머리가 붙어 있다. */
+async function readMedia(cache, segment) {
+  const bytes = await cache.read(segment.name);
+  return segment.live ? splitLiveSegment(bytes).media : bytes;
 }
 
-function sectionSeconds(segments) {
-  if (!segments.length) return 0;
-  const last = segments[segments.length - 1];
-  return last.time + (last.duration || 0) - segments[0].time;
+/**
+ * 트랙의 조각들을 훑어 샘플 표를 만든다. 바이트는 아직 옮기지 않는다.
+ *
+ * 여기서 나오는 `c0` 이 편집 목록의 기준점이다. 화면에 처음 나오는 시각(= 조각의 시작
+ * 시각)이 미디어 시간축에서 어디인지를 뜻한다. B프레임이 있으면 0이 아니다 — 디코딩
+ * 순서의 첫 샘플이 화면에서는 첫 장이 아니기 때문이다(유튜브 H.264 는 256, AV1 은 0).
+ *
+ * `runs` 는 "이어 붙은 샘플 묶음"이다. 대개 조각 하나가 묶음 하나지만, 라이브 조각은
+ * moof+mdat 짝이 여럿이라 여러 묶음으로 갈린다. 이 묶음이 곧 mp4 의 덩어리(chunk)다.
+ */
+async function indexTrack(track, control) {
+  const timescale = mediaTimescaleOf(track.init);
+  if (!timescale) throw new Error("트랙의 시간 단위를 읽지 못했습니다");
+
+  const samples = [];
+  const runs = [];
+  let decodeTime = 0;
+  let c0 = Infinity;
+
+  for (const segment of track.segments) {
+    await control?.gate();
+    const read = readSamples(await readMedia(track.cache, segment));
+    if (!read) throw new Error("조각의 샘플 표를 읽지 못했습니다");
+    let run = null;
+    for (const sample of read.samples) {
+      const cts = decodeTime + sample.cto;
+      if (cts < c0) c0 = cts;
+      decodeTime += sample.duration;
+      if (run && sample.at === run.at + run.bytes) {
+        run.bytes += sample.size;
+        run.count += 1;
+      } else {
+        if (run) runs.push(run);
+        run = { segment, at: sample.at, bytes: sample.size, count: 1, time: segment.time };
+      }
+      samples.push({
+        size: sample.size,
+        duration: sample.duration,
+        cto: sample.cto,
+        sync: sample.sync,
+        cts,
+      });
+    }
+    if (run) runs.push(run);
+  }
+  if (!samples.length) throw new Error("해당 구간에 담을 샘플이 없습니다");
+  // 조각의 시작 시각이 미디어 시간축에서 어디인가. 우리가 잰 값(c0)과 앞머리가 적어둔
+  // 값 중 큰 쪽을 쓴다. 둘은 같은 뜻이지만 한쪽만 있을 때가 있다 — 유튜브 H.264 는
+  // 둘 다 256, AV1 은 앞머리에 없어서 c0(0)만, AAC 는 c0 가 0이라 앞머리 값이 있어야 한다.
+  return { ...track, timescale, samples, runs, c0: Math.max(c0, editStartOf(track.init)) };
+}
+
+/**
+ * 뒤쪽을 실제로 잘라낸다. 화면 순서(CTS)로 골라야 B프레임을 빠뜨리지 않는다.
+ *
+ * 뒤를 자르는 데는 손실이 없다 — 프레임은 디코딩 순서상 자기보다 **앞**의 것만
+ * 참조하므로, 뒤를 버려도 남은 것들은 참조할 것을 모두 갖고 있다.
+ * 앞은 그럴 수 없어서 편집 목록으로 가린다.
+ */
+function trimTail(track, endTime) {
+  // 눈금 단위로 반올림해서 센다. 초를 곱해 얻은 값은 아주 조금씩 어긋나서
+  // (13초가 36095.9995 처럼 나온다), 그대로 비교하면 경계에 딱 맞춘 요청이
+  // 프레임 하나만큼 밀린다. 눈금 하나는 0.065ms 라 반올림해도 잃을 것이 없다.
+  const limit = Math.round(track.c0 + (endTime - track.firstTime) * track.timescale);
+  let keep = 0;
+  for (let i = 0; i < track.samples.length; i += 1) {
+    if (track.samples[i].cts < limit) keep = i + 1;
+  }
+  if (!keep) throw new Error("해당 구간에 담을 샘플이 없습니다");
+  if (keep >= track.samples.length) {
+    return { ...track, chunks: track.runs.map((run) => run.count) };
+  }
+
+  const chunks = [];
+  const runs = [];
+  let seen = 0;
+  for (const run of track.runs) {
+    if (seen >= keep) break;
+    const take = Math.min(run.count, keep - seen);
+    let bytes = 0;
+    for (let i = 0; i < take; i += 1) bytes += track.samples[seen + i].size;
+    runs.push({ ...run, count: take, bytes });
+    chunks.push(take);
+    seen += take;
+  }
+  return { ...track, samples: track.samples.slice(0, keep), runs, chunks };
+}
+
+/** 고른 지점을 담고 있는 프레임의 시작 시각(초). 없으면 첫 프레임으로. */
+function snapToFrame(track, time) {
+  const target = Math.round(track.c0 + (time - track.firstTime) * track.timescale);
+  let best = track.c0;
+  for (const sample of track.samples) {
+    if (sample.cts <= target && sample.cts > best) best = sample.cts;
+  }
+  return track.firstTime + (best - track.c0) / track.timescale;
+}
+
+/** 트랙이 화면에 내놓는 마지막 시각(초). 두 트랙 중 이른 쪽에서 파일이 끝나야 한다. */
+function trackEndTime(track) {
+  let last = 0;
+  for (const sample of track.samples) last = Math.max(last, sample.cts + sample.duration);
+  return track.firstTime + (last - track.c0) / track.timescale;
+}
+
+/**
+ * 트랙들을 일반 mp4 하나로 엮어 출력에 흘려 쓴다.
+ *
+ * 앞은 편집 목록으로 가리고(바이트를 지키면서 정확해지는 길은 이것뿐이다),
+ * 뒤는 실제로 잘라낸다(무손실이고, 편집 목록을 무시하는 재생기에서도 정확해진다).
+ *
+ * 덩어리는 두 트랙을 시간 순서로 번갈아 놓는다. 한쪽을 몰아 놓으면 재생기가 소리를
+ * 찾으러 파일 저편까지 건너뛰어야 한다.
+ *
+ * @param tracks [{cache, init, segments, firstTime}]
+ * @returns {{start: number, end: number}} 실제로 담긴 구간(초)
+ */
+export async function writeProgressive(output, tracks, section, control, onStep) {
+  const indexed = [];
+  for (const track of tracks) indexed.push(await indexTrack(track, control));
+
+  // 두 트랙이 같은 지점에서 끝나야 한다. 소리 쪽이 더 길면 화면이 멈춘 채 소리만 남는다.
+  const endTime = Math.min(section.end, ...indexed.map(trackEndTime));
+  const wanted = Math.max(section.start, ...indexed.map((track) => track.firstTime));
+  // 영상은 프레임 단위로만 존재한다(60fps 면 16.67ms 마다 한 장). 고른 지점이 프레임
+  // 한가운데면, 그 순간 화면에 떠 있던 프레임부터 시작해야 한다. 그러지 않으면 재생기가
+  // "지정 시각 이상인 첫 프레임"을 골라 그 장을 통째로 건너뛴다(실측으로 확인했다).
+  // 소리는 프레임 제약이 없어 여기 맞추기만 하면 샘플 단위로 정확히 따라온다.
+  const anchor = indexed.find((track) => track.snap);
+  const startTime = anchor ? snapToFrame(anchor, wanted) : wanted;
+  const presentSeconds = Math.max(0, endTime - startTime);
+
+  const parts = indexed.map((track) => {
+    const cut = trimTail(track, endTime);
+    return {
+      ...cut,
+      // 앞머리에서 건너뛸 만큼. 조각 시작(c0)에서 고른 지점까지의 거리다.
+      editMediaTime: Math.round(cut.c0 + Math.max(0, startTime - cut.firstTime) * cut.timescale),
+      presentSeconds,
+    };
+  });
+
+  const totalBytes = parts.reduce(
+    (sum, track) => sum + track.runs.reduce((n, run) => n + run.bytes, 0),
+    0,
+  );
+  // 4GB 를 넘으면 덩어리 위치를 32비트에 못 담는다. 넘칠 것 같으면 64비트 표를 쓴다.
+  const largeOffsets = totalBytes > 0xf0000000;
+  const { head } = buildHead({ tracks: parts, presentSeconds, largeOffsets });
+  const mdat = mdatHeader(totalBytes);
+
+  // 덩어리를 시간 순서로 늘어놓고 자리를 매긴다. 같은 시각이면 영상을 먼저 둔다.
+  const order = [];
+  parts.forEach((track, index) => {
+    track.runs.forEach((run, at) => order.push({ track: index, at, time: run.time, run }));
+  });
+  order.sort((a, b) => a.time - b.time || a.track - b.track);
+  const offsets = parts.map((track) => new Array(track.runs.length));
+  let cursor = head.length + mdat.length;
+  for (const item of order) {
+    offsets[item.track][item.at] = cursor;
+    cursor += item.run.bytes;
+  }
+  fillChunkOffsets(head, offsets);
+
+  await output.write(head);
+  await output.write(mdat);
+  // 바이트는 여기서 처음이자 마지막으로 옮겨진다. 조각 하나씩 읽어 쓰므로
+  // 메모리에는 한 번에 조각 하나만 올라온다.
+  let written = 0;
+  let open = null;
+  for (const item of order) {
+    await control?.gate();
+    const track = parts[item.track];
+    // 같은 조각의 묶음이 이어지면 다시 읽지 않는다(라이브 조각이 그렇다).
+    if (!open || open.track !== item.track || open.name !== item.run.segment.name) {
+      open = {
+        track: item.track,
+        name: item.run.segment.name,
+        bytes: await readMedia(track.cache, item.run.segment),
+      };
+    }
+    await output.write(open.bytes.subarray(item.run.at, item.run.at + item.run.bytes));
+    written += 1;
+    onStep?.(written, order.length);
+  }
+  return { start: startTime, end: endTime };
 }
 
 /** 파일 이름에 쓸 수 없는 글자를 지운다. */
@@ -474,9 +532,17 @@ export async function downloadSection({
   onProgress?.(0, 1, "합치는 중");
   const output = await media.output();
   let file;
+  let span;
   try {
-    await writeMp4(output, caches, video, audio, { start, end }, control, (step, steps) =>
-      onProgress?.(step, steps, "합치는 중"),
+    span = await writeProgressive(
+      output,
+      [
+        { ...video, cache: caches.video, snap: true },
+        { ...audio, cache: caches.audio },
+      ],
+      { start, end },
+      control,
+      (step, steps) => onProgress?.(step, steps, "합치는 중"),
     );
     file = await output.close();
   } catch (error) {
@@ -484,11 +550,14 @@ export async function downloadSection({
     throw error;
   }
 
-  // 조각을 통째로 받으므로 파일은 요청보다 앞에서 시작하고 뒤로도 조금 길다. 그대로 알려준다.
-  const mediaStart = video.segments[0]?.time ?? start;
-  const lastSegment = video.segments[video.segments.length - 1];
-  const mediaEnd = lastSegment ? lastSegment.time + (lastSegment.duration || 0) : end;
-  return { file, mediaStart, mediaEnd, mediaSeconds: Math.max(0, mediaEnd - mediaStart) };
+  // 조각은 통째로 받지만 파일은 고른 구간만 내놓는다(앞은 편집 목록, 뒤는 실제로 잘라냄).
+  // 영상은 프레임 단위라 시작이 한 프레임 안쪽에서 당겨질 수 있어, 실제 값을 그대로 알린다.
+  return {
+    file,
+    mediaStart: span.start,
+    mediaEnd: span.end,
+    mediaSeconds: Math.max(0, span.end - span.start),
+  };
 }
 
 /**
@@ -504,13 +573,7 @@ export async function downloadTrack({ format, kind, start, end, onProgress, cont
   const media = store || openMemory();
   const cache = await media.track(format.itag);
   const report = (done, total, size) => {
-    const average = size ? size.avg || (size.fetched > 0 ? size.bytes / size.fetched : 0) : 0;
-    onProgress?.(
-      done,
-      total,
-      "받는 중",
-      size && { got: size.bytes, estimated: average > 0 ? average * total : 0 },
-    );
+    onProgress?.(done, total, "받는 중", size && { got: size.bytes, estimated: size.estimated });
   };
 
   const live = format.segmentSeconds > 0 && !format.indexRange;
@@ -530,8 +593,13 @@ export async function downloadTrack({ format, kind, start, end, onProgress, cont
   let file;
   let span;
   try {
-    span = await writeTrack(output, cache, track, kind, { start, end }, control, (step, steps) =>
-      onProgress?.(step, steps, "파일 만드는 중"),
+    span = await writeProgressive(
+      output,
+      // 영상만 받을 때는 프레임에 맞춰 당기고, 소리만 받을 때는 그럴 것이 없다.
+      [{ ...track, cache, snap: kind === "video" }],
+      { start, end },
+      control,
+      (step, steps) => onProgress?.(step, steps, "파일 만드는 중"),
     );
     file = await output.close();
   } catch (error) {
@@ -544,71 +612,4 @@ export async function downloadTrack({ format, kind, start, end, onProgress, cont
     mediaEnd: span.end,
     mediaSeconds: Math.max(0, span.end - span.start),
   };
-}
-
-/**
- * 트랙 하나를 출력에 흘려 쓴다. 조각의 시각을 0에서 시작하도록 옮기는 것은
- * writeMp4 와 같지만, 트랙이 하나뿐이라 서로 맞출 상대가 없어 훨씬 단순하다.
- */
-export async function writeTrack(output, cache, track, kind, section, control, onStep) {
-  const timescale = mediaTimescaleOf(track.init);
-  const readMedia = async (segment) => {
-    const bytes = await cache.read(segment.name);
-    // 라이브 조각은 통째로 저장돼 있다(앞머리 포함). 본체만 꺼낸다.
-    return segment.live ? splitLiveSegment(bytes).media : bytes;
-  };
-
-  const segments = track.segments;
-  const first = segments[0]?.time ?? section.start;
-  const last = segments[segments.length - 1];
-  const tail = last ? last.time + (last.duration || 0) : section.end;
-
-  // 소리(AAC)는 샘플마다 독립이라 요청한 지점에서 그대로 자른다. 영상은 조각째 둔다.
-  const trim = kind === "audio";
-  const startAt = trim ? Math.min(Math.max(section.start, first), tail) : first;
-  const endAt = trim ? Math.min(tail, Math.max(section.end, startAt)) : tail;
-
-  // 조각별로 앞에서 얼마나 버릴지 정한다(writeMp4 의 소리 계획과 같은 방식).
-  const plan = [];
-  let toDrop = trim ? Math.max(0, startAt - first) : 0;
-  for (const segment of segments) {
-    if (toDrop <= 0) {
-      plan.push({ segment, trim: 0 });
-    } else {
-      plan.push({ segment, trim: toDrop });
-      toDrop -= segment.duration || 0;
-    }
-  }
-  const readKept = async (item) => {
-    let bytes = await readMedia(item.segment);
-    if (item.trim > 0) bytes = dropLeadingSamples(bytes, item.trim, timescale);
-    if (!bytes || !trim) return bytes;
-    // 요청한 끝 지점 뒤의 샘플은 잘라낸다(남은 앞부분 기준으로 남길 길이를 잰다).
-    return dropTrailingSamples(bytes, endAt - (item.segment.time + item.trim), timescale);
-  };
-
-  // 잘라내고도 살아남은 첫 조각이 시간축의 0이 된다.
-  let firstKept = null;
-  for (let index = 0; index < plan.length; index += 1) {
-    const bytes = await readKept(plan[index]);
-    if (bytes) {
-      firstKept = { index, bytes };
-      break;
-    }
-  }
-  if (!firstKept) throw new Error("해당 구간에 남길 조각이 없습니다");
-  const base = firstDecodeTime(firstKept.bytes);
-
-  await output.write(patchDurations(track.init, Math.max(0, endAt - startAt)));
-
-  const steps = plan.length - firstKept.index;
-  let written = 0;
-  for (let index = firstKept.index; index < plan.length; index += 1) {
-    await control?.gate();
-    const bytes = index === firstKept.index ? firstKept.bytes : await readKept(plan[index]);
-    if (bytes) await output.write(rebaseDecodeTimes(bytes, base));
-    written += 1;
-    onStep?.(written, steps);
-  }
-  return { start: startAt, end: endAt };
 }

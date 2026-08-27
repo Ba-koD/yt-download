@@ -234,35 +234,21 @@ Deno.test("일시적인 실패(503)는 쉬었다가 다시 받아서 살려낸�
   assertEquals(waits, [10, 20]);
 });
 
-Deno.test("403 은 '지금은 너무 많다'는 뜻이라 쉬었다 다시 받아 본다", async () => {
-  // 실측: 8MB 를 6개 동시에 던지면 절반이 403 인데, 곧바로 같은 주소에 작게 다시
-  // 물으면 206 이 온다. 영구 거절이 아니라 순간적인 제한이다.
-  let calls = 0;
-  const fetcher = withRetry(
-    async () => {
-      calls += 1;
-      if (calls < 3) throw new Error("조각을 받지 못했습니다 (HTTP 403)");
-      return new Uint8Array([7]);
-    },
-    { sleep: async () => {} },
-  );
-
-  assertEquals([...(await fetcher("https://g.example/videoplayback?itag=137"))], [7]);
-  assertEquals(calls, 3);
-});
-
-Deno.test("계속 403 이면 정해진 횟수만 두드리고 그만둔다", async () => {
+Deno.test("403 은 여기서 붙잡지 않고 바로 넘긴다(위층이 클라이언트를 갈아탄다)", async () => {
+  // 403 은 "이 영상·이 클라이언트 몫을 다 썼다"는 뜻이다. 기다려도 잘 열리지 않고,
+  // 다른 클라이언트로 주소를 새로 받으면 곧바로 이어진다. 그 갈아타기는 download.js 가
+  // 하므로 여기서 붙잡으면 갈아타기만 늦어진다.
   let calls = 0;
   const fetcher = withRetry(
     async () => {
       calls += 1;
       throw new Error("조각을 받지 못했습니다 (HTTP 403)");
     },
-    { tries: 4, sleep: async () => {} },
+    { sleep: async () => {} },
   );
 
-  await assertRejects(() => fetcher("u"), Error, "HTTP 403");
-  assertEquals(calls, 4);
+  await assertRejects(() => fetcher("https://g.example/videoplayback?itag=137"), Error, "HTTP 403");
+  assertEquals(calls, 1);
 });
 
 Deno.test("라이브 조각의 401 은 일시적인 것으로 보고 다시 받아 본다", async () => {

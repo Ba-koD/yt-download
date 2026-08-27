@@ -296,25 +296,19 @@ function httpStatusOf(error) {
  * 요청 하나는 길어야 8MB 라(mergeRanges 가 그 크기로 자른다) 다시 받는 값이 싸다.
  * 403(주소 만료)·404 같은 답은 다시 물어도 같으므로 바로 던진다.
  */
-// 몫이 다시 열릴 때까지 기다려야 해서 상한이 길다(8초로는 모자랐다 — 실측).
-function withRetry(fetcher, { tries = 7, waitMs = 1000, maxWaitMs = 30_000, sleep } = {}) {
+function withRetry(fetcher, { tries = 6, waitMs = 1000, maxWaitMs = 8000, sleep } = {}) {
   const rest = sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const transient = (error, url) => {
     const status = httpStatusOf(error);
     // 상태 코드가 없으면 네트워크가 잠깐 끊긴 것으로 보고 다시 해본다.
     if (!status) return true;
     if (status === 408 || status === 429 || status >= 500) return true;
-    // googlevideo 의 403 은 영구 거절이 아니라 "이 영상은 지금 이만큼까지"라는 뜻이다.
-    //
-    // 실측한 것: 한 영상에서 일정량(어떤 영상은 18MB, 다른 영상은 60MB)을 받고 나면
-    // 그 뒤 자리는 전부 403 이 된다. 주소를 새로 받아도, 방문자 ID 를 새로 만들어도,
-    // 쿠키를 빼도 똑같다 — 아이피와 영상에 걸린 몫이다. 트랙도 가리지 않는다(영상 쪽을
-    // 다 쓰면 소리 쪽도 곧바로 403 이었다). 반면 **이미 받아둔 자리는 계속 내어준다**.
-    // 그리고 시간이 지나면 다시 열린다.
-    //
-    // 그래서 미디어의 403 은 기다렸다 다시 두드린다. 조각은 저장소에 남으므로
-    // 중간에 그만두더라도 다음에 없는 것만 마저 받는다(이어받기).
-    return status === 403 || (status === 401 && /[?&]live=1/.test(String(url)));
+    // 403 은 여기서 기다리지 않는다. 이 오류는 "이 영상·이 클라이언트 몫을 다 썼다"는
+    // 뜻인데(download.js 의 makePuller 주석 참고), 기다려도 잘 열리지 않는 반면
+    // 다른 클라이언트로 주소를 새로 받으면 곧바로 이어진다. 그 갈아타기가 위층에서
+    // 일어나므로, 여기서 붙잡고 있으면 갈아타기만 늦어진다.
+    // 막 시작한 라이브는 가장자리 서버가 401·403 을 잠깐 주기도 해서 그때만 다시 본다.
+    return (status === 401 || status === 403) && /[?&]live=1/.test(String(url));
   };
   return async (url, headers) => {
     let wait = waitMs;
@@ -360,6 +354,40 @@ const CLIENT = {
   gl: "US",
 };
 
+/**
+ * 몫이 떨어졌을 때 갈아탈 클라이언트들.
+ *
+ * 유튜브는 (아이피 × 영상 × 클라이언트)마다 받을 수 있는 몫을 둔다. 다 쓰면 그 뒤로는
+ * 403 이고, **같은 클라이언트로는 주소를 새로 받아도 열리지 않는다**(방문자 ID 를 새로
+ * 만들어도, 쿠키를 빼도 마찬가지다 — 전부 확인했다). 다른 클라이언트로 물으면 새 몫이
+ * 나온다.
+ *
+ * 갈아타도 안전한 이유: 같은 itag 면 세 클라이언트가 **완전히 같은 파일**을 준다.
+ * contentLength·initRange·indexRange·lastModified 가 모두 같고, 앞부분 바이트를 받아
+ * 견주어도 같았다. 그래서 받다가 중간에 주소만 바꿔 끼워도 이어진다.
+ */
+const FALLBACK_CLIENTS = [
+  {
+    clientName: "IOS",
+    clientVersion: "20.10.4",
+    deviceMake: "Apple",
+    deviceModel: "iPhone16,2",
+    osName: "iPhone",
+    osVersion: "18.3.2.22D82",
+    hl: "en",
+    gl: "US",
+  },
+  {
+    clientName: "ANDROID",
+    clientVersion: "20.10.38",
+    androidSdkVersion: 34,
+    osName: "Android",
+    osVersion: "14",
+    hl: "en",
+    gl: "US",
+  },
+];
+
 function buildPlayerRequest(videoId, visitorData, client = CLIENT) {
   return {
     videoId,
@@ -396,8 +424,8 @@ const CREATOR_CLIENT = {
 
 const ORIGIN = "https://www.youtube.com";
 
-async function fetchPlayerResponse(videoId, visitorData) {
-  const first = await requestPlayer(videoId, visitorData, CLIENT);
+async function fetchPlayerResponse(videoId, visitorData, client = CLIENT) {
+  const first = await requestPlayer(videoId, visitorData, client);
   if (first?.playabilityStatus?.status === "OK") return first;
 
   // 로그인해야 볼 수 있는 영상이면 내 계정으로 다시 물어본다.
@@ -550,7 +578,7 @@ function shortCodec(codec) {
   return codec;
 }
 
-return {CLIENT: CLIENT, buildPlayerRequest: buildPlayerRequest, fetchVisitorData: fetchVisitorData, extractVisitorData: extractVisitorData, fetchPlayerResponse: fetchPlayerResponse, authHeaders: authHeaders, sha1: sha1, readFormats: readFormats, formatLabel: formatLabel, shortCodec: shortCodec};
+return {CLIENT: CLIENT, FALLBACK_CLIENTS: FALLBACK_CLIENTS, buildPlayerRequest: buildPlayerRequest, fetchVisitorData: fetchVisitorData, extractVisitorData: extractVisitorData, fetchPlayerResponse: fetchPlayerResponse, authHeaders: authHeaders, sha1: sha1, readFormats: readFormats, formatLabel: formatLabel, shortCodec: shortCodec};
 });
 __define("mp4index.js", (__need) => {
 // DASH mp4 의 조각 색인(sidx) 을 읽어 "시간 ↔ 바이트" 표를 만든다.
@@ -1533,9 +1561,9 @@ const { mediaTimescaleOf, readSamples, splitLiveSegment } = __need("mp4mux.js");
 /** 한 번에 보내는 요청 수. 너무 늘리면 유튜브가 속도를 깎는다. */
 const CONCURRENCY = 6;
 
-async function getFormats(videoId, visitorData, unlock) {
+async function getFormats(videoId, visitorData, unlock, client) {
   const visitor = visitorData || (await fetchVisitorData());
-  const player = await fetchPlayerResponse(videoId, visitor);
+  const player = await fetchPlayerResponse(videoId, visitor, client);
   const formats = readFormats(player);
 
   // 로그인해야 볼 수 있는 영상의 주소에는 `n` 이 붙어 있고, 풀지 않으면 403 이다.
@@ -1554,6 +1582,51 @@ async function fetchRange(url, start, end) {
   return request.bytes(url, { Range: `bytes=${start}-${end}` });
 }
 
+/** 오류 문구에 섞여 오는 HTTP 상태를 꺼낸다. */
+const statusOf = (error) => Number(/HTTP (\d{3})/.exec(error?.message || "")?.[1]) || 0;
+
+/**
+ * 조각을 받아 온다. 몫이 떨어져 403 이 나면 주소를 새로 받아 한 번 더 해본다.
+ *
+ * 유튜브는 (아이피 × 영상 × 클라이언트)마다 받을 수 있는 몫을 둔다. 다 쓰면 그 뒤 자리는
+ * 403 이고, 같은 클라이언트로는 주소를 새로 받아도 열리지 않는다(방문자 ID 를 새로
+ * 만들어도, 쿠키를 빼도 마찬가지다). 다른 클라이언트로 물으면 새 몫이 나오고, 같은
+ * itag 면 바이트가 완전히 같아서 받던 자리에서 그대로 이어진다.
+ *
+ * 영상과 소리가 거의 동시에 403 을 맞으므로 갈아타기는 한 번만 한다(같은 약속을 나눠 쓴다).
+ *
+ * @param renew 새 주소표를 받아 오는 함수. `(itag) => 새 주소` 를 돌려준다.
+ * @returns `(format, run)` — `run(주소)` 로 실제 요청을 만든다.
+ */
+function makePuller(renew) {
+  let pending = null;
+  return async (format, run) => {
+    // 갈아탈 곳은 몇 군데뿐이지만, 끝없이 도는 일이 없도록 횟수를 묶어 둔다.
+    for (let hop = 0; hop < 8; hop += 1) {
+      try {
+        return await run(format.url);
+      } catch (error) {
+        if (!renew || statusOf(error) !== 403) throw error;
+        if (!pending) {
+          pending = Promise.resolve(renew()).finally(() => {
+            pending = null;
+          });
+        }
+        const lookup = await pending;
+        const fresh = lookup?.(format.itag);
+        // 갈아탈 곳이 더 없으면 여기까지다.
+        //
+        // "받은 주소가 지금 것과 같으면 그만" 같은 검사를 두면 안 된다. 일꾼 여럿이
+        // 함께 갈아타므로, 먼저 간 일꾼이 이미 같은 주소를 넣어 둔 상태에서 뒤따르는
+        // 일꾼이 그 검사에 걸려 엉뚱하게 포기해 버린다(실제로 그래서 한 번밖에 못 갈아탔다).
+        if (!fresh) throw error;
+        format.url = fresh;
+      }
+    }
+    return run(format.url);
+  };
+}
+
 // 조각 파일의 이름. 이 이름이 곧 이어받기의 근거다 —
 // 일반 영상은 sidx 가 정한 바이트 경계(세션이 바뀌어도 같다), 라이브는 조각 번호.
 const rangeName = (segment) => `s${segment.start}-${segment.end}`;
@@ -1566,7 +1639,7 @@ const liveName = (sq) => `q${sq}`;
  * `&sq=N` 으로 N번째 조각을 바로 집어올 수 있다. 조각마다 앞머리가 붙어 오므로
  * 통째로 저장해 두고, 엮을 때 앞머리를 떼어낸다(첫 조각의 것만 쓴다).
  */
-async function fetchLiveSegments(format, start, end, onProgress, control, track) {
+async function fetchLiveSegments(format, start, end, onProgress, control, track, pull) {
   const step = format.segmentSeconds;
   if (!(step > 0)) throw new Error("조각 길이를 알 수 없습니다");
 
@@ -1605,7 +1678,9 @@ async function fetchLiveSegments(format, start, end, onProgress, control, track)
   onProgress?.(done, numbers.length, sizeReport());
 
   await mapWithLimit(missing, CONCURRENCY, async (sq) => {
-    const bytes = await request.bytes(`${format.url}&sq=${sq}`, {});
+    // 라이브 조각도 몫에 걸린다. 주소를 갈아탈 수 있게 같은 통로로 받는다.
+    const fetchOne = (url) => request.bytes(`${url}&sq=${sq}`, {});
+    const bytes = pull ? await pull(format, fetchOne) : await fetchOne(format.url);
     await track.write(liveName(sq), bytes);
     done += 1;
     gotBytes += bytes.length;
@@ -1719,7 +1794,7 @@ function createControl() {
  * 이어진 조각은 한 요청으로 묶어 받고(8MB 상한 — mergeRanges), 받은 뒤 조각별로
  * 쪼개 저장한다. 조각 단위로 저장해야 다음에 다른 구간을 받아도 겹치는 만큼 다시 쓴다.
  */
-async function fetchSegments(format, index, start, end, onProgress, control, track) {
+async function fetchSegments(format, index, start, end, onProgress, control, track, pull) {
   const wanted = segmentsForRange(index.segments, start, end);
   if (!wanted.length) throw new Error("해당 구간에 받을 조각이 없습니다");
 
@@ -1733,7 +1808,9 @@ async function fetchSegments(format, index, start, end, onProgress, control, tra
 
   const ranges = mergeRanges(missing);
   await mapWithLimit(ranges, CONCURRENCY, async (range) => {
-    const bytes = await fetchRange(format.url, range.start, range.end);
+    const bytes = pull
+      ? await pull(format, (url) => fetchRange(url, range.start, range.end))
+      : await fetchRange(format.url, range.start, range.end);
     // 묶어 받은 덩어리를 조각 단위로 잘라 저장한다.
     // slice(복사)를 쓴다 — subarray 로 두면 덩어리 전체가 메모리에 붙들린다.
     for (const segment of missing) {
@@ -1991,8 +2068,10 @@ async function downloadSection({
   onProgress,
   control,
   store,
+  renewUrl,
 }) {
   const media = store || openMemory();
+  const pull = makePuller(renewUrl);
   const caches = {
     video: await media.track(videoFormat.itag),
     audio: await media.track(audioFormat.itag),
@@ -2034,8 +2113,8 @@ async function downloadSection({
     // 같은 시각을 달라고 하면 소리가 영상보다 늦게 시작하는 일이 생긴다.
     const videoHead = Math.floor(start / videoFormat.segmentSeconds) * videoFormat.segmentSeconds;
     [video, audio] = await Promise.all([
-      fetchLiveSegments(videoFormat, start, end, report("video"), control, caches.video),
-      fetchLiveSegments(audioFormat, videoHead, end, report("audio"), control, caches.audio),
+      fetchLiveSegments(videoFormat, start, end, report("video"), control, caches.video, pull),
+      fetchLiveSegments(audioFormat, videoHead, end, report("audio"), control, caches.audio, pull),
     ]);
   } else {
     onProgress?.(0, 1, "색인 읽는 중");
@@ -2047,8 +2126,8 @@ async function downloadSection({
     // 두 트랙이 같은 곳에서 시작한다. 그러지 않으면 소리가 늦게 시작해 앞서 간다.
     const videoHead = segmentsForRange(videoIndex.segments, start, end)[0]?.time ?? start;
     const [videoParts, audioParts] = await Promise.all([
-      fetchSegments(videoFormat, videoIndex, start, end, report("video"), control, caches.video),
-      fetchSegments(audioFormat, audioIndex, videoHead, end, report("audio"), control, caches.audio),
+      fetchSegments(videoFormat, videoIndex, start, end, report("video"), control, caches.video, pull),
+      fetchSegments(audioFormat, audioIndex, videoHead, end, report("audio"), control, caches.audio, pull),
     ]);
     video = { init: videoIndex.init, ...videoParts };
     audio = { init: audioIndex.init, ...audioParts };
@@ -2094,8 +2173,9 @@ async function downloadSection({
  * @param kind "video" 또는 "audio"
  * @returns downloadSection 과 같은 모양: {file, mediaStart, mediaEnd, mediaSeconds}
  */
-async function downloadTrack({ format, kind, start, end, onProgress, control, store }) {
+async function downloadTrack({ format, kind, start, end, onProgress, control, store, renewUrl }) {
   const media = store || openMemory();
+  const pull = makePuller(renewUrl);
   const cache = await media.track(format.itag);
   const report = (done, total, size) => {
     onProgress?.(done, total, "받는 중", size && { got: size.bytes, estimated: size.estimated });
@@ -2105,11 +2185,11 @@ async function downloadTrack({ format, kind, start, end, onProgress, control, st
   let track;
   if (live) {
     onProgress?.(0, 1, "조각 받는 중");
-    track = await fetchLiveSegments(format, start, end, report, control, cache);
+    track = await fetchLiveSegments(format, start, end, report, control, cache, pull);
   } else {
     onProgress?.(0, 1, "색인 읽는 중");
     const index = await fetchIndex(format);
-    const parts = await fetchSegments(format, index, start, end, report, control, cache);
+    const parts = await fetchSegments(format, index, start, end, report, control, cache, pull);
     track = { init: index.init, ...parts };
   }
 
@@ -2452,7 +2532,7 @@ window.__ytdlPageTeardown = () => {
   const load = (name) => (bundled ? bundled[name] : import(runtime.getURL(`src/${name}`)));
   const [
     { downloadSection, downloadTrack, getFormats, safeFileName, clockLabel, createControl, Stopped },
-    { formatLabel },
+    innertube,
     net,
     nsig,
     store,
@@ -3584,7 +3664,7 @@ window.__ytdlPageTeardown = () => {
     const before = el.quality.value;
     el.quality.replaceChildren(
       ...qualityChoices().map((format) =>
-        make("option", { value: String(format.itag), text: formatLabel(format) }),
+        make("option", { value: String(format.itag), text: innertube.formatLabel(format) }),
       ),
     );
     // 목록을 갈아끼워도 같은 포맷이 남아 있으면 선택을 유지한다.
@@ -3713,11 +3793,28 @@ window.__ytdlPageTeardown = () => {
     const ticker = setInterval(showProgress, 500);
 
     try {
+      // 몫이 떨어져 403 이 나면 다른 클라이언트로 물어 새 주소를 받아 온다.
+      // 같은 itag 면 어느 클라이언트에서 받아도 바이트가 같아서 받던 자리에서 이어진다.
+      let clientAt = -1;
+      const renewUrl = async () => {
+        clientAt += 1;
+        const next = innertube.FALLBACK_CLIENTS[clientAt];
+        if (!next) return null;
+        setStatus(`유튜브가 준 몫을 다 썼습니다 · ${next.clientName} 로 갈아타 이어받습니다`);
+        // 이 클라이언트들의 주소에는 `n` 이 붙지 않아 해독기가 필요 없다(확인했다).
+        const fresh = await getFormats(state.videoId, null, null, next);
+        const table = new Map(
+          [...fresh.video, ...fresh.audio].map((f) => [String(f.itag), f.url]),
+        );
+        return (itag) => table.get(String(itag));
+      };
+
       const request = {
         start: state.start,
         end: state.end,
         control: state.control,
         store: media,
+        renewUrl,
         onProgress: (done, total, stage, size) => {
           lastProgress = { done, total, stage, size };
           if (stage === "받는 중") paceAdd(done);
@@ -3742,7 +3839,7 @@ window.__ytdlPageTeardown = () => {
       const marker = mode === "video" ? " [영상만]" : "";
       const ext = mode === "audio" ? "m4a" : "mp4";
       // 어떤 화질로 받았는지 파일 이름만 봐도 알 수 있게 앞에 붙인다. 예: [2160p60 AV1]
-      const quality = formatLabel(chosenFormat);
+      const quality = innertube.formatLabel(chosenFormat);
       save(
         file,
         `[${quality}] ${safeFileName(state.formats.title)} ` +
@@ -3780,11 +3877,11 @@ window.__ytdlPageTeardown = () => {
         // 403 이고, 주소를 새로 받아도 뚫리지 않는다(실측). 시간이 지나면 다시 열린다.
         // 받아둔 조각은 남아 있으니 다시 누르면 없는 것만 마저 받는다.
         setStatus(
-          "유튜브가 이 영상을 잠시 더 못 받게 막았습니다(403) · 잠깐 기다렸다 다시 눌러주세요" +
+          "유튜브가 이 영상에 준 몫을 다 썼습니다(403) · 몇 분 뒤 다시 눌러주세요" +
             ` · 받아둔 데까지는 남아 있어 이어서 받습니다${resumeHint}`,
           "ytdl-bad",
         );
-        say("받기 실패(영상별 몫 소진, 403):", error);
+        say("받기 실패(클라이언트 셋 모두 몫 소진, 403):", error);
       } else if (error?.name === "QuotaExceededError" || /quota/i.test(error?.message || "")) {
         // 용량 상한은 우리가 정하지 않는다 — 브라우저의 오리진 할당량이 곧 상한이다.
         setStatus("브라우저 저장 공간이 부족합니다. 디스크 여유를 만들고 다시 눌러주세요", "ytdl-bad");

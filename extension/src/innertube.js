@@ -21,6 +21,40 @@ export const CLIENT = {
   gl: "US",
 };
 
+/**
+ * 몫이 떨어졌을 때 갈아탈 클라이언트들.
+ *
+ * 유튜브는 (아이피 × 영상 × 클라이언트)마다 받을 수 있는 몫을 둔다. 다 쓰면 그 뒤로는
+ * 403 이고, **같은 클라이언트로는 주소를 새로 받아도 열리지 않는다**(방문자 ID 를 새로
+ * 만들어도, 쿠키를 빼도 마찬가지다 — 전부 확인했다). 다른 클라이언트로 물으면 새 몫이
+ * 나온다.
+ *
+ * 갈아타도 안전한 이유: 같은 itag 면 세 클라이언트가 **완전히 같은 파일**을 준다.
+ * contentLength·initRange·indexRange·lastModified 가 모두 같고, 앞부분 바이트를 받아
+ * 견주어도 같았다. 그래서 받다가 중간에 주소만 바꿔 끼워도 이어진다.
+ */
+export const FALLBACK_CLIENTS = [
+  {
+    clientName: "IOS",
+    clientVersion: "20.10.4",
+    deviceMake: "Apple",
+    deviceModel: "iPhone16,2",
+    osName: "iPhone",
+    osVersion: "18.3.2.22D82",
+    hl: "en",
+    gl: "US",
+  },
+  {
+    clientName: "ANDROID",
+    clientVersion: "20.10.38",
+    androidSdkVersion: 34,
+    osName: "Android",
+    osVersion: "14",
+    hl: "en",
+    gl: "US",
+  },
+];
+
 export function buildPlayerRequest(videoId, visitorData, client = CLIENT) {
   return {
     videoId,
@@ -57,8 +91,8 @@ const CREATOR_CLIENT = {
 
 const ORIGIN = "https://www.youtube.com";
 
-export async function fetchPlayerResponse(videoId, visitorData) {
-  const first = await requestPlayer(videoId, visitorData, CLIENT);
+export async function fetchPlayerResponse(videoId, visitorData, client = CLIENT) {
+  const first = await requestPlayer(videoId, visitorData, client);
   if (first?.playabilityStatus?.status === "OK") return first;
 
   // 로그인해야 볼 수 있는 영상이면 내 계정으로 다시 물어본다.

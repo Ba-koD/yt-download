@@ -282,25 +282,19 @@ export function httpStatusOf(error) {
  * 요청 하나는 길어야 8MB 라(mergeRanges 가 그 크기로 자른다) 다시 받는 값이 싸다.
  * 403(주소 만료)·404 같은 답은 다시 물어도 같으므로 바로 던진다.
  */
-// 몫이 다시 열릴 때까지 기다려야 해서 상한이 길다(8초로는 모자랐다 — 실측).
-export function withRetry(fetcher, { tries = 7, waitMs = 1000, maxWaitMs = 30_000, sleep } = {}) {
+export function withRetry(fetcher, { tries = 6, waitMs = 1000, maxWaitMs = 8000, sleep } = {}) {
   const rest = sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const transient = (error, url) => {
     const status = httpStatusOf(error);
     // 상태 코드가 없으면 네트워크가 잠깐 끊긴 것으로 보고 다시 해본다.
     if (!status) return true;
     if (status === 408 || status === 429 || status >= 500) return true;
-    // googlevideo 의 403 은 영구 거절이 아니라 "이 영상은 지금 이만큼까지"라는 뜻이다.
-    //
-    // 실측한 것: 한 영상에서 일정량(어떤 영상은 18MB, 다른 영상은 60MB)을 받고 나면
-    // 그 뒤 자리는 전부 403 이 된다. 주소를 새로 받아도, 방문자 ID 를 새로 만들어도,
-    // 쿠키를 빼도 똑같다 — 아이피와 영상에 걸린 몫이다. 트랙도 가리지 않는다(영상 쪽을
-    // 다 쓰면 소리 쪽도 곧바로 403 이었다). 반면 **이미 받아둔 자리는 계속 내어준다**.
-    // 그리고 시간이 지나면 다시 열린다.
-    //
-    // 그래서 미디어의 403 은 기다렸다 다시 두드린다. 조각은 저장소에 남으므로
-    // 중간에 그만두더라도 다음에 없는 것만 마저 받는다(이어받기).
-    return status === 403 || (status === 401 && /[?&]live=1/.test(String(url)));
+    // 403 은 여기서 기다리지 않는다. 이 오류는 "이 영상·이 클라이언트 몫을 다 썼다"는
+    // 뜻인데(download.js 의 makePuller 주석 참고), 기다려도 잘 열리지 않는 반면
+    // 다른 클라이언트로 주소를 새로 받으면 곧바로 이어진다. 그 갈아타기가 위층에서
+    // 일어나므로, 여기서 붙잡고 있으면 갈아타기만 늦어진다.
+    // 막 시작한 라이브는 가장자리 서버가 401·403 을 잠깐 주기도 해서 그때만 다시 본다.
+    return (status === 401 || status === 403) && /[?&]live=1/.test(String(url));
   };
   return async (url, headers) => {
     let wait = waitMs;

@@ -17,9 +17,9 @@ import { mediaTimescaleOf, readSamples, splitLiveSegment } from "./mp4mux.js";
 /** 한 번에 보내는 요청 수. 너무 늘리면 유튜브가 속도를 깎는다. */
 const CONCURRENCY = 6;
 
-export async function getFormats(videoId, visitorData, unlock) {
+export async function getFormats(videoId, visitorData, unlock, client) {
   const visitor = visitorData || (await fetchVisitorData());
-  const player = await fetchPlayerResponse(videoId, visitor);
+  const player = await fetchPlayerResponse(videoId, visitor, client);
   const formats = readFormats(player);
 
   // 로그인해야 볼 수 있는 영상의 주소에는 `n` 이 붙어 있고, 풀지 않으면 403 이다.
@@ -38,6 +38,51 @@ async function fetchRange(url, start, end) {
   return request.bytes(url, { Range: `bytes=${start}-${end}` });
 }
 
+/** 오류 문구에 섞여 오는 HTTP 상태를 꺼낸다. */
+const statusOf = (error) => Number(/HTTP (\d{3})/.exec(error?.message || "")?.[1]) || 0;
+
+/**
+ * 조각을 받아 온다. 몫이 떨어져 403 이 나면 주소를 새로 받아 한 번 더 해본다.
+ *
+ * 유튜브는 (아이피 × 영상 × 클라이언트)마다 받을 수 있는 몫을 둔다. 다 쓰면 그 뒤 자리는
+ * 403 이고, 같은 클라이언트로는 주소를 새로 받아도 열리지 않는다(방문자 ID 를 새로
+ * 만들어도, 쿠키를 빼도 마찬가지다). 다른 클라이언트로 물으면 새 몫이 나오고, 같은
+ * itag 면 바이트가 완전히 같아서 받던 자리에서 그대로 이어진다.
+ *
+ * 영상과 소리가 거의 동시에 403 을 맞으므로 갈아타기는 한 번만 한다(같은 약속을 나눠 쓴다).
+ *
+ * @param renew 새 주소표를 받아 오는 함수. `(itag) => 새 주소` 를 돌려준다.
+ * @returns `(format, run)` — `run(주소)` 로 실제 요청을 만든다.
+ */
+function makePuller(renew) {
+  let pending = null;
+  return async (format, run) => {
+    // 갈아탈 곳은 몇 군데뿐이지만, 끝없이 도는 일이 없도록 횟수를 묶어 둔다.
+    for (let hop = 0; hop < 8; hop += 1) {
+      try {
+        return await run(format.url);
+      } catch (error) {
+        if (!renew || statusOf(error) !== 403) throw error;
+        if (!pending) {
+          pending = Promise.resolve(renew()).finally(() => {
+            pending = null;
+          });
+        }
+        const lookup = await pending;
+        const fresh = lookup?.(format.itag);
+        // 갈아탈 곳이 더 없으면 여기까지다.
+        //
+        // "받은 주소가 지금 것과 같으면 그만" 같은 검사를 두면 안 된다. 일꾼 여럿이
+        // 함께 갈아타므로, 먼저 간 일꾼이 이미 같은 주소를 넣어 둔 상태에서 뒤따르는
+        // 일꾼이 그 검사에 걸려 엉뚱하게 포기해 버린다(실제로 그래서 한 번밖에 못 갈아탔다).
+        if (!fresh) throw error;
+        format.url = fresh;
+      }
+    }
+    return run(format.url);
+  };
+}
+
 // 조각 파일의 이름. 이 이름이 곧 이어받기의 근거다 —
 // 일반 영상은 sidx 가 정한 바이트 경계(세션이 바뀌어도 같다), 라이브는 조각 번호.
 const rangeName = (segment) => `s${segment.start}-${segment.end}`;
@@ -50,7 +95,7 @@ const liveName = (sq) => `q${sq}`;
  * `&sq=N` 으로 N번째 조각을 바로 집어올 수 있다. 조각마다 앞머리가 붙어 오므로
  * 통째로 저장해 두고, 엮을 때 앞머리를 떼어낸다(첫 조각의 것만 쓴다).
  */
-export async function fetchLiveSegments(format, start, end, onProgress, control, track) {
+export async function fetchLiveSegments(format, start, end, onProgress, control, track, pull) {
   const step = format.segmentSeconds;
   if (!(step > 0)) throw new Error("조각 길이를 알 수 없습니다");
 
@@ -89,7 +134,9 @@ export async function fetchLiveSegments(format, start, end, onProgress, control,
   onProgress?.(done, numbers.length, sizeReport());
 
   await mapWithLimit(missing, CONCURRENCY, async (sq) => {
-    const bytes = await request.bytes(`${format.url}&sq=${sq}`, {});
+    // 라이브 조각도 몫에 걸린다. 주소를 갈아탈 수 있게 같은 통로로 받는다.
+    const fetchOne = (url) => request.bytes(`${url}&sq=${sq}`, {});
+    const bytes = pull ? await pull(format, fetchOne) : await fetchOne(format.url);
     await track.write(liveName(sq), bytes);
     done += 1;
     gotBytes += bytes.length;
@@ -203,7 +250,7 @@ export function createControl() {
  * 이어진 조각은 한 요청으로 묶어 받고(8MB 상한 — mergeRanges), 받은 뒤 조각별로
  * 쪼개 저장한다. 조각 단위로 저장해야 다음에 다른 구간을 받아도 겹치는 만큼 다시 쓴다.
  */
-export async function fetchSegments(format, index, start, end, onProgress, control, track) {
+export async function fetchSegments(format, index, start, end, onProgress, control, track, pull) {
   const wanted = segmentsForRange(index.segments, start, end);
   if (!wanted.length) throw new Error("해당 구간에 받을 조각이 없습니다");
 
@@ -217,7 +264,9 @@ export async function fetchSegments(format, index, start, end, onProgress, contr
 
   const ranges = mergeRanges(missing);
   await mapWithLimit(ranges, CONCURRENCY, async (range) => {
-    const bytes = await fetchRange(format.url, range.start, range.end);
+    const bytes = pull
+      ? await pull(format, (url) => fetchRange(url, range.start, range.end))
+      : await fetchRange(format.url, range.start, range.end);
     // 묶어 받은 덩어리를 조각 단위로 잘라 저장한다.
     // slice(복사)를 쓴다 — subarray 로 두면 덩어리 전체가 메모리에 붙들린다.
     for (const segment of missing) {
@@ -475,8 +524,10 @@ export async function downloadSection({
   onProgress,
   control,
   store,
+  renewUrl,
 }) {
   const media = store || openMemory();
+  const pull = makePuller(renewUrl);
   const caches = {
     video: await media.track(videoFormat.itag),
     audio: await media.track(audioFormat.itag),
@@ -518,8 +569,8 @@ export async function downloadSection({
     // 같은 시각을 달라고 하면 소리가 영상보다 늦게 시작하는 일이 생긴다.
     const videoHead = Math.floor(start / videoFormat.segmentSeconds) * videoFormat.segmentSeconds;
     [video, audio] = await Promise.all([
-      fetchLiveSegments(videoFormat, start, end, report("video"), control, caches.video),
-      fetchLiveSegments(audioFormat, videoHead, end, report("audio"), control, caches.audio),
+      fetchLiveSegments(videoFormat, start, end, report("video"), control, caches.video, pull),
+      fetchLiveSegments(audioFormat, videoHead, end, report("audio"), control, caches.audio, pull),
     ]);
   } else {
     onProgress?.(0, 1, "색인 읽는 중");
@@ -531,8 +582,8 @@ export async function downloadSection({
     // 두 트랙이 같은 곳에서 시작한다. 그러지 않으면 소리가 늦게 시작해 앞서 간다.
     const videoHead = segmentsForRange(videoIndex.segments, start, end)[0]?.time ?? start;
     const [videoParts, audioParts] = await Promise.all([
-      fetchSegments(videoFormat, videoIndex, start, end, report("video"), control, caches.video),
-      fetchSegments(audioFormat, audioIndex, videoHead, end, report("audio"), control, caches.audio),
+      fetchSegments(videoFormat, videoIndex, start, end, report("video"), control, caches.video, pull),
+      fetchSegments(audioFormat, audioIndex, videoHead, end, report("audio"), control, caches.audio, pull),
     ]);
     video = { init: videoIndex.init, ...videoParts };
     audio = { init: audioIndex.init, ...audioParts };
@@ -578,8 +629,9 @@ export async function downloadSection({
  * @param kind "video" 또는 "audio"
  * @returns downloadSection 과 같은 모양: {file, mediaStart, mediaEnd, mediaSeconds}
  */
-export async function downloadTrack({ format, kind, start, end, onProgress, control, store }) {
+export async function downloadTrack({ format, kind, start, end, onProgress, control, store, renewUrl }) {
   const media = store || openMemory();
+  const pull = makePuller(renewUrl);
   const cache = await media.track(format.itag);
   const report = (done, total, size) => {
     onProgress?.(done, total, "받는 중", size && { got: size.bytes, estimated: size.estimated });
@@ -589,11 +641,11 @@ export async function downloadTrack({ format, kind, start, end, onProgress, cont
   let track;
   if (live) {
     onProgress?.(0, 1, "조각 받는 중");
-    track = await fetchLiveSegments(format, start, end, report, control, cache);
+    track = await fetchLiveSegments(format, start, end, report, control, cache, pull);
   } else {
     onProgress?.(0, 1, "색인 읽는 중");
     const index = await fetchIndex(format);
-    const parts = await fetchSegments(format, index, start, end, report, control, cache);
+    const parts = await fetchSegments(format, index, start, end, report, control, cache, pull);
     track = { init: index.init, ...parts };
   }
 

@@ -54,7 +54,7 @@
   const load = (name) => (bundled ? bundled[name] : import(runtime.getURL(`src/${name}`)));
   const [
     { downloadSection, downloadTrack, getFormats, safeFileName, clockLabel, createControl, Stopped },
-    { formatLabel },
+    innertube,
     net,
     nsig,
     store,
@@ -1186,7 +1186,7 @@
     const before = el.quality.value;
     el.quality.replaceChildren(
       ...qualityChoices().map((format) =>
-        make("option", { value: String(format.itag), text: formatLabel(format) }),
+        make("option", { value: String(format.itag), text: innertube.formatLabel(format) }),
       ),
     );
     // 목록을 갈아끼워도 같은 포맷이 남아 있으면 선택을 유지한다.
@@ -1315,11 +1315,28 @@
     const ticker = setInterval(showProgress, 500);
 
     try {
+      // 몫이 떨어져 403 이 나면 다른 클라이언트로 물어 새 주소를 받아 온다.
+      // 같은 itag 면 어느 클라이언트에서 받아도 바이트가 같아서 받던 자리에서 이어진다.
+      let clientAt = -1;
+      const renewUrl = async () => {
+        clientAt += 1;
+        const next = innertube.FALLBACK_CLIENTS[clientAt];
+        if (!next) return null;
+        setStatus(`유튜브가 준 몫을 다 썼습니다 · ${next.clientName} 로 갈아타 이어받습니다`);
+        // 이 클라이언트들의 주소에는 `n` 이 붙지 않아 해독기가 필요 없다(확인했다).
+        const fresh = await getFormats(state.videoId, null, null, next);
+        const table = new Map(
+          [...fresh.video, ...fresh.audio].map((f) => [String(f.itag), f.url]),
+        );
+        return (itag) => table.get(String(itag));
+      };
+
       const request = {
         start: state.start,
         end: state.end,
         control: state.control,
         store: media,
+        renewUrl,
         onProgress: (done, total, stage, size) => {
           lastProgress = { done, total, stage, size };
           if (stage === "받는 중") paceAdd(done);
@@ -1344,7 +1361,7 @@
       const marker = mode === "video" ? " [영상만]" : "";
       const ext = mode === "audio" ? "m4a" : "mp4";
       // 어떤 화질로 받았는지 파일 이름만 봐도 알 수 있게 앞에 붙인다. 예: [2160p60 AV1]
-      const quality = formatLabel(chosenFormat);
+      const quality = innertube.formatLabel(chosenFormat);
       save(
         file,
         `[${quality}] ${safeFileName(state.formats.title)} ` +
@@ -1382,11 +1399,11 @@
         // 403 이고, 주소를 새로 받아도 뚫리지 않는다(실측). 시간이 지나면 다시 열린다.
         // 받아둔 조각은 남아 있으니 다시 누르면 없는 것만 마저 받는다.
         setStatus(
-          "유튜브가 이 영상을 잠시 더 못 받게 막았습니다(403) · 잠깐 기다렸다 다시 눌러주세요" +
+          "유튜브가 이 영상에 준 몫을 다 썼습니다(403) · 몇 분 뒤 다시 눌러주세요" +
             ` · 받아둔 데까지는 남아 있어 이어서 받습니다${resumeHint}`,
           "ytdl-bad",
         );
-        say("받기 실패(영상별 몫 소진, 403):", error);
+        say("받기 실패(클라이언트 셋 모두 몫 소진, 403):", error);
       } else if (error?.name === "QuotaExceededError" || /quota/i.test(error?.message || "")) {
         // 용량 상한은 우리가 정하지 않는다 — 브라우저의 오리진 할당량이 곧 상한이다.
         setStatus("브라우저 저장 공간이 부족합니다. 디스크 여유를 만들고 다시 눌러주세요", "ytdl-bad");

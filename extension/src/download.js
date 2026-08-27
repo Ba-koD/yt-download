@@ -442,12 +442,21 @@ export function safeFileName(text, fallback = "video") {
   return cleaned || fallback;
 }
 
+/**
+ * 파일 이름에 쓸 시각. 1/100초까지 적는다 — 같은 초 안에서 여러 구간을 받아도
+ * 이름이 겹치지 않고, 어디를 잘랐는지 이름만 봐도 알 수 있다.
+ *
+ * 콜론은 파일 이름에 못 쓰므로 하이픈으로, 소수점은 그대로 쓴다(예: `00-01-23.45`).
+ */
 export function clockLabel(seconds) {
-  const total = Math.max(0, Math.round(seconds));
-  const h = String(Math.floor(total / 3600)).padStart(2, "0");
-  const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
-  const s = String(total % 60).padStart(2, "0");
-  return `${h}-${m}-${s}`;
+  // 반올림은 쪼개기 전에 한 번만. 나중에 하면 59.996초가 `59.100` 으로 적힌다.
+  const total = Math.round(Math.max(0, Number(seconds) || 0) * 100) / 100;
+  const whole = Math.floor(total);
+  const h = String(Math.floor(whole / 3600)).padStart(2, "0");
+  const m = String(Math.floor((whole % 3600) / 60)).padStart(2, "0");
+  const s = String(whole % 60).padStart(2, "0");
+  const frac = String(Math.round((total - whole) * 100)).padStart(2, "0");
+  return `${h}-${m}-${s}.${frac}`;
 }
 
 /**

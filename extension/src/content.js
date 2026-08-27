@@ -333,18 +333,40 @@
     return Math.max(0, end - start);
   }
 
+  /**
+   * 사람이 적은 시각을 초로 읽는다. `1:03.16`, `63.16`, `1:02:03.5` 를 모두 받는다.
+   *
+   * 빈 칸과 음수는 거절한다(`Number("")` 이 0 이라 그냥 두면 빈 칸이 0초로 들어간다).
+   */
   function parseClock(text) {
-    const parts = String(text).trim().split(":").map(Number);
-    if (parts.some((part) => !Number.isFinite(part))) return null;
-    return parts.reduce((total, part) => total * 60 + part, 0);
+    const raw = String(text).trim();
+    if (!raw) return null;
+    const parts = raw.split(":");
+    if (parts.length > 3 || parts.some((part) => !part.trim())) return null;
+    const numbers = parts.map(Number);
+    if (numbers.some((part) => !Number.isFinite(part) || part < 0)) return null;
+    return numbers.reduce((total, part) => total * 60 + part, 0);
   }
 
-  function showClock(seconds) {
-    const total = Math.max(0, Math.floor(seconds));
-    const h = Math.floor(total / 3600);
-    const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
-    const s = String(total % 60).padStart(2, "0");
-    return h ? `${h}:${m}:${s}` : `${m}:${s}`;
+  /**
+   * 초를 시:분:초로 적는다. `decimals` 를 주면 소수점 아래까지 적는다(예: `1:03.16`).
+   *
+   * 구간은 프레임 단위로 다뤄야 해서 소수점이 필요하지만, 남은 시간 같은 어림값에
+   * 소수점을 붙이면 눈만 어지럽다. 그래서 부르는 쪽이 자릿수를 정한다.
+   *
+   * 반올림은 쪼개기 **전에** 한 번만 한다. 나중에 하면 59.996초가 `59.100` 으로 적힌다.
+   */
+  function showClock(seconds, decimals = 0) {
+    const step = 10 ** decimals;
+    const total = Math.round(Math.max(0, Number(seconds) || 0) * step) / step;
+    const whole = Math.floor(total);
+    const h = Math.floor(whole / 3600);
+    const m = String(Math.floor((whole % 3600) / 60)).padStart(2, "0");
+    const s = String(whole % 60).padStart(2, "0");
+    const clock = h ? `${h}:${m}:${s}` : `${m}:${s}`;
+    if (decimals <= 0) return clock;
+    const frac = String(Math.round((total - whole) * step)).padStart(decimals, "0");
+    return `${clock}.${frac}`;
   }
 
   /**
@@ -461,6 +483,31 @@
 
   // 영상 위치는 사용자가 타임라인을 직접 끌 때만 옮긴다.
   // 시간 칸을 고치거나 목록을 불러오는 것만으로 재생 위치가 바뀌면 성가시다.
+  /**
+   * 제목 줄 시계를 화면 새로 고침에 맞춰 갱신한다.
+   *
+   * `timeupdate` 는 1초에 네 번쯤만 온다 — 1/100초까지 적는 칸에는 너무 성기다.
+   * 대신 값이 실제로 바뀔 때만 글자를 다시 써서, 매 프레임 DOM 을 건드리지는 않는다.
+   */
+  function runClock(on) {
+    cancelAnimationFrame(state.clockFrame || 0);
+    state.clockFrame = 0;
+    if (!on) return;
+    const tick = () => {
+      if (!state.open || !el.now || !el.now.isConnected) {
+        state.clockFrame = 0;
+        return;
+      }
+      // 고쳐 넣는 중이면 손대지 않는다. 커서가 튀고 글자가 지워진다.
+      if (document.activeElement !== el.now) {
+        const now = showClock(playedSeconds(), 2);
+        if (el.now.value !== now) el.now.value = now;
+      }
+      state.clockFrame = requestAnimationFrame(tick);
+    };
+    state.clockFrame = requestAnimationFrame(tick);
+  }
+
   function seek(seconds) {
     const video = player();
     if (video && Number.isFinite(seconds) && boundsSpan() > 0) video.currentTime = seconds;
@@ -468,8 +515,8 @@
 
   function buildPanel(floating) {
     el.inputs = {
-      start: make("input", { class: "ytdl-time", value: "0:00", dataset: { time: "start" } }),
-      end: make("input", { class: "ytdl-time", value: "0:00", dataset: { time: "end" } }),
+      start: make("input", { class: "ytdl-time", value: "0:00.00", dataset: { time: "start" } }),
+      end: make("input", { class: "ytdl-time", value: "0:00.00", dataset: { time: "end" } }),
     };
     // 편집 프로그램에서 쓰는 대괄호 표시를 그대로 쓴다(I/O 단축키도 같이 받는다).
     const markIn = make("button", {
@@ -516,14 +563,29 @@
       title: "이어받기용으로 남겨둔 조각을 지웁니다",
     });
     el.status = make("div", { class: "ytdl-status", text: "화질 목록을 불러오는 중입니다" });
+    // 제목 줄의 시계. 왼쪽은 고쳐 넣을 수 있는 칸이라 그 자리로 바로 건너뛴다.
+    el.now = make("input", {
+      class: "ytdl-now",
+      value: "0:00.00",
+      title: "지금 재생 위치 — 고쳐 넣으면 그 자리로 갑니다",
+      spellcheck: false,
+    });
     el.total = make("span", { class: "ytdl-total" });
 
     const close = make("button", { class: "ytdl-close", type: "button", title: "닫기", text: "✕" });
     close.addEventListener("click", togglePanel);
 
+    const clock = make("div", { class: "ytdl-clock" }, [
+      el.now,
+      make("span", { class: "ytdl-slash", text: "/" }),
+      el.total,
+    ]);
+    // 시계를 잡고 끌면 패널이 딸려 온다. 칸에 글자를 넣으려는 것이지 옮기려는 게 아니다.
+    clock.addEventListener("pointerdown", (event) => event.stopPropagation());
+
     const head = make("div", { class: "ytdl-head" }, [
       make("span", { class: "ytdl-title", text: "구간 받기" }),
-      el.total,
+      clock,
       close,
     ]);
     if (floating) bindPanelDrag(head);
@@ -576,6 +638,24 @@
         setRange(which === "start" ? value : state.start, which === "end" ? value : state.end);
       });
     }
+
+    // 지금 위치 칸. 값을 고쳐 넣으면 영상이 그 자리로 간다.
+    el.now.addEventListener("change", () => {
+      const value = parseClock(el.now.value);
+      const edge = bounds();
+      if (value === null || edge.end <= edge.start) {
+        el.now.value = showClock(playedSeconds(), 2);
+        return;
+      }
+      seek(Math.max(edge.start, Math.min(value, edge.end)));
+    });
+    // Enter 로 확정하면 칸에서 손을 뗀다(다시 시계가 흐르기 시작한다).
+    el.now.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") el.now.blur();
+      else if (event.key === "Escape") { el.now.value = showClock(playedSeconds(), 2); el.now.blur(); }
+    });
+    // 칸을 누르면 통째로 잡아준다. 소수점까지 지우고 다시 쓰는 게 보통이라서다.
+    el.now.addEventListener("focus", () => el.now.select());
 
     el.go.addEventListener("click", start);
     el.hold.addEventListener("click", () => {
@@ -714,18 +794,6 @@
     return document.querySelector("ytd-watch-metadata") || document.querySelector("#below");
   }
 
-  /** 띄운 패널이 설 가로 자리. 필요한 최소 너비. */
-  const FLOAT_MIN_WIDTH = 320;
-  const FLOAT_MAX_WIDTH = 430;
-  const FLOAT_GAP = 16;
-
-  /**
-   * 숏츠에서 패널을 세로 버튼 줄 오른쪽 빈자리에 세운다.
-   *
-   * 고정된 `right` 값으로 두면 안 된다 — 세로 버튼 줄이 영상 바로 옆에 붙어 있어서
-   * 창 크기에 따라 그 버튼들을 덮어버린다(재보니 실제로 덮었다).
-   * 자리가 모자라면 화면 아래에 눕힌다.
-   */
   /**
    * 제목 줄을 잡아 패널을 옮긴다.
    *
@@ -740,7 +808,6 @@
       state.panelDrag = { x: event.clientX - rect.left, y: event.clientY - rect.top };
       state.panelMoved = true;
       // 지금 보이는 그 자리에서 시작하도록 좌표를 굳힌다(가운데 맞춤을 풀어준다).
-      el.panel.classList.remove("ytdl-float-bottom");
       el.panel.style.transform = "none";
       el.panel.style.bottom = "auto";
       el.panel.style.width = `${Math.round(rect.width)}px`;
@@ -775,16 +842,14 @@
   }
 
   /**
-   * 띄운 패널이 비켜서야 할 것.
+   * 띄운 패널을 화면 아래 가운데에 세운다.
    *
-   * 숏츠는 세로 버튼 줄(그 오른쪽이 빈자리다), 일반 화면은 영상 자체다.
-   * 영상 오른쪽에는 추천 목록이 있지만 덮어도 된다 — 끌어서 옮길 수 있다.
+   * 예전에는 영상 옆 빈자리를 재서 세웠는데, 창 크기에 따라 설 자리가 오락가락했다
+   * (좁으면 아래로 눕고 넓으면 옆으로 갔다). 처음 열 때 어디에 뜰지 모르면 눈이
+   * 패널을 찾아 헤맨다. 아래 가운데는 숏츠든 일반 화면이든 늘 같은 자리다.
+   *
+   * 그 자리가 싫으면 제목 줄을 잡아 옮기면 된다 — 한 번 옮기면 그 뒤로는 건드리지 않는다.
    */
-  function floatObstacle() {
-    if (state.mode === "shorts") return buttonHost();
-    return document.querySelector("#movie_player") || document.querySelector(".html5-video-player");
-  }
-
   function placeFloatingPanel() {
     if (!el.panel || el.panel.hidden || !el.panel.classList.contains("ytdl-float")) return;
     // 사용자가 직접 옮겼으면 화면 밖으로 나가지 않게만 봐준다.
@@ -793,17 +858,12 @@
       moveFloatingPanel(rect.left, rect.top);
       return;
     }
-    const bar = floatObstacle()?.getBoundingClientRect();
-    const room = bar ? window.innerWidth - bar.right - FLOAT_GAP * 2 : 0;
-    if (bar && room >= FLOAT_MIN_WIDTH) {
-      el.panel.classList.remove("ytdl-float-bottom");
-      el.panel.style.left = `${Math.round(bar.right + FLOAT_GAP)}px`;
-      el.panel.style.width = `${Math.round(Math.min(room, FLOAT_MAX_WIDTH))}px`;
-    } else {
-      el.panel.classList.add("ytdl-float-bottom");
-      el.panel.style.left = "";
-      el.panel.style.width = "";
-    }
+    // 끌어 옮기며 굳혀둔 좌표가 남아 있을 수 있다. 지워야 가운데 맞춤이 다시 산다.
+    el.panel.style.left = "";
+    el.panel.style.top = "";
+    el.panel.style.bottom = "";
+    el.panel.style.transform = "";
+    el.panel.style.width = "";
   }
 
   // 유튜브는 화면을 통째로 다시 그리는 일이 잦다. 사라졌으면 다시 붙인다.
@@ -820,6 +880,7 @@
         state.panelMoved = false;
         state.panelDrag = null;
         watchProgress(false);
+        runClock(false);
       }
       return;
     }
@@ -865,6 +926,7 @@
         panel.hidden = !state.open;
         // 열어둔 채 다른 화면에 갔다 왔으면 재생 상태 받아오기가 꺼져 있다. 다시 켠다.
         watchProgress(state.open);
+        runClock(state.open);
         // 새로 만든 패널은 화질칸이 비어 있다. 이미 받아둔 목록이 있으면 그대로 채운다.
         fillQuality();
         render();
@@ -879,6 +941,7 @@
     el.button?.classList.toggle("ytdl-open-active", state.open);
     // 열려 있는 동안만 재생 상태를 받아온다.
     watchProgress(state.open);
+    runClock(state.open);
     // 목록은 처음 열 때만 받아온다(영상마다 미리 받아두면 낭비다).
     if (state.open && !state.formats) await loadFormats();
   }
@@ -911,13 +974,13 @@
 
   function render() {
     if (!el.panel) return;
-    el.inputs.start.value = showClock(state.start);
+    el.inputs.start.value = showClock(state.start, 2);
     // 끝까지 받는 중이면 시각 대신 그렇다고 적는다. 라이브는 끝이 계속 밀리니까.
-    el.inputs.end.value = state.toEnd ? "" : showClock(state.end);
+    el.inputs.end.value = state.toEnd ? "" : showClock(state.end, 2);
     el.inputs.end.placeholder = state.toEnd ? "끝까지" : "";
     const length = Math.max(0, state.end - state.start);
-    el.length.textContent = showClock(length);
-    el.go.disabled = state.busy || !state.formats || length < 0.5;
+    el.length.textContent = showClock(length, 2);
+    el.go.disabled = state.busy || !state.formats || length < 0.05;
     el.hold.hidden = !state.busy;
     el.halt.hidden = !state.busy;
     el.discard.hidden = state.busy || !state.hasLeftovers;
@@ -928,7 +991,12 @@
   function renderTimeline() {
     const edge = bounds();
     const span = edge.end - edge.start;
-    el.total.textContent = span > 0 ? showClock(span) : "";
+    el.total.textContent = span > 0 ? showClock(span, 2) : "";
+    // 시계는 사용자가 고쳐 넣는 중일 때만 손대지 않는다. 커서가 튀어버린다.
+    if (document.activeElement !== el.now) {
+      const now = showClock(playedSeconds(), 2);
+      if (el.now.value !== now) el.now.value = now;
+    }
     if (span <= 0) return;
     const percent = (seconds) =>
       `${(Math.max(0, Math.min(seconds - edge.start, span)) / span) * 100}%`;
@@ -1126,12 +1194,12 @@
       state.hasLeftovers = false;
       const took = ((Date.now() - began) / 1000).toFixed(1);
       const pads = [];
-      if (state.start - realStart >= 0.5) pads.push(`앞 ${(state.start - realStart).toFixed(1)}초`);
-      if (realEnd - state.end >= 0.5) pads.push(`뒤 ${(realEnd - state.end).toFixed(1)}초`);
-      const note = pads.length ? ` · ${pads.join("·")}가 더 붙었습니다(키프레임)` : "";
+      if (state.start - realStart >= 0.05) pads.push(`앞 ${(state.start - realStart).toFixed(2)}초`);
+      if (realEnd - state.end >= 0.05) pads.push(`뒤 ${(realEnd - state.end).toFixed(2)}초`);
+      const note = pads.length ? ` · ${pads.join("·")}가 더 붙었습니다(프레임 경계)` : "";
       setStatus(
-        `저장했습니다 · ${showClock(realStart)}~${showClock(realEnd)} ` +
-          `(${showClock(mediaSeconds)})${note} · ` +
+        `저장했습니다 · ${showClock(realStart, 2)}~${showClock(realEnd, 2)} ` +
+          `(${showClock(mediaSeconds, 2)})${note} · ` +
           `${showMb(file.size)} MB · ${took}초`,
         "ytdl-ok",
       );
@@ -1200,6 +1268,7 @@
     el.button?.remove();
     el.panel?.remove();
     watchProgress(false);
+    runClock(false);
   });
 
   // 재생 위치 표시가 영상을 따라가게 한다.

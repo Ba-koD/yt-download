@@ -146,27 +146,25 @@
 
    가로 자리(left·width)는 화면마다 달라서 content.js 가 재서 넣는다. 세로 버튼 줄이
    영상 바로 오른쪽에 붙어 있어서, 고정값으로 두면 그 버튼들을 덮는다(실제로 덮었다). */
+/* 띄운 패널은 화면 아래 가운데에 선다. 숏츠든 일반 화면이든 늘 같은 자리라
+   처음 열었을 때 눈이 찾을 곳을 안다. 제목 줄을 잡아 끌면 그 자리로 옮겨간다
+   (끌기가 좌표를 직접 박아 넣어서 아래 가운데 맞춤을 덮는다). */
 .ytdl-panel.ytdl-float {
   position: fixed;
-  top: 50%;
+  top: auto;
   right: auto;
-  transform: translateY(-50%);
-  max-height: 82vh;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  /* 920px 이면 시각·화질·받기가 한 줄에 다 선다(760px 이면 두 줄로 접힌다).
+     좁은 창에서는 알아서 줄고, 520px 아래로 내려가면 컨테이너 질의가 세 줄로 나눈다. */
+  width: min(920px, calc(100vw - 32px));
+  max-height: 60vh;
   overflow-y: auto;
   margin: 0;
   z-index: 2500;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
   background: #fff;
-}
-
-/* 옆에 설 자리가 없을 만큼 창이 좁으면 화면 아래에 눕힌다. */
-.ytdl-panel.ytdl-float.ytdl-float-bottom {
-  top: auto;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(760px, calc(100vw - 32px));
-  max-height: 60vh;
 }
 
 .ytdl-head {
@@ -265,12 +263,45 @@
   pointer-events: none;
 }
 
-.ytdl-total {
+/* 제목 줄 시계 — 왼쪽은 고쳐 넣을 수 있는 지금 위치, 오른쪽은 전체 길이. */
+.ytdl-clock {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   margin-left: auto;
-  margin-right: 10px;
-  color: rgba(0, 0, 0, 0.55);
+  margin-right: 8px;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+
+.ytdl-now {
+  width: 74px;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  padding: 0 5px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* 평소에는 그냥 글자처럼 두고, 손이 닿을 때만 고칠 수 있는 칸이라고 알려준다. */
+.ytdl-now:hover {
+  border-color: rgba(0, 0, 0, 0.18);
+}
+
+.ytdl-now:focus {
+  border-color: rgba(0, 0, 0, 0.4);
+  background: #fff;
+  outline: none;
+}
+
+.ytdl-slash,
+.ytdl-total {
+  color: rgba(0, 0, 0, 0.55);
 }
 
 .ytdl-row {
@@ -452,9 +483,19 @@ html[dark] .ytdl-mark:hover {
 }
 
 html[dark] .ytdl-sep,
+html[dark] .ytdl-slash,
 html[dark] .ytdl-total,
 html[dark] .ytdl-status {
   color: rgba(255, 255, 255, 0.6);
+}
+
+html[dark] .ytdl-now:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+html[dark] .ytdl-now:focus {
+  border-color: rgba(255, 255, 255, 0.45);
+  background: #121212;
 }
 
 html[dark] .ytdl-track {
@@ -498,9 +539,9 @@ html[dark] .ytdl-go:disabled {
    받기 버튼은 그 아래에서 전체 너비로 선다. */
 @container (max-width: 520px) {
   .ytdl-time {
-    flex: 1 1 80px;
+    flex: 1 1 88px;
     width: auto;
-    min-width: 72px;
+    min-width: 84px;
   }
 
   .ytdl-length {

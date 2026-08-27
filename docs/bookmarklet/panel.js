@@ -1951,12 +1951,21 @@ function safeFileName(text, fallback = "video") {
   return cleaned || fallback;
 }
 
+/**
+ * 파일 이름에 쓸 시각. 1/100초까지 적는다 — 같은 초 안에서 여러 구간을 받아도
+ * 이름이 겹치지 않고, 어디를 잘랐는지 이름만 봐도 알 수 있다.
+ *
+ * 콜론은 파일 이름에 못 쓰므로 하이픈으로, 소수점은 그대로 쓴다(예: `00-01-23.45`).
+ */
 function clockLabel(seconds) {
-  const total = Math.max(0, Math.round(seconds));
-  const h = String(Math.floor(total / 3600)).padStart(2, "0");
-  const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
-  const s = String(total % 60).padStart(2, "0");
-  return `${h}-${m}-${s}`;
+  // 반올림은 쪼개기 전에 한 번만. 나중에 하면 59.996초가 `59.100` 으로 적힌다.
+  const total = Math.round(Math.max(0, Number(seconds) || 0) * 100) / 100;
+  const whole = Math.floor(total);
+  const h = String(Math.floor(whole / 3600)).padStart(2, "0");
+  const m = String(Math.floor((whole % 3600) / 60)).padStart(2, "0");
+  const s = String(whole % 60).padStart(2, "0");
+  const frac = String(Math.round((total - whole) * 100)).padStart(2, "0");
+  return `${h}-${m}-${s}.${frac}`;
 }
 
 /**
@@ -2189,7 +2198,7 @@ const __styleId = 'ytdl-overlay-style';
 document.getElementById(__styleId)?.remove();
 const __style = document.createElement('style');
 __style.id = __styleId;
-__style.textContent = "/* \uc720\ud29c\ube0c \uc548\uc5d0 \uc5b9\ub294 UI. \ud398\uc774\uc9c0 \uc2a4\ud0c0\uc77c\uacfc \uc11e\uc774\uc9c0 \uc54a\ub3c4\ub85d \uac12\uc744 \ubaa8\ub450 \uc9c1\uc811 \uc801\ub294\ub2e4. */\n\n/* \uc88b\uc544\uc694\u00b7\uacf5\uc720 \uc606\uc5d0 \uc11c\ub294 \ubc84\ud2bc.\n   \uce58\uc218\uc640 \uc0c9\uc740 \uc606\uc5d0 \uc120 \uc9c4\uc9dc \uc720\ud29c\ube0c \ubc84\ud2bc\uc744 \uc7ac\uc11c `--ytdl-open-*` \ub85c \ub123\uc5b4\uc900\ub2e4\n   (content.js \uc758 matchNeighbour). \uc5ec\uae30 \uc801\ud78c \uac12\uc740 \ubabb \uc7c0\uc744 \ub54c \uc4f0\ub294 \ub300\ube44\ucc45\uc774\ub2e4. */\n.ytdl-open {\n  position: relative;\n  /* \uc5b9\ub294 \uc0c9(::before)\uc774 \ubc14\ud0d5 \uc704\u00b7\uae00\uc790 \uc544\ub798\uc5d0 \uc624\ub3c4\ub85d \uc774 \ubc84\ud2bc\uc744 \ud55c \uacb9\uc73c\ub85c \ubb36\ub294\ub2e4. */\n  isolation: isolate;\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  height: var(--ytdl-open-h, 36px);\n  border: 0;\n  border-radius: var(--ytdl-open-r, 18px);\n  margin-left: var(--ytdl-open-ml, 8px);\n  background: var(--ytdl-open-bg, rgba(0, 0, 0, 0.05));\n  color: var(--ytdl-open-fg, #0f0f0f);\n  padding: var(--ytdl-open-pad, 0 16px);\n  font: var(--ytdl-open-font, 500 14px/1 \"Roboto\", \"Noto Sans KR\", system-ui, sans-serif);\n  letter-spacing: var(--ytdl-open-track, normal);\n  cursor: pointer;\n  white-space: nowrap;\n}\n\n/* \uc5b9\ub294 \uc0c9\uc744 \ub530\ub85c \ub450\ub294 \uc774\uc720: \ubc14\ud0d5\uc0c9\uc744 \uc720\ud29c\ube0c\uc5d0\uc11c \uc7ac \uc628 \uac12\uc73c\ub85c \uc4f0\uae30 \ub54c\ubb38\uc5d0,\n   :hover \uc5d0 \uc0c9\uc744 \ubabb\ubc15\uc73c\uba74 \uc7b0 \uac12\uc774 \ud1b5\uc9f8\ub85c \ub36e\uc778\ub2e4. \uae00\uc790\uc0c9\uc73c\ub85c \uc587\uac8c \ub36e\uc73c\uba74\n   \ubc1d\uc740 \ud14c\ub9c8\uc5d0\uc11c\ub294 \uc5b4\ub461\uac8c, \uc5b4\ub450\uc6b4 \ud14c\ub9c8\uc5d0\uc11c\ub294 \ubc1d\uac8c \u2014 \uc800\uc808\ub85c \ub9de\ub294\ub2e4. */\n.ytdl-open::before {\n  content: \"\";\n  position: absolute;\n  inset: 0;\n  z-index: -1;\n  border-radius: inherit;\n  background: currentColor;\n  opacity: 0;\n  pointer-events: none;\n}\n\n.ytdl-open:hover::before {\n  opacity: 0.1;\n}\n\n.ytdl-open.ytdl-open-active {\n  background: #0f0f0f;\n  color: #fff;\n}\n\n/* \uc720\ud29c\ube0c \uc544\uc774\ucf58\uacfc \uac19\uc740 \ud2c0. \uadf8\ub9bc\uc744 \uadf8 \uc548\uc5d0 \ub9de\ucdb0 \uadf8\ub824\ub46c\uc11c(content.js \uc758 downloadIcon)\n   \ud2c0 \ud06c\uae30\ub294 \uc5ec\uae30 \ubabb\ubc15\uc544\ub3c4 \uc606 \uc544\uc774\ucf58\ub4e4\uacfc \uac19\uc740 \ud06c\uae30\ub85c \ubcf4\uc778\ub2e4. */\n.ytdl-open-icon {\n  display: inline-flex;\n  flex: none;\n  width: 24px;\n  height: 24px;\n}\n\n.ytdl-open-icon svg {\n  width: 100%;\n  height: 100%;\n  display: block;\n}\n\n/* \uc20f\uce20\uc758 \uc624\ub978\ucabd \uc138\ub85c \uc904\uc5d0 \uc11c\ub294 \ubaa8\uc591.\n   \uc720\ud29c\ube0c\uc758 \uc88b\uc544\uc694 \uce78\uacfc \ub611\uac19\uc774 \ub9cc\ub4e0\ub2e4 \u2014 48px \ub3d9\uadf8\ub77c\ubbf8 + \uadf8 \uc544\ub798 \uae00\uc790, \uc804\uccb4 78px, \uc5ec\ubc31 0.\n   \uadf8 \uc904\uc740 gap \ub3c4 margin \ub3c4 \uc5c6\uc774 \uce78 \ub192\uc774\ub85c\ub9cc \uac04\uaca9\uc744 \ub9cc\ub4e0\ub2e4(\uc7ac\uc11c \ud655\uc778\ud568).\n   \uc5ec\ubc31\uc744 \ub530\ub85c \uc8fc\uba74 \uc6b0\ub9ac \uac83\ub9cc \uc5b4\uae0b\ub09c\ub2e4. */\n.ytdl-open-reel {\n  flex-direction: column;\n  justify-content: flex-start;\n  gap: 0;\n  width: 48px;\n  height: 78px;\n  margin: 0;\n  padding: 0;\n  border-radius: 0;\n  background: transparent;\n}\n\n.ytdl-open-reel:hover {\n  background: transparent;\n}\n\n/* \uc138\ub85c \uc904\uc5d0\uc11c\ub294 \uce78 \uc804\uccb4\uac00 \uc544\ub2c8\ub77c \ub3d9\uadf8\ub77c\ubbf8\ub9cc \ub36e\uc5ec\uc57c \ud55c\ub2e4. \uc5b9\ub294 \uc0c9\uc744 \ub048\ub2e4. */\n.ytdl-open-reel::before {\n  content: none;\n}\n\n.ytdl-open-reel .ytdl-open-icon {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  width: 48px;\n  height: 48px;\n  border-radius: 50%;\n  background: rgba(0, 0, 0, 0.05);\n}\n\n.ytdl-open-reel .ytdl-open-icon svg {\n  width: 24px;\n  height: 24px;\n}\n\n.ytdl-open-reel:hover .ytdl-open-icon {\n  background: rgba(0, 0, 0, 0.1);\n}\n\n.ytdl-open-reel .ytdl-open-label {\n  margin-top: 6px;\n  font-size: 12px;\n  font-weight: 500;\n  line-height: 1;\n}\n\n/* \ub20c\ub9b0 \uc0c1\ud0dc\ub294 \ub3d9\uadf8\ub77c\ubbf8\ub9cc \ubc18\uc804\ud55c\ub2e4(\uce78 \uc804\uccb4\ub97c \uce60\ud558\uba74 \uc720\ud29c\ube0c \ubc84\ud2bc\ub4e4\uacfc \ub530\ub85c \ub17c\ub2e4). */\n.ytdl-open-reel.ytdl-open-active,\n.ytdl-open-reel.ytdl-open-active:hover {\n  background: transparent;\n  color: inherit;\n}\n\n.ytdl-open-reel.ytdl-open-active .ytdl-open-icon {\n  background: #0f0f0f;\n  color: #fff;\n}\n\n/* \uc601\uc0c1 \uc815\ubcf4 \ubc14\ub85c \uc544\ub798\uc5d0 \ub07c\uc5b4\ub4dc\ub294 \ud328\ub110.\n   \uc790\uae30 \ub108\ube44\ub97c \uae30\uc900\uc73c\ub85c \uc904\uc744 \ub2e4\uc2dc \uc9dc\ub294 \ubc18\uc751\ud615\uc774\ub2e4(\uc544\ub798 @container \uaddc\uce59).\n   \ud654\uba74(\ubdf0\ud3ec\ud2b8)\uc774 \uc544\ub2c8\ub77c \ud328\ub110\uc774 \ub080 \uce78\uc758 \ub108\ube44\uac00 \uae30\uc900\uc774\ub77c \ucee8\ud14c\uc774\ub108 \ucffc\ub9ac\ub97c \uc4f4\ub2e4. */\n.ytdl-panel {\n  container-type: inline-size;\n  margin: 12px 0 16px;\n  border: 1px solid rgba(0, 0, 0, 0.1);\n  border-radius: 12px;\n  background: #f9f9f9;\n  color: #0f0f0f;\n  font: 14px/1.4 \"Roboto\", \"Noto Sans KR\", system-ui, sans-serif;\n}\n\n/* \uc20f\uce20\uc5d0\ub294 \uc601\uc0c1 \uc544\ub798\uc5d0 \ub07c\uc6cc \ub123\uc744 \uc790\ub9ac\uac00 \uc5c6\ub2e4. \ud654\uba74 \uc704\uc5d0 \ub744\uc6b4\ub2e4.\n   \uc20f\uce20 UI \ub294 z-index \ub97c 2000 \ub300\uae4c\uc9c0 \uc4f0\ubbc0\ub85c \uadf8\ubcf4\ub2e4 \uc704\uc5d0 \ub193\ub294\ub2e4.\n\n   \uac00\uc6b4\ub370 \ubaa8\ub2ec\ub85c \ub744\uc6b0\uc9c0 \uc54a\ub294 \uc774\uc720: \uc190\uc7a1\uc774\ub97c \ub04c\uba74 \uc720\ud29c\ube0c \uc601\uc0c1\uc774 \uadf8 \uc9c0\uc810\uc73c\ub85c \ub530\ub77c\uac00\uc11c\n   \ud654\uba74 \uc790\uccb4\uac00 \ubbf8\ub9ac\ubcf4\uae30\ub2e4. \uc601\uc0c1\uc744 \uac00\ub9ac\uba74 \uadf8 \ubbf8\ub9ac\ubcf4\uae30\ub97c \uc783\ub294\ub2e4.\n   \uadf8\ub798\uc11c \uc20f\uce20(\uc138\ub85c \uc601\uc0c1) \uc606\uc758 \ube48\uc790\ub9ac\uc5d0 \uc138\uc6b4\ub2e4.\n\n   \uac00\ub85c \uc790\ub9ac(left\u00b7width)\ub294 \ud654\uba74\ub9c8\ub2e4 \ub2ec\ub77c\uc11c content.js \uac00 \uc7ac\uc11c \ub123\ub294\ub2e4. \uc138\ub85c \ubc84\ud2bc \uc904\uc774\n   \uc601\uc0c1 \ubc14\ub85c \uc624\ub978\ucabd\uc5d0 \ubd99\uc5b4 \uc788\uc5b4\uc11c, \uace0\uc815\uac12\uc73c\ub85c \ub450\uba74 \uadf8 \ubc84\ud2bc\ub4e4\uc744 \ub36e\ub294\ub2e4(\uc2e4\uc81c\ub85c \ub36e\uc5c8\ub2e4). */\n.ytdl-panel.ytdl-float {\n  position: fixed;\n  top: 50%;\n  right: auto;\n  transform: translateY(-50%);\n  max-height: 82vh;\n  overflow-y: auto;\n  margin: 0;\n  z-index: 2500;\n  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);\n  background: #fff;\n}\n\n/* \uc606\uc5d0 \uc124 \uc790\ub9ac\uac00 \uc5c6\uc744 \ub9cc\ud07c \ucc3d\uc774 \uc881\uc73c\uba74 \ud654\uba74 \uc544\ub798\uc5d0 \ub215\ud78c\ub2e4. */\n.ytdl-panel.ytdl-float.ytdl-float-bottom {\n  top: auto;\n  bottom: 16px;\n  left: 50%;\n  transform: translateX(-50%);\n  width: min(760px, calc(100vw - 32px));\n  max-height: 60vh;\n}\n\n.ytdl-head {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 10px 14px;\n  border-bottom: 1px solid rgba(0, 0, 0, 0.08);\n}\n\n/* \ub744\uc6b4 \ud328\ub110\uc740 \uc81c\ubaa9 \uc904\uc744 \uc7a1\uc544 \ub04c\uc5b4 \uc62e\uae38 \uc218 \uc788\ub2e4. */\n.ytdl-float .ytdl-head {\n  cursor: grab;\n  user-select: none;\n}\n\n.ytdl-float .ytdl-head:active {\n  cursor: grabbing;\n}\n\n.ytdl-title {\n  font-weight: 600;\n}\n\n.ytdl-close {\n  width: 28px;\n  height: 28px;\n  border: 0;\n  border-radius: 50%;\n  background: transparent;\n  color: inherit;\n  font-size: 13px;\n  line-height: 1;\n  cursor: pointer;\n}\n\n.ytdl-close:hover {\n  background: rgba(0, 0, 0, 0.08);\n}\n\n.ytdl-body {\n  padding: 14px;\n}\n\n/* \ud0c0\uc784\ub77c\uc778: \uc804\uccb4 \uae38\uc774\ub97c \uac00\ub85c\uc904\ub85c \ub193\uace0 \uace0\ub978 \uad6c\uac04\uc744 \uce60\ud55c\ub2e4. */\n.ytdl-track {\n  position: relative;\n  height: 34px;\n  margin: 2px 10px 14px;\n  border-radius: 4px;\n  background: rgba(0, 0, 0, 0.1);\n  cursor: pointer;\n  touch-action: none;\n}\n\n.ytdl-range {\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  border-radius: 4px;\n  background: rgba(15, 123, 108, 0.35);\n  pointer-events: none;\n}\n\n.ytdl-handle {\n  position: absolute;\n  top: -3px;\n  bottom: -3px;\n  width: 12px;\n  margin-left: -6px;\n  border-radius: 3px;\n  background: #0f7b6c;\n  cursor: ew-resize;\n}\n\n.ytdl-handle::after {\n  content: \"\";\n  position: absolute;\n  top: 50%;\n  left: 50%;\n  width: 2px;\n  height: 12px;\n  margin: -6px 0 0 -1px;\n  border-radius: 1px;\n  background: rgba(255, 255, 255, 0.75);\n}\n\n/* \uc9c0\uae08 \uc7ac\uc0dd \uc911\uc778 \uc704\uce58 */\n.ytdl-head-mark {\n  position: absolute;\n  top: -5px;\n  bottom: -5px;\n  width: 2px;\n  margin-left: -1px;\n  background: #f03;\n  pointer-events: none;\n}\n\n.ytdl-total {\n  margin-left: auto;\n  margin-right: 10px;\n  color: rgba(0, 0, 0, 0.55);\n  font-size: 12px;\n  font-variant-numeric: tabular-nums;\n}\n\n.ytdl-row {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  flex-wrap: wrap;\n}\n\n.ytdl-row + .ytdl-row {\n  margin-top: 10px;\n}\n\n.ytdl-sep {\n  color: rgba(0, 0, 0, 0.45);\n}\n\n.ytdl-time {\n  width: 92px;\n  height: 34px;\n  border: 1px solid rgba(0, 0, 0, 0.18);\n  border-radius: 8px;\n  background: #fff;\n  color: inherit;\n  padding: 0 8px;\n  font: inherit;\n  font-variant-numeric: tabular-nums;\n  text-align: center;\n}\n\n.ytdl-mark {\n  width: 34px;\n  padding: 0;\n  font-size: 17px;\n  font-weight: 700;\n  line-height: 1;\n}\n\n.ytdl-mark,\n.ytdl-go {\n  height: 34px;\n  border: 1px solid rgba(0, 0, 0, 0.18);\n  border-radius: 8px;\n  background: #fff;\n  color: inherit;\n  padding: 0 12px;\n  font: inherit;\n  cursor: pointer;\n  white-space: nowrap;\n}\n\n.ytdl-mark:hover {\n  background: #ececec;\n}\n\n.ytdl-length {\n  min-width: 62px;\n  border-radius: 6px;\n  background: rgba(15, 123, 108, 0.12);\n  color: #0f7b6c;\n  padding: 5px 10px;\n  font-weight: 600;\n  font-variant-numeric: tabular-nums;\n  text-align: center;\n}\n\n.ytdl-quality {\n  height: 34px;\n  min-width: 150px;\n  max-width: 100%;\n  border: 1px solid rgba(0, 0, 0, 0.18);\n  border-radius: 8px;\n  background: #fff;\n  color: inherit;\n  padding: 0 8px;\n  font: inherit;\n}\n\n/* \ubc1b\uc744 \ub0b4\uc6a9(\uc601\uc0c1+\uc18c\ub9ac/\uc601\uc0c1\ub9cc/\uc18c\ub9ac\ub9cc). \ud654\uc9c8\uce78\uacfc \uac19\uc740 \uc0dd\uae40\uc0c8, \ud3ed\ub9cc \uc881\ub2e4. */\n.ytdl-media {\n  min-width: 96px;\n}\n\n.ytdl-go {\n  margin-left: auto;\n  border-color: #0f7b6c;\n  background: #0f7b6c;\n  color: #fff;\n  font-weight: 600;\n  padding: 0 18px;\n}\n\n.ytdl-go:hover:not(:disabled) {\n  background: #0c6a5d;\n}\n\n.ytdl-go:disabled {\n  border-color: rgba(0, 0, 0, 0.12);\n  background: rgba(0, 0, 0, 0.06);\n  color: rgba(0, 0, 0, 0.4);\n  cursor: default;\n}\n\n.ytdl-status {\n  margin-top: 10px;\n  min-height: 18px;\n  color: rgba(0, 0, 0, 0.6);\n  font-size: 13px;\n}\n\n.ytdl-status.ytdl-ok {\n  color: #0f7b6c;\n}\n\n.ytdl-status.ytdl-bad {\n  color: #c5221f;\n}\n\n/* \uc720\ud29c\ube0c \uc5b4\ub450\uc6b4 \ud14c\ub9c8\uc5d0 \ub9de\ucd98\ub2e4.\n   \uc5ec\uae30\uc11c\ub3c4 \uc7b0 \uac12\uc774 \uba3c\uc800\ub2e4 \u2014 \uc774 \uaddc\uce59\uc774 \ub354 \uc138\uc11c, \uc0c9\uc744 \ubabb\ubc15\uc73c\uba74 \uc7b0 \uac12\uc744 \ub36e\uc5b4\ubc84\ub9b0\ub2e4. */\nhtml[dark] .ytdl-open {\n  background: var(--ytdl-open-bg, rgba(255, 255, 255, 0.1));\n  color: var(--ytdl-open-fg, #f1f1f1);\n}\n\nhtml[dark] .ytdl-open.ytdl-open-active {\n  background: #f1f1f1;\n  color: #0f0f0f;\n}\n\nhtml[dark] .ytdl-open-reel,\nhtml[dark] .ytdl-open-reel:hover,\nhtml[dark] .ytdl-open-reel.ytdl-open-active {\n  background: transparent;\n  color: #f1f1f1;\n}\n\nhtml[dark] .ytdl-open-reel .ytdl-open-icon {\n  background: rgba(255, 255, 255, 0.1);\n}\n\nhtml[dark] .ytdl-open-reel:hover .ytdl-open-icon {\n  background: rgba(255, 255, 255, 0.2);\n}\n\nhtml[dark] .ytdl-open-reel.ytdl-open-active .ytdl-open-icon {\n  background: #f1f1f1;\n  color: #0f0f0f;\n}\n\nhtml[dark] .ytdl-panel {\n  border-color: rgba(255, 255, 255, 0.15);\n  background: #212121;\n  color: #f1f1f1;\n}\n\nhtml[dark] .ytdl-panel.ytdl-float {\n  background: #212121;\n}\n\nhtml[dark] .ytdl-head {\n  border-bottom-color: rgba(255, 255, 255, 0.12);\n}\n\nhtml[dark] .ytdl-close:hover {\n  background: rgba(255, 255, 255, 0.1);\n}\n\nhtml[dark] .ytdl-time,\nhtml[dark] .ytdl-quality,\nhtml[dark] .ytdl-mark {\n  border-color: rgba(255, 255, 255, 0.22);\n  background: #121212;\n  color: #f1f1f1;\n}\n\nhtml[dark] .ytdl-mark:hover {\n  background: #383838;\n}\n\nhtml[dark] .ytdl-sep,\nhtml[dark] .ytdl-total,\nhtml[dark] .ytdl-status {\n  color: rgba(255, 255, 255, 0.6);\n}\n\nhtml[dark] .ytdl-track {\n  background: rgba(255, 255, 255, 0.16);\n}\n\nhtml[dark] .ytdl-length {\n  background: rgba(15, 123, 108, 0.28);\n  color: #7fd8c9;\n}\n\nhtml[dark] .ytdl-go:disabled {\n  border-color: rgba(255, 255, 255, 0.14);\n  background: rgba(255, 255, 255, 0.08);\n  color: rgba(255, 255, 255, 0.4);\n}\n\n/* \ubc1b\ub294 \ub3d9\uc548\uc5d0\ub9cc \ub098\ud0c0\ub098\ub294 \ubc84\ud2bc\ub4e4. \ubc1b\uae30 \ubc84\ud2bc\ubcf4\ub2e4 \ub208\uc5d0 \ub35c \ub744\uac8c \ub454\ub2e4. */\n.ytdl-hold,\n.ytdl-halt,\n.ytdl-discard {\n  border: 1px solid var(--ytdl-line, rgba(255, 255, 255, 0.2));\n  background: transparent;\n  color: inherit;\n  border-radius: 18px;\n  padding: 0 14px;\n  height: 36px;\n  cursor: pointer;\n  font: inherit;\n  white-space: nowrap;\n}\n\n.ytdl-hold:hover,\n.ytdl-halt:hover,\n.ytdl-discard:hover {\n  background: rgba(127, 127, 127, 0.15);\n}\n\n/* \ud328\ub110\uc774 \uc881\uc544\uc9c0\uba74 \ud55c \uc904\uc5d0 \ub2e4 \ubabb \uc120\ub2e4. \uce78\uc744 \ud06c\uac8c \uc14b\uc73c\ub85c \ub098\ub208\ub2e4 \u2014\n   \uc2dc\uac04 \uce78\ub4e4\uc740 \ub0a8\ub294 \ub108\ube44\ub97c \ub098\ub220 \uac16\uace0, \ud654\uc9c8\uce78\uc740 \uc81c \uc904\uc744 \ud1b5\uc9f8\ub85c \uc4f0\uace0,\n   \ubc1b\uae30 \ubc84\ud2bc\uc740 \uadf8 \uc544\ub798\uc5d0\uc11c \uc804\uccb4 \ub108\ube44\ub85c \uc120\ub2e4. */\n@container (max-width: 520px) {\n  .ytdl-time {\n    flex: 1 1 80px;\n    width: auto;\n    min-width: 72px;\n  }\n\n  .ytdl-length {\n    margin-left: auto;\n  }\n\n  .ytdl-quality {\n    flex: 1 1 100%;\n    min-width: 0;\n  }\n\n  .ytdl-go,\n  .ytdl-hold,\n  .ytdl-halt,\n  .ytdl-discard {\n    flex: 1 1 auto;\n    margin-left: 0;\n  }\n}\n";
+__style.textContent = "/* \uc720\ud29c\ube0c \uc548\uc5d0 \uc5b9\ub294 UI. \ud398\uc774\uc9c0 \uc2a4\ud0c0\uc77c\uacfc \uc11e\uc774\uc9c0 \uc54a\ub3c4\ub85d \uac12\uc744 \ubaa8\ub450 \uc9c1\uc811 \uc801\ub294\ub2e4. */\n\n/* \uc88b\uc544\uc694\u00b7\uacf5\uc720 \uc606\uc5d0 \uc11c\ub294 \ubc84\ud2bc.\n   \uce58\uc218\uc640 \uc0c9\uc740 \uc606\uc5d0 \uc120 \uc9c4\uc9dc \uc720\ud29c\ube0c \ubc84\ud2bc\uc744 \uc7ac\uc11c `--ytdl-open-*` \ub85c \ub123\uc5b4\uc900\ub2e4\n   (content.js \uc758 matchNeighbour). \uc5ec\uae30 \uc801\ud78c \uac12\uc740 \ubabb \uc7c0\uc744 \ub54c \uc4f0\ub294 \ub300\ube44\ucc45\uc774\ub2e4. */\n.ytdl-open {\n  position: relative;\n  /* \uc5b9\ub294 \uc0c9(::before)\uc774 \ubc14\ud0d5 \uc704\u00b7\uae00\uc790 \uc544\ub798\uc5d0 \uc624\ub3c4\ub85d \uc774 \ubc84\ud2bc\uc744 \ud55c \uacb9\uc73c\ub85c \ubb36\ub294\ub2e4. */\n  isolation: isolate;\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  height: var(--ytdl-open-h, 36px);\n  border: 0;\n  border-radius: var(--ytdl-open-r, 18px);\n  margin-left: var(--ytdl-open-ml, 8px);\n  background: var(--ytdl-open-bg, rgba(0, 0, 0, 0.05));\n  color: var(--ytdl-open-fg, #0f0f0f);\n  padding: var(--ytdl-open-pad, 0 16px);\n  font: var(--ytdl-open-font, 500 14px/1 \"Roboto\", \"Noto Sans KR\", system-ui, sans-serif);\n  letter-spacing: var(--ytdl-open-track, normal);\n  cursor: pointer;\n  white-space: nowrap;\n}\n\n/* \uc5b9\ub294 \uc0c9\uc744 \ub530\ub85c \ub450\ub294 \uc774\uc720: \ubc14\ud0d5\uc0c9\uc744 \uc720\ud29c\ube0c\uc5d0\uc11c \uc7ac \uc628 \uac12\uc73c\ub85c \uc4f0\uae30 \ub54c\ubb38\uc5d0,\n   :hover \uc5d0 \uc0c9\uc744 \ubabb\ubc15\uc73c\uba74 \uc7b0 \uac12\uc774 \ud1b5\uc9f8\ub85c \ub36e\uc778\ub2e4. \uae00\uc790\uc0c9\uc73c\ub85c \uc587\uac8c \ub36e\uc73c\uba74\n   \ubc1d\uc740 \ud14c\ub9c8\uc5d0\uc11c\ub294 \uc5b4\ub461\uac8c, \uc5b4\ub450\uc6b4 \ud14c\ub9c8\uc5d0\uc11c\ub294 \ubc1d\uac8c \u2014 \uc800\uc808\ub85c \ub9de\ub294\ub2e4. */\n.ytdl-open::before {\n  content: \"\";\n  position: absolute;\n  inset: 0;\n  z-index: -1;\n  border-radius: inherit;\n  background: currentColor;\n  opacity: 0;\n  pointer-events: none;\n}\n\n.ytdl-open:hover::before {\n  opacity: 0.1;\n}\n\n.ytdl-open.ytdl-open-active {\n  background: #0f0f0f;\n  color: #fff;\n}\n\n/* \uc720\ud29c\ube0c \uc544\uc774\ucf58\uacfc \uac19\uc740 \ud2c0. \uadf8\ub9bc\uc744 \uadf8 \uc548\uc5d0 \ub9de\ucdb0 \uadf8\ub824\ub46c\uc11c(content.js \uc758 downloadIcon)\n   \ud2c0 \ud06c\uae30\ub294 \uc5ec\uae30 \ubabb\ubc15\uc544\ub3c4 \uc606 \uc544\uc774\ucf58\ub4e4\uacfc \uac19\uc740 \ud06c\uae30\ub85c \ubcf4\uc778\ub2e4. */\n.ytdl-open-icon {\n  display: inline-flex;\n  flex: none;\n  width: 24px;\n  height: 24px;\n}\n\n.ytdl-open-icon svg {\n  width: 100%;\n  height: 100%;\n  display: block;\n}\n\n/* \uc20f\uce20\uc758 \uc624\ub978\ucabd \uc138\ub85c \uc904\uc5d0 \uc11c\ub294 \ubaa8\uc591.\n   \uc720\ud29c\ube0c\uc758 \uc88b\uc544\uc694 \uce78\uacfc \ub611\uac19\uc774 \ub9cc\ub4e0\ub2e4 \u2014 48px \ub3d9\uadf8\ub77c\ubbf8 + \uadf8 \uc544\ub798 \uae00\uc790, \uc804\uccb4 78px, \uc5ec\ubc31 0.\n   \uadf8 \uc904\uc740 gap \ub3c4 margin \ub3c4 \uc5c6\uc774 \uce78 \ub192\uc774\ub85c\ub9cc \uac04\uaca9\uc744 \ub9cc\ub4e0\ub2e4(\uc7ac\uc11c \ud655\uc778\ud568).\n   \uc5ec\ubc31\uc744 \ub530\ub85c \uc8fc\uba74 \uc6b0\ub9ac \uac83\ub9cc \uc5b4\uae0b\ub09c\ub2e4. */\n.ytdl-open-reel {\n  flex-direction: column;\n  justify-content: flex-start;\n  gap: 0;\n  width: 48px;\n  height: 78px;\n  margin: 0;\n  padding: 0;\n  border-radius: 0;\n  background: transparent;\n}\n\n.ytdl-open-reel:hover {\n  background: transparent;\n}\n\n/* \uc138\ub85c \uc904\uc5d0\uc11c\ub294 \uce78 \uc804\uccb4\uac00 \uc544\ub2c8\ub77c \ub3d9\uadf8\ub77c\ubbf8\ub9cc \ub36e\uc5ec\uc57c \ud55c\ub2e4. \uc5b9\ub294 \uc0c9\uc744 \ub048\ub2e4. */\n.ytdl-open-reel::before {\n  content: none;\n}\n\n.ytdl-open-reel .ytdl-open-icon {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  width: 48px;\n  height: 48px;\n  border-radius: 50%;\n  background: rgba(0, 0, 0, 0.05);\n}\n\n.ytdl-open-reel .ytdl-open-icon svg {\n  width: 24px;\n  height: 24px;\n}\n\n.ytdl-open-reel:hover .ytdl-open-icon {\n  background: rgba(0, 0, 0, 0.1);\n}\n\n.ytdl-open-reel .ytdl-open-label {\n  margin-top: 6px;\n  font-size: 12px;\n  font-weight: 500;\n  line-height: 1;\n}\n\n/* \ub20c\ub9b0 \uc0c1\ud0dc\ub294 \ub3d9\uadf8\ub77c\ubbf8\ub9cc \ubc18\uc804\ud55c\ub2e4(\uce78 \uc804\uccb4\ub97c \uce60\ud558\uba74 \uc720\ud29c\ube0c \ubc84\ud2bc\ub4e4\uacfc \ub530\ub85c \ub17c\ub2e4). */\n.ytdl-open-reel.ytdl-open-active,\n.ytdl-open-reel.ytdl-open-active:hover {\n  background: transparent;\n  color: inherit;\n}\n\n.ytdl-open-reel.ytdl-open-active .ytdl-open-icon {\n  background: #0f0f0f;\n  color: #fff;\n}\n\n/* \uc601\uc0c1 \uc815\ubcf4 \ubc14\ub85c \uc544\ub798\uc5d0 \ub07c\uc5b4\ub4dc\ub294 \ud328\ub110.\n   \uc790\uae30 \ub108\ube44\ub97c \uae30\uc900\uc73c\ub85c \uc904\uc744 \ub2e4\uc2dc \uc9dc\ub294 \ubc18\uc751\ud615\uc774\ub2e4(\uc544\ub798 @container \uaddc\uce59).\n   \ud654\uba74(\ubdf0\ud3ec\ud2b8)\uc774 \uc544\ub2c8\ub77c \ud328\ub110\uc774 \ub080 \uce78\uc758 \ub108\ube44\uac00 \uae30\uc900\uc774\ub77c \ucee8\ud14c\uc774\ub108 \ucffc\ub9ac\ub97c \uc4f4\ub2e4. */\n.ytdl-panel {\n  container-type: inline-size;\n  margin: 12px 0 16px;\n  border: 1px solid rgba(0, 0, 0, 0.1);\n  border-radius: 12px;\n  background: #f9f9f9;\n  color: #0f0f0f;\n  font: 14px/1.4 \"Roboto\", \"Noto Sans KR\", system-ui, sans-serif;\n}\n\n/* \uc20f\uce20\uc5d0\ub294 \uc601\uc0c1 \uc544\ub798\uc5d0 \ub07c\uc6cc \ub123\uc744 \uc790\ub9ac\uac00 \uc5c6\ub2e4. \ud654\uba74 \uc704\uc5d0 \ub744\uc6b4\ub2e4.\n   \uc20f\uce20 UI \ub294 z-index \ub97c 2000 \ub300\uae4c\uc9c0 \uc4f0\ubbc0\ub85c \uadf8\ubcf4\ub2e4 \uc704\uc5d0 \ub193\ub294\ub2e4.\n\n   \uac00\uc6b4\ub370 \ubaa8\ub2ec\ub85c \ub744\uc6b0\uc9c0 \uc54a\ub294 \uc774\uc720: \uc190\uc7a1\uc774\ub97c \ub04c\uba74 \uc720\ud29c\ube0c \uc601\uc0c1\uc774 \uadf8 \uc9c0\uc810\uc73c\ub85c \ub530\ub77c\uac00\uc11c\n   \ud654\uba74 \uc790\uccb4\uac00 \ubbf8\ub9ac\ubcf4\uae30\ub2e4. \uc601\uc0c1\uc744 \uac00\ub9ac\uba74 \uadf8 \ubbf8\ub9ac\ubcf4\uae30\ub97c \uc783\ub294\ub2e4.\n   \uadf8\ub798\uc11c \uc20f\uce20(\uc138\ub85c \uc601\uc0c1) \uc606\uc758 \ube48\uc790\ub9ac\uc5d0 \uc138\uc6b4\ub2e4.\n\n   \uac00\ub85c \uc790\ub9ac(left\u00b7width)\ub294 \ud654\uba74\ub9c8\ub2e4 \ub2ec\ub77c\uc11c content.js \uac00 \uc7ac\uc11c \ub123\ub294\ub2e4. \uc138\ub85c \ubc84\ud2bc \uc904\uc774\n   \uc601\uc0c1 \ubc14\ub85c \uc624\ub978\ucabd\uc5d0 \ubd99\uc5b4 \uc788\uc5b4\uc11c, \uace0\uc815\uac12\uc73c\ub85c \ub450\uba74 \uadf8 \ubc84\ud2bc\ub4e4\uc744 \ub36e\ub294\ub2e4(\uc2e4\uc81c\ub85c \ub36e\uc5c8\ub2e4). */\n/* \ub744\uc6b4 \ud328\ub110\uc740 \ud654\uba74 \uc544\ub798 \uac00\uc6b4\ub370\uc5d0 \uc120\ub2e4. \uc20f\uce20\ub4e0 \uc77c\ubc18 \ud654\uba74\uc774\ub4e0 \ub298 \uac19\uc740 \uc790\ub9ac\ub77c\n   \ucc98\uc74c \uc5f4\uc5c8\uc744 \ub54c \ub208\uc774 \ucc3e\uc744 \uacf3\uc744 \uc548\ub2e4. \uc81c\ubaa9 \uc904\uc744 \uc7a1\uc544 \ub04c\uba74 \uadf8 \uc790\ub9ac\ub85c \uc62e\uaca8\uac04\ub2e4\n   (\ub04c\uae30\uac00 \uc88c\ud45c\ub97c \uc9c1\uc811 \ubc15\uc544 \ub123\uc5b4\uc11c \uc544\ub798 \uac00\uc6b4\ub370 \ub9de\ucda4\uc744 \ub36e\ub294\ub2e4). */\n.ytdl-panel.ytdl-float {\n  position: fixed;\n  top: auto;\n  right: auto;\n  bottom: 16px;\n  left: 50%;\n  transform: translateX(-50%);\n  /* 920px \uc774\uba74 \uc2dc\uac01\u00b7\ud654\uc9c8\u00b7\ubc1b\uae30\uac00 \ud55c \uc904\uc5d0 \ub2e4 \uc120\ub2e4(760px \uc774\uba74 \ub450 \uc904\ub85c \uc811\ud78c\ub2e4).\n     \uc881\uc740 \ucc3d\uc5d0\uc11c\ub294 \uc54c\uc544\uc11c \uc904\uace0, 520px \uc544\ub798\ub85c \ub0b4\ub824\uac00\uba74 \ucee8\ud14c\uc774\ub108 \uc9c8\uc758\uac00 \uc138 \uc904\ub85c \ub098\ub208\ub2e4. */\n  width: min(920px, calc(100vw - 32px));\n  max-height: 60vh;\n  overflow-y: auto;\n  margin: 0;\n  z-index: 2500;\n  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);\n  background: #fff;\n}\n\n.ytdl-head {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 10px 14px;\n  border-bottom: 1px solid rgba(0, 0, 0, 0.08);\n}\n\n/* \ub744\uc6b4 \ud328\ub110\uc740 \uc81c\ubaa9 \uc904\uc744 \uc7a1\uc544 \ub04c\uc5b4 \uc62e\uae38 \uc218 \uc788\ub2e4. */\n.ytdl-float .ytdl-head {\n  cursor: grab;\n  user-select: none;\n}\n\n.ytdl-float .ytdl-head:active {\n  cursor: grabbing;\n}\n\n.ytdl-title {\n  font-weight: 600;\n}\n\n.ytdl-close {\n  width: 28px;\n  height: 28px;\n  border: 0;\n  border-radius: 50%;\n  background: transparent;\n  color: inherit;\n  font-size: 13px;\n  line-height: 1;\n  cursor: pointer;\n}\n\n.ytdl-close:hover {\n  background: rgba(0, 0, 0, 0.08);\n}\n\n.ytdl-body {\n  padding: 14px;\n}\n\n/* \ud0c0\uc784\ub77c\uc778: \uc804\uccb4 \uae38\uc774\ub97c \uac00\ub85c\uc904\ub85c \ub193\uace0 \uace0\ub978 \uad6c\uac04\uc744 \uce60\ud55c\ub2e4. */\n.ytdl-track {\n  position: relative;\n  height: 34px;\n  margin: 2px 10px 14px;\n  border-radius: 4px;\n  background: rgba(0, 0, 0, 0.1);\n  cursor: pointer;\n  touch-action: none;\n}\n\n.ytdl-range {\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  border-radius: 4px;\n  background: rgba(15, 123, 108, 0.35);\n  pointer-events: none;\n}\n\n.ytdl-handle {\n  position: absolute;\n  top: -3px;\n  bottom: -3px;\n  width: 12px;\n  margin-left: -6px;\n  border-radius: 3px;\n  background: #0f7b6c;\n  cursor: ew-resize;\n}\n\n.ytdl-handle::after {\n  content: \"\";\n  position: absolute;\n  top: 50%;\n  left: 50%;\n  width: 2px;\n  height: 12px;\n  margin: -6px 0 0 -1px;\n  border-radius: 1px;\n  background: rgba(255, 255, 255, 0.75);\n}\n\n/* \uc9c0\uae08 \uc7ac\uc0dd \uc911\uc778 \uc704\uce58 */\n.ytdl-head-mark {\n  position: absolute;\n  top: -5px;\n  bottom: -5px;\n  width: 2px;\n  margin-left: -1px;\n  background: #f03;\n  pointer-events: none;\n}\n\n/* \uc81c\ubaa9 \uc904 \uc2dc\uacc4 \u2014 \uc67c\ucabd\uc740 \uace0\uccd0 \ub123\uc744 \uc218 \uc788\ub294 \uc9c0\uae08 \uc704\uce58, \uc624\ub978\ucabd\uc740 \uc804\uccb4 \uae38\uc774. */\n.ytdl-clock {\n  display: flex;\n  align-items: center;\n  gap: 2px;\n  margin-left: auto;\n  margin-right: 8px;\n  font-size: 12px;\n  font-variant-numeric: tabular-nums;\n  cursor: default;\n}\n\n.ytdl-now {\n  width: 74px;\n  height: 24px;\n  border: 1px solid transparent;\n  border-radius: 6px;\n  background: transparent;\n  color: inherit;\n  padding: 0 5px;\n  font: inherit;\n  font-variant-numeric: tabular-nums;\n  text-align: right;\n}\n\n/* \ud3c9\uc18c\uc5d0\ub294 \uadf8\ub0e5 \uae00\uc790\ucc98\ub7fc \ub450\uace0, \uc190\uc774 \ub2ff\uc744 \ub54c\ub9cc \uace0\uce60 \uc218 \uc788\ub294 \uce78\uc774\ub77c\uace0 \uc54c\ub824\uc900\ub2e4. */\n.ytdl-now:hover {\n  border-color: rgba(0, 0, 0, 0.18);\n}\n\n.ytdl-now:focus {\n  border-color: rgba(0, 0, 0, 0.4);\n  background: #fff;\n  outline: none;\n}\n\n.ytdl-slash,\n.ytdl-total {\n  color: rgba(0, 0, 0, 0.55);\n}\n\n.ytdl-row {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  flex-wrap: wrap;\n}\n\n.ytdl-row + .ytdl-row {\n  margin-top: 10px;\n}\n\n.ytdl-sep {\n  color: rgba(0, 0, 0, 0.45);\n}\n\n.ytdl-time {\n  width: 92px;\n  height: 34px;\n  border: 1px solid rgba(0, 0, 0, 0.18);\n  border-radius: 8px;\n  background: #fff;\n  color: inherit;\n  padding: 0 8px;\n  font: inherit;\n  font-variant-numeric: tabular-nums;\n  text-align: center;\n}\n\n.ytdl-mark {\n  width: 34px;\n  padding: 0;\n  font-size: 17px;\n  font-weight: 700;\n  line-height: 1;\n}\n\n.ytdl-mark,\n.ytdl-go {\n  height: 34px;\n  border: 1px solid rgba(0, 0, 0, 0.18);\n  border-radius: 8px;\n  background: #fff;\n  color: inherit;\n  padding: 0 12px;\n  font: inherit;\n  cursor: pointer;\n  white-space: nowrap;\n}\n\n.ytdl-mark:hover {\n  background: #ececec;\n}\n\n.ytdl-length {\n  min-width: 62px;\n  border-radius: 6px;\n  background: rgba(15, 123, 108, 0.12);\n  color: #0f7b6c;\n  padding: 5px 10px;\n  font-weight: 600;\n  font-variant-numeric: tabular-nums;\n  text-align: center;\n}\n\n.ytdl-quality {\n  height: 34px;\n  min-width: 150px;\n  max-width: 100%;\n  border: 1px solid rgba(0, 0, 0, 0.18);\n  border-radius: 8px;\n  background: #fff;\n  color: inherit;\n  padding: 0 8px;\n  font: inherit;\n}\n\n/* \ubc1b\uc744 \ub0b4\uc6a9(\uc601\uc0c1+\uc18c\ub9ac/\uc601\uc0c1\ub9cc/\uc18c\ub9ac\ub9cc). \ud654\uc9c8\uce78\uacfc \uac19\uc740 \uc0dd\uae40\uc0c8, \ud3ed\ub9cc \uc881\ub2e4. */\n.ytdl-media {\n  min-width: 96px;\n}\n\n.ytdl-go {\n  margin-left: auto;\n  border-color: #0f7b6c;\n  background: #0f7b6c;\n  color: #fff;\n  font-weight: 600;\n  padding: 0 18px;\n}\n\n.ytdl-go:hover:not(:disabled) {\n  background: #0c6a5d;\n}\n\n.ytdl-go:disabled {\n  border-color: rgba(0, 0, 0, 0.12);\n  background: rgba(0, 0, 0, 0.06);\n  color: rgba(0, 0, 0, 0.4);\n  cursor: default;\n}\n\n.ytdl-status {\n  margin-top: 10px;\n  min-height: 18px;\n  color: rgba(0, 0, 0, 0.6);\n  font-size: 13px;\n}\n\n.ytdl-status.ytdl-ok {\n  color: #0f7b6c;\n}\n\n.ytdl-status.ytdl-bad {\n  color: #c5221f;\n}\n\n/* \uc720\ud29c\ube0c \uc5b4\ub450\uc6b4 \ud14c\ub9c8\uc5d0 \ub9de\ucd98\ub2e4.\n   \uc5ec\uae30\uc11c\ub3c4 \uc7b0 \uac12\uc774 \uba3c\uc800\ub2e4 \u2014 \uc774 \uaddc\uce59\uc774 \ub354 \uc138\uc11c, \uc0c9\uc744 \ubabb\ubc15\uc73c\uba74 \uc7b0 \uac12\uc744 \ub36e\uc5b4\ubc84\ub9b0\ub2e4. */\nhtml[dark] .ytdl-open {\n  background: var(--ytdl-open-bg, rgba(255, 255, 255, 0.1));\n  color: var(--ytdl-open-fg, #f1f1f1);\n}\n\nhtml[dark] .ytdl-open.ytdl-open-active {\n  background: #f1f1f1;\n  color: #0f0f0f;\n}\n\nhtml[dark] .ytdl-open-reel,\nhtml[dark] .ytdl-open-reel:hover,\nhtml[dark] .ytdl-open-reel.ytdl-open-active {\n  background: transparent;\n  color: #f1f1f1;\n}\n\nhtml[dark] .ytdl-open-reel .ytdl-open-icon {\n  background: rgba(255, 255, 255, 0.1);\n}\n\nhtml[dark] .ytdl-open-reel:hover .ytdl-open-icon {\n  background: rgba(255, 255, 255, 0.2);\n}\n\nhtml[dark] .ytdl-open-reel.ytdl-open-active .ytdl-open-icon {\n  background: #f1f1f1;\n  color: #0f0f0f;\n}\n\nhtml[dark] .ytdl-panel {\n  border-color: rgba(255, 255, 255, 0.15);\n  background: #212121;\n  color: #f1f1f1;\n}\n\nhtml[dark] .ytdl-panel.ytdl-float {\n  background: #212121;\n}\n\nhtml[dark] .ytdl-head {\n  border-bottom-color: rgba(255, 255, 255, 0.12);\n}\n\nhtml[dark] .ytdl-close:hover {\n  background: rgba(255, 255, 255, 0.1);\n}\n\nhtml[dark] .ytdl-time,\nhtml[dark] .ytdl-quality,\nhtml[dark] .ytdl-mark {\n  border-color: rgba(255, 255, 255, 0.22);\n  background: #121212;\n  color: #f1f1f1;\n}\n\nhtml[dark] .ytdl-mark:hover {\n  background: #383838;\n}\n\nhtml[dark] .ytdl-sep,\nhtml[dark] .ytdl-slash,\nhtml[dark] .ytdl-total,\nhtml[dark] .ytdl-status {\n  color: rgba(255, 255, 255, 0.6);\n}\n\nhtml[dark] .ytdl-now:hover {\n  border-color: rgba(255, 255, 255, 0.22);\n}\n\nhtml[dark] .ytdl-now:focus {\n  border-color: rgba(255, 255, 255, 0.45);\n  background: #121212;\n}\n\nhtml[dark] .ytdl-track {\n  background: rgba(255, 255, 255, 0.16);\n}\n\nhtml[dark] .ytdl-length {\n  background: rgba(15, 123, 108, 0.28);\n  color: #7fd8c9;\n}\n\nhtml[dark] .ytdl-go:disabled {\n  border-color: rgba(255, 255, 255, 0.14);\n  background: rgba(255, 255, 255, 0.08);\n  color: rgba(255, 255, 255, 0.4);\n}\n\n/* \ubc1b\ub294 \ub3d9\uc548\uc5d0\ub9cc \ub098\ud0c0\ub098\ub294 \ubc84\ud2bc\ub4e4. \ubc1b\uae30 \ubc84\ud2bc\ubcf4\ub2e4 \ub208\uc5d0 \ub35c \ub744\uac8c \ub454\ub2e4. */\n.ytdl-hold,\n.ytdl-halt,\n.ytdl-discard {\n  border: 1px solid var(--ytdl-line, rgba(255, 255, 255, 0.2));\n  background: transparent;\n  color: inherit;\n  border-radius: 18px;\n  padding: 0 14px;\n  height: 36px;\n  cursor: pointer;\n  font: inherit;\n  white-space: nowrap;\n}\n\n.ytdl-hold:hover,\n.ytdl-halt:hover,\n.ytdl-discard:hover {\n  background: rgba(127, 127, 127, 0.15);\n}\n\n/* \ud328\ub110\uc774 \uc881\uc544\uc9c0\uba74 \ud55c \uc904\uc5d0 \ub2e4 \ubabb \uc120\ub2e4. \uce78\uc744 \ud06c\uac8c \uc14b\uc73c\ub85c \ub098\ub208\ub2e4 \u2014\n   \uc2dc\uac04 \uce78\ub4e4\uc740 \ub0a8\ub294 \ub108\ube44\ub97c \ub098\ub220 \uac16\uace0, \ud654\uc9c8\uce78\uc740 \uc81c \uc904\uc744 \ud1b5\uc9f8\ub85c \uc4f0\uace0,\n   \ubc1b\uae30 \ubc84\ud2bc\uc740 \uadf8 \uc544\ub798\uc5d0\uc11c \uc804\uccb4 \ub108\ube44\ub85c \uc120\ub2e4. */\n@container (max-width: 520px) {\n  .ytdl-time {\n    flex: 1 1 88px;\n    width: auto;\n    min-width: 84px;\n  }\n\n  .ytdl-length {\n    margin-left: auto;\n  }\n\n  .ytdl-quality {\n    flex: 1 1 100%;\n    min-width: 0;\n  }\n\n  .ytdl-go,\n  .ytdl-hold,\n  .ytdl-halt,\n  .ytdl-discard {\n    flex: 1 1 auto;\n    margin-left: 0;\n  }\n}\n";
 document.documentElement.append(__style);
 (() => {
 // 페이지(MAIN) 쪽에서 대신 요청해 주는 작은 다리.
@@ -2715,18 +2724,40 @@ window.__ytdlPageTeardown = () => {
     return Math.max(0, end - start);
   }
 
+  /**
+   * 사람이 적은 시각을 초로 읽는다. `1:03.16`, `63.16`, `1:02:03.5` 를 모두 받는다.
+   *
+   * 빈 칸과 음수는 거절한다(`Number("")` 이 0 이라 그냥 두면 빈 칸이 0초로 들어간다).
+   */
   function parseClock(text) {
-    const parts = String(text).trim().split(":").map(Number);
-    if (parts.some((part) => !Number.isFinite(part))) return null;
-    return parts.reduce((total, part) => total * 60 + part, 0);
+    const raw = String(text).trim();
+    if (!raw) return null;
+    const parts = raw.split(":");
+    if (parts.length > 3 || parts.some((part) => !part.trim())) return null;
+    const numbers = parts.map(Number);
+    if (numbers.some((part) => !Number.isFinite(part) || part < 0)) return null;
+    return numbers.reduce((total, part) => total * 60 + part, 0);
   }
 
-  function showClock(seconds) {
-    const total = Math.max(0, Math.floor(seconds));
-    const h = Math.floor(total / 3600);
-    const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
-    const s = String(total % 60).padStart(2, "0");
-    return h ? `${h}:${m}:${s}` : `${m}:${s}`;
+  /**
+   * 초를 시:분:초로 적는다. `decimals` 를 주면 소수점 아래까지 적는다(예: `1:03.16`).
+   *
+   * 구간은 프레임 단위로 다뤄야 해서 소수점이 필요하지만, 남은 시간 같은 어림값에
+   * 소수점을 붙이면 눈만 어지럽다. 그래서 부르는 쪽이 자릿수를 정한다.
+   *
+   * 반올림은 쪼개기 **전에** 한 번만 한다. 나중에 하면 59.996초가 `59.100` 으로 적힌다.
+   */
+  function showClock(seconds, decimals = 0) {
+    const step = 10 ** decimals;
+    const total = Math.round(Math.max(0, Number(seconds) || 0) * step) / step;
+    const whole = Math.floor(total);
+    const h = Math.floor(whole / 3600);
+    const m = String(Math.floor((whole % 3600) / 60)).padStart(2, "0");
+    const s = String(whole % 60).padStart(2, "0");
+    const clock = h ? `${h}:${m}:${s}` : `${m}:${s}`;
+    if (decimals <= 0) return clock;
+    const frac = String(Math.round((total - whole) * step)).padStart(decimals, "0");
+    return `${clock}.${frac}`;
   }
 
   /**
@@ -2843,6 +2874,31 @@ window.__ytdlPageTeardown = () => {
 
   // 영상 위치는 사용자가 타임라인을 직접 끌 때만 옮긴다.
   // 시간 칸을 고치거나 목록을 불러오는 것만으로 재생 위치가 바뀌면 성가시다.
+  /**
+   * 제목 줄 시계를 화면 새로 고침에 맞춰 갱신한다.
+   *
+   * `timeupdate` 는 1초에 네 번쯤만 온다 — 1/100초까지 적는 칸에는 너무 성기다.
+   * 대신 값이 실제로 바뀔 때만 글자를 다시 써서, 매 프레임 DOM 을 건드리지는 않는다.
+   */
+  function runClock(on) {
+    cancelAnimationFrame(state.clockFrame || 0);
+    state.clockFrame = 0;
+    if (!on) return;
+    const tick = () => {
+      if (!state.open || !el.now || !el.now.isConnected) {
+        state.clockFrame = 0;
+        return;
+      }
+      // 고쳐 넣는 중이면 손대지 않는다. 커서가 튀고 글자가 지워진다.
+      if (document.activeElement !== el.now) {
+        const now = showClock(playedSeconds(), 2);
+        if (el.now.value !== now) el.now.value = now;
+      }
+      state.clockFrame = requestAnimationFrame(tick);
+    };
+    state.clockFrame = requestAnimationFrame(tick);
+  }
+
   function seek(seconds) {
     const video = player();
     if (video && Number.isFinite(seconds) && boundsSpan() > 0) video.currentTime = seconds;
@@ -2850,8 +2906,8 @@ window.__ytdlPageTeardown = () => {
 
   function buildPanel(floating) {
     el.inputs = {
-      start: make("input", { class: "ytdl-time", value: "0:00", dataset: { time: "start" } }),
-      end: make("input", { class: "ytdl-time", value: "0:00", dataset: { time: "end" } }),
+      start: make("input", { class: "ytdl-time", value: "0:00.00", dataset: { time: "start" } }),
+      end: make("input", { class: "ytdl-time", value: "0:00.00", dataset: { time: "end" } }),
     };
     // 편집 프로그램에서 쓰는 대괄호 표시를 그대로 쓴다(I/O 단축키도 같이 받는다).
     const markIn = make("button", {
@@ -2898,14 +2954,29 @@ window.__ytdlPageTeardown = () => {
       title: "이어받기용으로 남겨둔 조각을 지웁니다",
     });
     el.status = make("div", { class: "ytdl-status", text: "화질 목록을 불러오는 중입니다" });
+    // 제목 줄의 시계. 왼쪽은 고쳐 넣을 수 있는 칸이라 그 자리로 바로 건너뛴다.
+    el.now = make("input", {
+      class: "ytdl-now",
+      value: "0:00.00",
+      title: "지금 재생 위치 — 고쳐 넣으면 그 자리로 갑니다",
+      spellcheck: false,
+    });
     el.total = make("span", { class: "ytdl-total" });
 
     const close = make("button", { class: "ytdl-close", type: "button", title: "닫기", text: "✕" });
     close.addEventListener("click", togglePanel);
 
+    const clock = make("div", { class: "ytdl-clock" }, [
+      el.now,
+      make("span", { class: "ytdl-slash", text: "/" }),
+      el.total,
+    ]);
+    // 시계를 잡고 끌면 패널이 딸려 온다. 칸에 글자를 넣으려는 것이지 옮기려는 게 아니다.
+    clock.addEventListener("pointerdown", (event) => event.stopPropagation());
+
     const head = make("div", { class: "ytdl-head" }, [
       make("span", { class: "ytdl-title", text: "구간 받기" }),
-      el.total,
+      clock,
       close,
     ]);
     if (floating) bindPanelDrag(head);
@@ -2958,6 +3029,24 @@ window.__ytdlPageTeardown = () => {
         setRange(which === "start" ? value : state.start, which === "end" ? value : state.end);
       });
     }
+
+    // 지금 위치 칸. 값을 고쳐 넣으면 영상이 그 자리로 간다.
+    el.now.addEventListener("change", () => {
+      const value = parseClock(el.now.value);
+      const edge = bounds();
+      if (value === null || edge.end <= edge.start) {
+        el.now.value = showClock(playedSeconds(), 2);
+        return;
+      }
+      seek(Math.max(edge.start, Math.min(value, edge.end)));
+    });
+    // Enter 로 확정하면 칸에서 손을 뗀다(다시 시계가 흐르기 시작한다).
+    el.now.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") el.now.blur();
+      else if (event.key === "Escape") { el.now.value = showClock(playedSeconds(), 2); el.now.blur(); }
+    });
+    // 칸을 누르면 통째로 잡아준다. 소수점까지 지우고 다시 쓰는 게 보통이라서다.
+    el.now.addEventListener("focus", () => el.now.select());
 
     el.go.addEventListener("click", start);
     el.hold.addEventListener("click", () => {
@@ -3096,18 +3185,6 @@ window.__ytdlPageTeardown = () => {
     return document.querySelector("ytd-watch-metadata") || document.querySelector("#below");
   }
 
-  /** 띄운 패널이 설 가로 자리. 필요한 최소 너비. */
-  const FLOAT_MIN_WIDTH = 320;
-  const FLOAT_MAX_WIDTH = 430;
-  const FLOAT_GAP = 16;
-
-  /**
-   * 숏츠에서 패널을 세로 버튼 줄 오른쪽 빈자리에 세운다.
-   *
-   * 고정된 `right` 값으로 두면 안 된다 — 세로 버튼 줄이 영상 바로 옆에 붙어 있어서
-   * 창 크기에 따라 그 버튼들을 덮어버린다(재보니 실제로 덮었다).
-   * 자리가 모자라면 화면 아래에 눕힌다.
-   */
   /**
    * 제목 줄을 잡아 패널을 옮긴다.
    *
@@ -3122,7 +3199,6 @@ window.__ytdlPageTeardown = () => {
       state.panelDrag = { x: event.clientX - rect.left, y: event.clientY - rect.top };
       state.panelMoved = true;
       // 지금 보이는 그 자리에서 시작하도록 좌표를 굳힌다(가운데 맞춤을 풀어준다).
-      el.panel.classList.remove("ytdl-float-bottom");
       el.panel.style.transform = "none";
       el.panel.style.bottom = "auto";
       el.panel.style.width = `${Math.round(rect.width)}px`;
@@ -3157,16 +3233,14 @@ window.__ytdlPageTeardown = () => {
   }
 
   /**
-   * 띄운 패널이 비켜서야 할 것.
+   * 띄운 패널을 화면 아래 가운데에 세운다.
    *
-   * 숏츠는 세로 버튼 줄(그 오른쪽이 빈자리다), 일반 화면은 영상 자체다.
-   * 영상 오른쪽에는 추천 목록이 있지만 덮어도 된다 — 끌어서 옮길 수 있다.
+   * 예전에는 영상 옆 빈자리를 재서 세웠는데, 창 크기에 따라 설 자리가 오락가락했다
+   * (좁으면 아래로 눕고 넓으면 옆으로 갔다). 처음 열 때 어디에 뜰지 모르면 눈이
+   * 패널을 찾아 헤맨다. 아래 가운데는 숏츠든 일반 화면이든 늘 같은 자리다.
+   *
+   * 그 자리가 싫으면 제목 줄을 잡아 옮기면 된다 — 한 번 옮기면 그 뒤로는 건드리지 않는다.
    */
-  function floatObstacle() {
-    if (state.mode === "shorts") return buttonHost();
-    return document.querySelector("#movie_player") || document.querySelector(".html5-video-player");
-  }
-
   function placeFloatingPanel() {
     if (!el.panel || el.panel.hidden || !el.panel.classList.contains("ytdl-float")) return;
     // 사용자가 직접 옮겼으면 화면 밖으로 나가지 않게만 봐준다.
@@ -3175,17 +3249,12 @@ window.__ytdlPageTeardown = () => {
       moveFloatingPanel(rect.left, rect.top);
       return;
     }
-    const bar = floatObstacle()?.getBoundingClientRect();
-    const room = bar ? window.innerWidth - bar.right - FLOAT_GAP * 2 : 0;
-    if (bar && room >= FLOAT_MIN_WIDTH) {
-      el.panel.classList.remove("ytdl-float-bottom");
-      el.panel.style.left = `${Math.round(bar.right + FLOAT_GAP)}px`;
-      el.panel.style.width = `${Math.round(Math.min(room, FLOAT_MAX_WIDTH))}px`;
-    } else {
-      el.panel.classList.add("ytdl-float-bottom");
-      el.panel.style.left = "";
-      el.panel.style.width = "";
-    }
+    // 끌어 옮기며 굳혀둔 좌표가 남아 있을 수 있다. 지워야 가운데 맞춤이 다시 산다.
+    el.panel.style.left = "";
+    el.panel.style.top = "";
+    el.panel.style.bottom = "";
+    el.panel.style.transform = "";
+    el.panel.style.width = "";
   }
 
   // 유튜브는 화면을 통째로 다시 그리는 일이 잦다. 사라졌으면 다시 붙인다.
@@ -3202,6 +3271,7 @@ window.__ytdlPageTeardown = () => {
         state.panelMoved = false;
         state.panelDrag = null;
         watchProgress(false);
+        runClock(false);
       }
       return;
     }
@@ -3247,6 +3317,7 @@ window.__ytdlPageTeardown = () => {
         panel.hidden = !state.open;
         // 열어둔 채 다른 화면에 갔다 왔으면 재생 상태 받아오기가 꺼져 있다. 다시 켠다.
         watchProgress(state.open);
+        runClock(state.open);
         // 새로 만든 패널은 화질칸이 비어 있다. 이미 받아둔 목록이 있으면 그대로 채운다.
         fillQuality();
         render();
@@ -3261,6 +3332,7 @@ window.__ytdlPageTeardown = () => {
     el.button?.classList.toggle("ytdl-open-active", state.open);
     // 열려 있는 동안만 재생 상태를 받아온다.
     watchProgress(state.open);
+    runClock(state.open);
     // 목록은 처음 열 때만 받아온다(영상마다 미리 받아두면 낭비다).
     if (state.open && !state.formats) await loadFormats();
   }
@@ -3293,13 +3365,13 @@ window.__ytdlPageTeardown = () => {
 
   function render() {
     if (!el.panel) return;
-    el.inputs.start.value = showClock(state.start);
+    el.inputs.start.value = showClock(state.start, 2);
     // 끝까지 받는 중이면 시각 대신 그렇다고 적는다. 라이브는 끝이 계속 밀리니까.
-    el.inputs.end.value = state.toEnd ? "" : showClock(state.end);
+    el.inputs.end.value = state.toEnd ? "" : showClock(state.end, 2);
     el.inputs.end.placeholder = state.toEnd ? "끝까지" : "";
     const length = Math.max(0, state.end - state.start);
-    el.length.textContent = showClock(length);
-    el.go.disabled = state.busy || !state.formats || length < 0.5;
+    el.length.textContent = showClock(length, 2);
+    el.go.disabled = state.busy || !state.formats || length < 0.05;
     el.hold.hidden = !state.busy;
     el.halt.hidden = !state.busy;
     el.discard.hidden = state.busy || !state.hasLeftovers;
@@ -3310,7 +3382,12 @@ window.__ytdlPageTeardown = () => {
   function renderTimeline() {
     const edge = bounds();
     const span = edge.end - edge.start;
-    el.total.textContent = span > 0 ? showClock(span) : "";
+    el.total.textContent = span > 0 ? showClock(span, 2) : "";
+    // 시계는 사용자가 고쳐 넣는 중일 때만 손대지 않는다. 커서가 튀어버린다.
+    if (document.activeElement !== el.now) {
+      const now = showClock(playedSeconds(), 2);
+      if (el.now.value !== now) el.now.value = now;
+    }
     if (span <= 0) return;
     const percent = (seconds) =>
       `${(Math.max(0, Math.min(seconds - edge.start, span)) / span) * 100}%`;
@@ -3508,12 +3585,12 @@ window.__ytdlPageTeardown = () => {
       state.hasLeftovers = false;
       const took = ((Date.now() - began) / 1000).toFixed(1);
       const pads = [];
-      if (state.start - realStart >= 0.5) pads.push(`앞 ${(state.start - realStart).toFixed(1)}초`);
-      if (realEnd - state.end >= 0.5) pads.push(`뒤 ${(realEnd - state.end).toFixed(1)}초`);
-      const note = pads.length ? ` · ${pads.join("·")}가 더 붙었습니다(키프레임)` : "";
+      if (state.start - realStart >= 0.05) pads.push(`앞 ${(state.start - realStart).toFixed(2)}초`);
+      if (realEnd - state.end >= 0.05) pads.push(`뒤 ${(realEnd - state.end).toFixed(2)}초`);
+      const note = pads.length ? ` · ${pads.join("·")}가 더 붙었습니다(프레임 경계)` : "";
       setStatus(
-        `저장했습니다 · ${showClock(realStart)}~${showClock(realEnd)} ` +
-          `(${showClock(mediaSeconds)})${note} · ` +
+        `저장했습니다 · ${showClock(realStart, 2)}~${showClock(realEnd, 2)} ` +
+          `(${showClock(mediaSeconds, 2)})${note} · ` +
           `${showMb(file.size)} MB · ${took}초`,
         "ytdl-ok",
       );
@@ -3582,6 +3659,7 @@ window.__ytdlPageTeardown = () => {
     el.button?.remove();
     el.panel?.remove();
     watchProgress(false);
+    runClock(false);
   });
 
   // 재생 위치 표시가 영상을 따라가게 한다.

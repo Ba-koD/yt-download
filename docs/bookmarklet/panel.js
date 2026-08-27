@@ -3799,28 +3799,14 @@ window.__ytdlPageTeardown = () => {
       // 몫이 떨어져 403 이 나면 다른 클라이언트로 물어 새 주소를 받아 온다.
       // 같은 itag 면 어느 클라이언트에서 받아도 바이트가 같아서 받던 자리에서 이어진다.
       //
-      // 목록을 다 돌면 몫이 다시 찰 때까지 기다렸다가 처음부터 또 돈다. 기다리는 동안
-      // 남은 시간을 적어 주고, 정지를 누르면 그 자리에서 끝난다(받아둔 조각은 남는다).
-      // 지금 쓰고 있는 자리. 처음 목록을 받을 때 쓴 것이 0번이므로 거기서 시작한다.
+      // 목록을 다 돌면 거기까지다. 기다리게 하지 않는다 — 몫이 되돌아오는 데 15분을
+      // 재봐도 한 톨도 안 열렸다(45MB 영상, 첫 몫 10MB). 화면 앞에서 붙들고 있느니
+      // 받아둔 데까지 남기고 끝내는 편이 낫다. 다음에 누르면 없는 것만 받는다.
       let clientAt = 0;
-      let rounds = 0;
-      const waitForQuota = async (seconds) => {
-        for (let left = seconds; left > 0; left -= 1) {
-          await state.control?.gate(); // 정지를 눌렀으면 여기서 끝난다
-          setStatus(`유튜브가 준 몫을 다 썼습니다 · ${left}초 뒤 이어받습니다`);
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
-      };
       const renewUrl = async () => {
         clientAt += 1;
-        if (clientAt >= innertube.ROTATION.length) {
-          rounds += 1;
-          // 몫은 몇 분이면 되돌아온다(실측). 한 바퀴 돌 때마다 조금씩 더 기다린다.
-          if (rounds > 3) return null;
-          await waitForQuota(60 * rounds);
-          clientAt = 0;
-        }
         const next = innertube.ROTATION[clientAt];
+        if (!next) return null;
         setStatus(`몫이 떨어져 ${next.clientName} 로 갈아타 이어받습니다`);
         // 이 클라이언트들의 주소에는 `n` 이 붙지 않아 해독기가 필요 없다(확인했다).
         const fresh = await getFormats(state.videoId, null, null, next);
@@ -3898,7 +3884,7 @@ window.__ytdlPageTeardown = () => {
         // 403 이고, 주소를 새로 받아도 뚫리지 않는다(실측). 시간이 지나면 다시 열린다.
         // 받아둔 조각은 남아 있으니 다시 누르면 없는 것만 마저 받는다.
         setStatus(
-          "유튜브가 이 영상에 준 몫을 다 썼습니다(403) · 몇 분 뒤 다시 눌러주세요" +
+          "유튜브가 이 영상에 준 몫을 다 썼습니다(403) · 한참 뒤에 다시 눌러주세요" +
             ` · 받아둔 데까지는 남아 있어 이어서 받습니다${resumeHint}`,
           "ytdl-bad",
         );

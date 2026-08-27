@@ -1044,7 +1044,8 @@
     if (inBytes) text += ` · ${showMb(done)}/${showMb(total)} MB`;
     else if (size) {
       text += ` · ${showMb(size.got)}`;
-      if (size.estimated > 0) text += `/약 ${showMb(size.estimated)}`;
+      // 조각을 다 받으면 어림이 실측과 같아진다. 그때는 "약"을 떼고 하나만 적는다.
+      if (size.estimated > size.got) text += `/약 ${showMb(size.estimated)}`;
       text += " MB";
     } else {
       text += ` · ${showMb(meter.bytes)} MB`;

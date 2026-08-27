@@ -69,27 +69,41 @@ export async function fetchLiveSegments(format, start, end, onProgress, control,
   for (let sq = first; sq <= last; sq += 1) numbers.push(sq);
 
   // 이미 받아둔 조각은 건너뛴다. 진행률에는 처음부터 받은 것으로 잡힌다.
+  const have = numbers.filter((sq) => track.has(liveName(sq)));
   const missing = numbers.filter((sq) => !track.has(liveName(sq)));
-  let done = numbers.length - missing.length;
-  // 이번에 실제로 받은 용량과 조각 수. 조각당 평균 크기로 전체 용량을 어림하는 데 쓴다.
-  // 조각 크기는 트랙 안에서 균일해서, 몇 개만 받아보면 평균이 자리를 잡는다.
-  // 그 시점에 평균을 고정해(avg) 전체 용량 표시가 다운로드 내내 움직이지 않게 한다.
-  const SIZE_SAMPLE = 5;
+  let done = have.length;
+
+  // 전체 용량 어림. 크기를 아는 조각은 실제 값을 그대로 쓰고, 아직 모르는 조각만
+  // 지금까지의 평균으로 메운다. 그래서 받을수록 어림이 실제 크기로 수렴하고,
+  // 다 받으면 어림이 아니라 실측이 된다.
+  //
+  // 앞머리 몇 개만 보고 평균을 고정하면 안 된다. 영상 조각은 화면이 얼마나 움직이느냐에
+  // 따라 크기가 배로 오르내리고(균일한 것은 소리뿐이다), 동시에 여러 개를 받으므로
+  // 먼저 끝나는 작은 것부터 표본에 들어와 어림이 낮은 쪽으로 치우친다.
   let gotBytes = 0;
-  let fetched = 0;
-  let lockedAvg = 0;
-  onProgress?.(done, numbers.length, { bytes: 0, fetched: 0, avg: 0 });
+  let known = 0;
+  // 이어받은 조각도 디스크에서 크기를 읽어 표본에 넣는다. 이러지 않으면 받은 양이
+  // 이번에 새로 받은 것만 세어, 진행률은 100%인데 용량은 절반으로 보인다.
+  const cached = await Promise.all(have.map((sq) => track.size?.(liveName(sq))));
+  for (const size of cached) {
+    if (size > 0) {
+      gotBytes += size;
+      known += 1;
+    }
+  }
+  const sizeReport = () => ({
+    bytes: gotBytes,
+    estimated: known > 0 ? gotBytes + (gotBytes / known) * (numbers.length - known) : 0,
+  });
+  onProgress?.(done, numbers.length, sizeReport());
 
   await mapWithLimit(missing, CONCURRENCY, async (sq) => {
     const bytes = await request.bytes(`${format.url}&sq=${sq}`, {});
     await track.write(liveName(sq), bytes);
     done += 1;
     gotBytes += bytes.length;
-    fetched += 1;
-    if (!lockedAvg && fetched >= Math.min(SIZE_SAMPLE, missing.length)) {
-      lockedAvg = gotBytes / fetched;
-    }
-    onProgress?.(done, numbers.length, { bytes: gotBytes, fetched, avg: lockedAvg });
+    known += 1;
+    onProgress?.(done, numbers.length, sizeReport());
   }, control);
 
   // 앞머리(ftyp+moov)가 든 첫 조각을 찾는다. 대개 첫 번째 조각에 있다.
@@ -123,10 +137,12 @@ async function mapWithLimit(items, limit, worker, control) {
   let next = 0;
   const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (next < items.length) {
-      // 조각을 새로 집기 직전에만 멈춘다. 이미 나간 요청은 그대로 끝나게 둔다.
-      await control?.gate();
+      // 차례는 기다리기 전에 집는다. gate() 를 먼저 기다리면 그 사이에 다른 일꾼이
+      // 마지막 것을 가져가, 목록에 없는 자리(undefined)까지 집어 오게 된다.
       const index = next;
       next += 1;
+      // 조각을 새로 받기 직전에만 멈춘다. 이미 나간 요청은 그대로 끝나게 둔다.
+      await control?.gate();
       results[index] = await worker(items[index], index);
     }
   });
@@ -408,12 +424,10 @@ export async function downloadSection({
     if (!tracks.some(([, , size]) => size)) return null;
     let got = 0;
     let estimated = 0;
-    for (const [, expected, size] of tracks) {
+    for (const [, , size] of tracks) {
       if (!size) continue;
       got += size.bytes;
-      // 고정된 평균(avg)이 나온 뒤로는 그 값만 쓴다 — 전체 용량이 흔들리지 않는다.
-      const average = size.avg || (size.fetched > 0 ? size.bytes / size.fetched : 0);
-      if (average > 0) estimated += average * expected;
+      estimated += size.estimated;
     }
     return { got, estimated };
   };

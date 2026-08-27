@@ -84,6 +84,14 @@ export async function openDisk(videoId) {
       return {
         has: (name) => names.has(name),
         read: (name) => readFileIn(box, name),
+        // 조각 크기만 알아본다(내용은 안 읽는다). 이어받은 조각을 용량 어림에 넣는 데 쓴다.
+        async size(name) {
+          try {
+            return (await (await box.getFileHandle(name)).getFile()).size;
+          } catch {
+            return 0;
+          }
+        },
         async write(name, bytes) {
           await writeFileIn(box, name, bytes);
           names.add(name);
@@ -184,6 +192,7 @@ export function openMemory() {
       return {
         has: (name) => box.has(name),
         read: async (name) => box.get(name),
+        size: async (name) => box.get(name)?.length || 0,
         write: async (name, bytes) => {
           box.set(name, bytes);
         },

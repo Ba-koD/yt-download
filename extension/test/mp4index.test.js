@@ -70,17 +70,19 @@ Deno.test("전체 구간은 모든 조각을 고른다", () => {
   assertEquals(segmentsForRange(segments, 0, totalDuration).length, segments.length);
 });
 
-Deno.test("끝에 살짝만 걸치는 조각은 버린다", () => {
+Deno.test("끝에 살짝만 걸쳐도 그 조각까지 받는다", () => {
   const segments = [
     { time: 0, duration: 10, start: 0, end: 9 },
     { time: 10, duration: 10, start: 10, end: 19 },
     { time: 20, duration: 10, start: 20, end: 29 },
   ];
-  // 20.1초까지 요청하면 세 번째 조각은 0.1초만 기여한다 -> 버린다.
-  assertEquals(segmentsForRange(segments, 0, 20.1).map((s) => s.time), [0, 10]);
-  // 25초까지면 실제로 필요하므로 남긴다.
+  // 20.1초까지 요청하면 세 번째 조각은 0.1초만 기여한다. 그래도 받아야 한다 —
+  // 버리면 요청보다 0.1초 짧은 파일이 나온다(실측으로 겪은 문제다).
+  assertEquals(segmentsForRange(segments, 0, 20.1).map((s) => s.time), [0, 10, 20]);
   assertEquals(segmentsForRange(segments, 0, 25).map((s) => s.time), [0, 10, 20]);
-  // 하나뿐이면 아무리 조금 걸쳐도 남긴다.
+  // 경계에 딱 맞으면 그 뒤 조각은 필요 없다.
+  assertEquals(segmentsForRange(segments, 0, 20).map((s) => s.time), [0, 10]);
+  // 하나만 걸쳐도 남긴다.
   assertEquals(segmentsForRange(segments, 20.05, 20.1).map((s) => s.time), [20]);
 });
 

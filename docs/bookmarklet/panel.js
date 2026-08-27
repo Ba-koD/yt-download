@@ -640,25 +640,24 @@ function parseSidx(bytes, indexEnd) {
 }
 
 /**
- * [start, end] 초 구간을 담는 조각들을 고른다.
+ * [start, end] 초 구간에 걸치는 조각을 **모두** 고른다.
  *
- * 조각은 통째로 받아야 하므로 실제 결과는 요청보다 조금 넓다.
+ * 조각은 통째로 받아야 하므로 받는 양은 요청보다 넓다. 파일에 담기는 길이는 그렇지
+ * 않다 — 뒤는 샘플 단위로 잘라내고 앞은 편집 목록으로 가리기 때문이다.
  *
- * 마지막 조각이 요청 구간에 아주 조금만 걸치면 버린다. 소리 조각은 10초씩이라
- * 0.1초를 더 담자고 10초를 끌고 오면 영상보다 한참 길어진 파일이 나온다.
- * 그 0.1초를 포기하는 편이 낫다(`tailTolerance` 초까지 포기한다).
+ * 전에는 끝에 아주 조금만 걸치는 조각을 버렸다. 그때는 정확히 자를 수 없어서, 0.1초를
+ * 담자고 10초짜리 소리 조각을 끌고 오면 파일이 영상보다 한참 길어졌기 때문이다.
+ * 지금은 그 0.1초를 버리면 그냥 0.1초가 모자란 파일이 된다(실측: 요청 15.12초에
+ * 15.015초에서 끊긴 파일). 그래서 걸치면 무조건 받는다.
  */
-function segmentsForRange(segments, start, end, tailTolerance = 1) {
+function segmentsForRange(segments, start, end) {
   if (!segments.length) return [];
   const from = Math.min(start, end);
   const to = Math.max(start, end);
 
-  let picked = segments.filter(
+  const picked = segments.filter(
     (segment) => segment.time + segment.duration > from && segment.time < to,
   );
-  while (picked.length > 1 && picked[picked.length - 1].time > to - tailTolerance) {
-    picked = picked.slice(0, -1);
-  }
   // 요청 구간이 조각 사이에 끼어 아무것도 안 걸리면 가장 가까운 것 하나라도 준다.
   if (!picked.length) {
     const nearest = segments.reduce((best, segment) =>

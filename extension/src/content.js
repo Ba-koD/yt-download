@@ -508,9 +508,18 @@
     };
 
     const dropDrag = () => {
-      if (state.drag && state.drag !== "seek" && state.dropAt !== null) seek(state.dropAt);
+      const what = state.drag;
+      const at = state.dropAt;
       state.drag = null;
       state.dropAt = null;
+      if (!what) return;
+      // 끌어 정한 자리도 장에 맞춘다. 손잡이는 화면 위 한 점이라 장 사이에 떨어지는데,
+      // 그대로 두면 칸에 뜬 숫자와 실제로 받는 장이 어긋난다.
+      if (what !== "seek" && at !== null) {
+        seekToFrame(at).then(({ media }) => {
+          setRange(what === "in" ? media : state.start, what === "out" ? media : state.end);
+        });
+      }
     };
 
     el.inHandle.addEventListener("pointerdown", startDrag("in"));
@@ -820,10 +829,17 @@
     return panel;
   }
 
+  /**
+   * 지금 자리를 시작점이나 끝점으로 찍는다.
+   *
+   * `video.currentTime` 을 그대로 쓰면 안 된다. 한 장 이동은 장이 바뀔 때까지 조금씩
+   * 밀어 찾으므로, 멈춘 뒤 `currentTime` 은 장보다 몇 ms 뒤(마지막으로 민 자리)에 있다.
+   * 그걸 찍으면 시계에 뜬 값과 다른 값이 들어간다(실측: 시계는 01:49.01, 찍힌 값은 .02).
+   * `playedSeconds()` 는 화면에 뜬 장의 시각을 돌려주므로 눈에 보이는 것과 같아진다.
+   */
   function markHere(which) {
-    const video = player();
-    if (!video) return;
-    const now = video.currentTime;
+    if (!player()) return;
+    const now = playedSeconds();
     setRange(which === "start" ? now : state.start, which === "end" ? now : state.end);
   }
 

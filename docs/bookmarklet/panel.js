@@ -2566,6 +2566,8 @@ window.__ytdlPageTeardown = () => {
       current: event.data.current,
       live: event.data.live,
     };
+    // 이 값이 어느 시점의 것인지 함께 적어 둔다. 사이를 메우는 데 쓴다(playedSeconds).
+    state.progressAt = Number(player()?.currentTime);
     // 처음 알게 됐거나 길이가 달라졌을 때만 다시 그린다(매 400ms 그리면 낭비다).
     const changed = !before || before.end !== state.progress.end ||
       before.current !== state.progress.current;
@@ -2712,10 +2714,25 @@ window.__ytdlPageTeardown = () => {
     return { start: 0, end: fallback };
   }
 
-  /** 지금 재생 중인 지점. 라이브에서는 플레이어가 알려준 값이 정확하다. */
+  /**
+   * 지금 재생 중인 지점.
+   *
+   * 라이브에서는 플레이어가 알려준 값이라야 정확하다(영상 요소의 `currentTime` 은 방송
+   * 전체가 아니라 지금 받아둔 창 안의 자리를 가리킨다). 그런데 그 값은 페이지에서
+   * 0.4초에 한 번만 건너온다 — 그대로 쓰면 1/100초까지 적는 시계가 뚝뚝 끊긴다.
+   *
+   * 그래서 마지막으로 받은 값과, 그때의 `currentTime` 을 함께 기억해 두고 그 뒤로 흐른
+   * 만큼을 더한다. 0.4초마다 값이 다시 오므로 어긋나도 그때 바로잡힌다.
+   */
   function playedSeconds() {
-    if (state.progress) return state.progress.current;
-    return Number(player()?.currentTime) || 0;
+    const now = Number(player()?.currentTime);
+    if (state.progress) {
+      if (Number.isFinite(now) && Number.isFinite(state.progressAt)) {
+        return state.progress.current + (now - state.progressAt);
+      }
+      return state.progress.current;
+    }
+    return Number.isFinite(now) ? now : 0;
   }
 
   function boundsSpan() {
@@ -2912,10 +2929,20 @@ window.__ytdlPageTeardown = () => {
         state.clockFrame = 0;
         return;
       }
+      const at = playedSeconds();
       // 고쳐 넣는 중이면 손대지 않는다. 커서가 튀고 글자가 지워진다.
       if (document.activeElement !== el.now) {
-        const now = showClock(playedSeconds(), 2);
-        if (el.now.value !== now) el.now.value = now;
+        const text = showClock(at, 2);
+        if (el.now.value !== text) el.now.value = text;
+      }
+      // 타임라인의 재생 위치 표시도 같은 박자로 움직여야 따로 놀지 않는다.
+      if (el.headMark) {
+        const edge = bounds();
+        const span = edge.end - edge.start;
+        if (span > 0) {
+          const ratio = Math.max(0, Math.min(at - edge.start, span)) / span;
+          el.headMark.style.left = `${ratio * 100}%`;
+        }
       }
       state.clockFrame = requestAnimationFrame(tick);
     };
@@ -3831,6 +3858,7 @@ window.__ytdlPageTeardown = () => {
       state.hasLeftovers = false;
       // 이전 영상의 재생 위치를 새 영상에 쓰면 안 된다.
       state.progress = null;
+      state.progressAt = null;
       // 열려 있으면 새 영상 목록으로 갈아끼우고, 닫혀 있으면 열 때 받는다.
       if (state.open) loadFormats();
       else render();

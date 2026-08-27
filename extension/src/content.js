@@ -335,7 +335,11 @@
    * 만큼을 더한다. 0.4초마다 값이 다시 오므로 어긋나도 그때 바로잡힌다.
    */
   function playedSeconds() {
-    const now = Number(player()?.currentTime);
+    let now = Number(player()?.currentTime);
+    // 우리가 옮긴 뒤로 움직이지 않았다면, 화면에 뜬 장의 시각을 쓴다. 한 장 이동은
+    // 장 사이로 건너뛰어 보내므로 `currentTime` 그대로 적으면 없는 시각이 뜬다.
+    const frame = state.shownFrame;
+    if (frame && Number.isFinite(now) && Math.abs(now - frame.at) < 1e-3) now = frame.media;
     if (state.progress) {
       if (Number.isFinite(now) && Number.isFinite(state.progressAt)) {
         return state.progress.current + (now - state.progressAt);
@@ -583,7 +587,11 @@
       const done = (value) => {
         if (settled) return;
         settled = true;
-        resolve(Number.isFinite(value) ? value : seconds);
+        const at = Number.isFinite(value) ? value : seconds;
+        // 화면에 실제로 뜬 장의 시각을 적어 둔다. 시계가 이 값을 쓴다 —
+        // `currentTime` 은 우리가 요청한 자리 그대로라 프레임 한가운데일 수 있다.
+        state.shownFrame = { media: at, at: Number(video.currentTime) };
+        resolve(at);
       };
       video.requestVideoFrameCallback?.((_, info) => done(info.mediaTime));
       video.addEventListener("seeked", () => done(video.currentTime), { once: true });
@@ -601,11 +609,19 @@
   async function stepFrame(direction) {
     const video = player();
     if (!video || boundsSpan() <= 0) return;
+    // 화질 목록이 알려주는 프레임률은 정확하지 않다(29.97 을 30 으로 적어 보낸다).
+    // 그래서 한 번에 크게 뛰지 않고 조금씩 밀어 보며 장이 실제로 바뀌면 멈춘다.
+    // 크게 뛰면 두 장을 건너뛰고, 작게만 뛰면 제자리에 머문다.
     const fps = Number(qualityChoices()[0]?.fps) || 30;
-    const here = await seekToFrame(video.currentTime);
     const edge = bounds();
-    const to = here + (direction > 0 ? 1.5 : -0.5) / fps;
-    await seekToFrame(Math.max(edge.start, Math.min(to, edge.end)));
+    const here = await seekToFrame(video.currentTime);
+    for (let step = 1; step <= 6; step += 1) {
+      const to = here + (direction * step * 0.4) / fps;
+      const landed = await seekToFrame(Math.max(edge.start, Math.min(to, edge.end)));
+      if (Math.abs(landed - here) > 1e-4) return;
+      // 구간 끝에 닿아 더 갈 데가 없으면 그만둔다.
+      if (to <= edge.start || to >= edge.end) return;
+    }
   }
 
   function buildPanel(floating) {

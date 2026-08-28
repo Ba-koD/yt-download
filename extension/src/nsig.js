@@ -36,8 +36,22 @@ export async function solveUrls(urls, { runtime, ask, onStep }) {
   onStep?.("주소를 푸는 중입니다");
   const { lib, core } = await loadSolver(runtime);
   const answered = await ask({ lib, core, challenges });
-  const answers = answered?.answers;
-  if (!answers) throw new Error("n 을 풀지 못했습니다");
+  const answers = { ...(answered?.answers || {}) };
+  if (!answered?.answers) throw new Error("n 을 풀지 못했습니다");
+
+  // 답이 빠진 것이 있으면 한 번 더 물어본다.
+  //
+  // 왜 이렇게까지 하나 — 안 풀린 주소를 그대로 돌려주면 **받을 때가 되어서야 403** 이 난다.
+  // 그 403 은 60초 벽과 생김새가 같아서 엉뚱한 데를 파게 된다(실제로 한 번 그랬다).
+  // 여기서 확인하고 못 풀면 못 풀었다고 말하는 편이 낫다.
+  let missing = challenges.filter((raw) => !answers[raw]);
+  if (missing.length) {
+    onStep?.("주소를 다시 푸는 중입니다");
+    const again = await ask({ lib, core, challenges: missing });
+    Object.assign(answers, again?.answers || {});
+    missing = challenges.filter((raw) => !answers[raw]);
+  }
+  if (missing.length) throw new Error(`n 을 풀지 못했습니다 (${missing.length}개 남음)`);
 
   return urls.map((url) => {
     const raw = challengeOf(url);

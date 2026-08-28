@@ -57,6 +57,8 @@ var progressTimer = null;
 
 // 플레이어(base.js)는 2~3MB 다. 한 번만 받아둔다.
 var playerSource = null;
+// 받아오는 중인 약속. 동시에 여러 번 불려도 한 번만 받게 한다.
+var playerSourceLoading = null;
 
 /**
  * 미디어 주소에 붙은 `n` 을 푼다.
@@ -121,9 +123,20 @@ async function mintPoToken(bind) {
 
 async function solveChallenges({ lib, core, challenges }) {
   if (!playerSource) {
-    const jsUrl = window.ytcfg?.get?.("PLAYER_JS_URL");
-    if (!jsUrl) throw new Error("플레이어 주소를 찾지 못했습니다");
-    playerSource = await (await fetch(jsUrl, { credentials: "same-origin" })).text();
+    // 여러 번 겹쳐 불려도 2~3MB 짜리 플레이어를 한 번만 받는다.
+    // 받아오는 중에 또 불리면 같은 약속을 함께 기다린다.
+    if (!playerSourceLoading) {
+      playerSourceLoading = (async () => {
+        const jsUrl = window.ytcfg?.get?.("PLAYER_JS_URL");
+        if (!jsUrl) throw new Error("플레이어 주소를 찾지 못했습니다");
+        return (await fetch(jsUrl, { credentials: "same-origin" })).text();
+      })();
+    }
+    try {
+      playerSource = await playerSourceLoading;
+    } finally {
+      playerSourceLoading = null;
+    }
   }
 
   const frame = document.createElement("iframe");

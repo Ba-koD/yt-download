@@ -46,7 +46,8 @@
     }
   ],
   "permissions": [
-    "declarativeNetRequestWithHostAccess"
+    "declarativeNetRequestWithHostAccess",
+    "downloads"
   ],
   "host_permissions": [
     "https://www.youtube.com/*",

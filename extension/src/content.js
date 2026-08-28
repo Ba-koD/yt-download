@@ -145,6 +145,8 @@
     control: null,
     // 받다 만 조각이 디스크에 남아 있는지. 버리기 버튼을 보일지 정한다.
     hasLeftovers: false,
+    // 방금 저장을 마쳤는지. "폴더 열기" 버튼을 보일지 정한다.
+    saved: false,
     // 받을 내용(영상+소리 / 영상만 / 소리만). 마지막 선택을 기억한다.
     media: savedMediaMode(),
     // 끝점을 "끝까지"로 둔 상태. 라이브면 방송이 진행되는 만큼 따라간다.
@@ -693,6 +695,11 @@
     // 받는 동안에만 보이는 버튼들.
     el.hold = make("button", { class: "ytdl-hold", type: "button", text: "일시정지", hidden: true });
     el.halt = make("button", { class: "ytdl-halt", type: "button", text: "정지", hidden: true });
+    // 저장이 끝난 뒤에만 보이는 버튼. 확장에서만 쓸 수 있다(웹 페이지는 폴더를 못 연다).
+    el.reveal = make("button", {
+      class: "ytdl-reveal", type: "button", text: "폴더 열기", hidden: true,
+      title: "저장된 파일이 있는 폴더를 엽니다",
+    });
     // 받다 만 조각이 남아 있을 때만 보이는 버튼.
     el.discard = make("button", {
       class: "ytdl-discard", type: "button", text: "받던 조각 버리기", hidden: true,
@@ -757,6 +764,7 @@
           el.media,
           el.quality,
           el.go,
+          el.reveal,
           el.hold,
           el.halt,
           el.discard,
@@ -822,10 +830,15 @@
       render();
     });
     el.halt.addEventListener("click", () => state.control?.stop());
+    el.reveal.addEventListener("click", () => {
+      // 배경 일꾼만 chrome.downloads 를 부를 수 있다.
+      runtime?.sendMessage({ type: "reveal" }, () => void chrome.runtime.lastError);
+    });
     el.discard.addEventListener("click", async () => {
       if (!state.videoId || state.busy) return;
       await store.discard(state.videoId);
       state.hasLeftovers = false;
+      state.saved = false;
       setStatus("받아둔 조각을 지웠습니다");
       render();
     });
@@ -1148,6 +1161,7 @@
     el.hold.hidden = !state.busy;
     el.halt.hidden = !state.busy;
     el.discard.hidden = state.busy || !state.hasLeftovers;
+    el.reveal.hidden = state.busy || !state.saved || !runtime;
     el.hold.textContent = state.control?.paused ? "이어받기" : "일시정지";
     renderTimeline();
   }
@@ -1203,6 +1217,7 @@
     if (!videoId) return;
     state.videoId = videoId;
     state.formats = null;
+    state.saved = false;
     el.quality.replaceChildren(make("option", { text: "불러오는 중…" }));
     setStatus("화질 목록을 불러오는 중입니다");
 
@@ -1306,6 +1321,7 @@
     if (!chosenFormat) return;
 
     state.busy = true;
+    state.saved = false;
     state.control = createControl();
     render();
     const began = Date.now();
@@ -1378,9 +1394,30 @@
         `[${quality}] ${safeFileName(state.formats.title)} ` +
           `[${clockLabel(realStart)}~${clockLabel(realEnd)}]${marker}.${ext}`,
       );
-      // 저장까지 됐으면 조각은 더 필요 없다. 지워서 디스크를 돌려준다.
-      media.clearChunks().catch(() => {});
-      state.hasLeftovers = false;
+      // 조각을 언제 지울지.
+      //
+      // 예전에는 저장 버튼을 누르자마자 지웠다. 그런데 `<a download>` 는 저장을 **시작**만
+      // 시킬 뿐이라, 사용자가 저장 대화상자에서 취소해도 우리는 모른 채 지워버렸다.
+      // 그러면 다시 누를 때 통째로 받아야 한다 — 다 받아놓고도 말이다.
+      //
+      // 확장에서는 배경 일꾼이 내려받기 상태를 볼 수 있으니 **정말 끝났을 때만** 지운다.
+      // 북마클릿은 볼 길이 없어 그냥 남겨둔다(오래된 것은 store.cleanup 이 걷어간다).
+      state.saved = true;
+      if (runtime) {
+        runtime.sendMessage({ type: "download-state" }, (answer) => {
+          void chrome.runtime.lastError;
+          if (answer?.state === "complete") {
+            media.clearChunks().catch(() => {});
+            state.hasLeftovers = false;
+          } else {
+            // 취소했거나 알 수 없다. 조각을 남겨 다시 누르면 곧바로 나오게 한다.
+            state.hasLeftovers = true;
+          }
+          render();
+        });
+      } else {
+        state.hasLeftovers = true;
+      }
       const took = ((Date.now() - began) / 1000).toFixed(1);
       const pads = [];
       if (state.start - realStart >= 0.05) pads.push(`앞 ${(state.start - realStart).toFixed(2)}초`);

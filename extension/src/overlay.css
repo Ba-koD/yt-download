@@ -572,6 +572,7 @@ html[dark] .ytdl-go:disabled {
 /* 받는 동안에만 나타나는 버튼들. 받기 버튼보다 눈에 덜 띄게 둔다. */
 .ytdl-hold,
 .ytdl-halt,
+.ytdl-reveal,
 .ytdl-discard {
   border: 1px solid var(--ytdl-line, rgba(255, 255, 255, 0.2));
   background: transparent;
@@ -586,6 +587,7 @@ html[dark] .ytdl-go:disabled {
 
 .ytdl-hold:hover,
 .ytdl-halt:hover,
+.ytdl-reveal:hover,
 .ytdl-discard:hover {
   background: rgba(127, 127, 127, 0.15);
 }
@@ -612,6 +614,7 @@ html[dark] .ytdl-go:disabled {
   .ytdl-go,
   .ytdl-hold,
   .ytdl-halt,
+  .ytdl-reveal,
   .ytdl-discard {
     flex: 1 1 auto;
     margin-left: 0;

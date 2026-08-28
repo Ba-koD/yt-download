@@ -18,13 +18,63 @@
 // (예전에는 "관리자가 폴더를 갈아 끼우면 스스로 다시 켜기" 도 여기서 했다. 관리자를
 //  없애면서 함께 지웠다 — 확장은 이제 릴리스에서 직접 받아 손으로 얹는다.)
 
+// 우리가 시작시킨 내려받기를 기억해 둔다.
+//
+// 왜 필요한가 — 페이지는 `<a download>` 를 눌러 저장을 시작할 뿐, 사용자가 저장을
+// 마쳤는지 취소했는지 알 길이 없다. 그걸 모르면 "저장됐으니 조각을 지우자"고 판단할 수
+// 없다(취소했는데 지우면 다시 통째로 받아야 한다). 배경 일꾼은 알 수 있다.
+//
+// 곁들여 `chrome.downloads.show` 로 저장된 자리를 열어줄 수도 있다.
+const lastDownload = { id: null, state: null };
+
+if (chrome.downloads?.onCreated) {
+  chrome.downloads.onCreated.addListener((item) => {
+    lastDownload.id = item.id;
+    lastDownload.state = item.state || "in_progress";
+  });
+  chrome.downloads.onChanged.addListener((delta) => {
+    if (delta.id !== lastDownload.id) return;
+    if (delta.state?.current) lastDownload.state = delta.state.current;
+  });
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "download-state") {
+    // 아직 진행 중이면 잠깐 기다렸다 다시 살핀다. 저장 대화상자를 띄우는 설정이면
+    // 사용자가 자리를 고를 때까지 in_progress 로 머문다.
+    watchDownload(sendResponse);
+    return true;
+  }
+  if (message?.type === "reveal") {
+    try {
+      if (lastDownload.id != null) chrome.downloads.show(lastDownload.id);
+      else chrome.downloads.showDefaultFolder();
+      sendResponse({ ok: true });
+    } catch (error) {
+      sendResponse({ ok: false, error: String(error?.message || error) });
+    }
+    return true;
+  }
   if (message?.type !== "bytes") return false;
   fetchBytes(message)
     .then(sendResponse)
     .catch((error) => sendResponse({ ok: false, error: error.message }));
   return true; // 비동기로 답한다
 });
+
+/** 내려받기가 끝나거나 취소될 때까지 지켜본 뒤 알린다(최대 3분). */
+function watchDownload(sendResponse) {
+  const deadline = Date.now() + 180_000;
+  const look = () => {
+    const state = lastDownload.state;
+    if (state === "complete" || state === "interrupted" || Date.now() > deadline) {
+      sendResponse({ ok: true, state: state || "unknown", id: lastDownload.id });
+      return;
+    }
+    setTimeout(look, 400);
+  };
+  look();
+}
 
 async function fetchBytes({ url, headers }) {
   const response = await fetch(url, { headers, credentials: "omit" });

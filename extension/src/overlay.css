@@ -628,7 +628,7 @@ html[dark] .ytdl-go:disabled {
 .ytdl-side {
   position: fixed;
   width: 240px;
-  max-height: 60vh;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;

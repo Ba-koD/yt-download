@@ -1089,20 +1089,28 @@
       if (!side || side.hidden) return;
       side.style.visibility = "visible";
       const width = side.offsetWidth || 240;
-      const height = side.offsetHeight || 0;
-      let left =
-        prefer === "right"
-          ? box.right + gap
-          : box.left - width - gap;
-      let top = box.top;
-      const 넘침 = prefer === "right" ? left + width > window.innerWidth - 8 : left < 8;
-      if (넘침) {
-        // 옆이 좁다. 패널 아래에 붙인다(오른쪽 것은 오른쪽 끝, 왼쪽 것은 왼쪽 끝에 맞춘다).
-        left = prefer === "right" ? box.right - width : box.left;
-        top = box.bottom + gap;
+      const 옆자리 = prefer === "right" ? box.right + gap : box.left - width - gap;
+      const 옆이좁다 = prefer === "right" ? 옆자리 + width > window.innerWidth - 8 : 옆자리 < 8;
+
+      if (!옆이좁다) {
+        side.style.maxHeight = `${Math.round(Math.max(140, window.innerHeight - box.top - 16))}px`;
+        side.style.left = `${Math.round(옆자리)}px`;
+        side.style.top = `${Math.round(Math.max(8, box.top))}px`;
+        return;
       }
+
+      // 옆에 자리가 없다. 패널 위나 아래에 붙인다 — **패널을 덮지 않도록** 남는 만큼만 쓴다.
+      // (덮어버리면 받기 버튼이 가려져 아무것도 못 누른다. 실제로 그랬다.)
+      const 아래여유 = window.innerHeight - box.bottom - gap - 8;
+      const 위여유 = box.top - gap - 8;
+      const 아래로 = 아래여유 >= 140 || 아래여유 >= 위여유;
+      const 여유 = Math.max(120, 아래로 ? 아래여유 : 위여유);
+      side.style.maxHeight = `${Math.round(여유)}px`;
+      const height = Math.min(side.offsetHeight || 0, 여유);
+      const left = prefer === "right" ? box.right - width : box.left;
+      const top = 아래로 ? box.bottom + gap : box.top - gap - height;
       side.style.left = `${Math.round(Math.max(8, Math.min(left, window.innerWidth - width - 8)))}px`;
-      side.style.top = `${Math.round(Math.max(8, Math.min(top, window.innerHeight - Math.min(height, 200) - 8)))}px`;
+      side.style.top = `${Math.round(Math.max(8, top))}px`;
     };
     put(el.clips, "right");
     put(el.leftovers, "left");

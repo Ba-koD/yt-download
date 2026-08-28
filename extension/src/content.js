@@ -123,6 +123,9 @@
     // 라이브 조각은 서버가 일시적으로 503 을 주는 일이 흔해서, 어느 통로든
     // 일시적인 실패는 잠깐 쉬었다 몇 번 더 받아 본다.
     bytes: net.withMeter(net.withRetry(net.withAppRedirect(media)), meterAdd),
+    // SABR 은 POST 다. 위 껍데기들(재시도·alr 안내)은 GET 으로 범위를 받는 길에 맞춰져
+    // 있어 여기에는 씌우지 않는다. 확장에서는 페이지 다리를, 북마클릿에서는 그냥 부른다.
+    post: runtime ? viaPage.post : direct.post,
   });
 
   const state = {

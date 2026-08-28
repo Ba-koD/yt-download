@@ -850,3 +850,83 @@ html[dark] .ytdl-side {
     min-width: 0;
   }
 }
+
+/* ── 받기 줄의 묶음 ──────────────────────────────────────────
+   구간 / 내용·화질 / 동작 셋으로 나눠 읽는다. 묶음 사이를 넓게 벌려 경계를 만든다. */
+.ytdl-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* 동작 묶음은 오른쪽 끝으로 민다. 주 동작이 늘 같은 자리에 있어야 손이 기억한다. */
+.ytdl-actions {
+  margin-left: auto;
+}
+
+/* 지금 구간을 목록에 담는 단추. 구간 칸에 딸린 것이라 작게 붙인다. */
+.ytdl-plus {
+  border: 1px dashed var(--ytdl-line, rgba(127, 127, 127, 0.5));
+  background: transparent;
+  color: inherit;
+  border-radius: 16px;
+  height: 30px;
+  padding: 0 10px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+.ytdl-plus:hover:not(:disabled) {
+  background: rgba(127, 127, 127, 0.15);
+  opacity: 1;
+}
+
+.ytdl-plus:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 머리줄의 창 여닫이. 제목 옆에 작게 둔다. */
+.ytdl-head-tools {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.ytdl-toggle {
+  border: 1px solid var(--ytdl-line, rgba(127, 127, 127, 0.4));
+  background: transparent;
+  color: inherit;
+  border-radius: 14px;
+  height: 26px;
+  padding: 0 10px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
+.ytdl-toggle:hover {
+  opacity: 1;
+  background: rgba(127, 127, 127, 0.15);
+}
+
+/* 딸림창 머리는 잡아 끄는 자리다. 그렇게 보이게 한다. */
+.ytdl-side-head {
+  cursor: grab;
+  user-select: none;
+}
+
+.ytdl-side-head:active {
+  cursor: grabbing;
+}
+
+/* 사람이 옮겨 놓은 창. 패널을 따라다니지 않는다는 표시로 테두리를 살짝 세운다. */
+.ytdl-side-free {
+  border-color: currentColor;
+}

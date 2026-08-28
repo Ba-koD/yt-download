@@ -711,17 +711,18 @@
     // 받는 동안에만 보이는 버튼들.
     el.hold = make("button", { class: "ytdl-hold", type: "button", text: "일시정지", hidden: true });
     el.halt = make("button", { class: "ytdl-halt", type: "button", text: "정지", hidden: true });
+    // 고른 구간 바로 옆에 둔다. 이 단추는 "지금 이 구간"에 대한 것이라 거기 있어야 읽힌다.
     el.addClip = make("button", {
-      class: "ytdl-add", type: "button", text: "구간 추가",
+      class: "ytdl-plus", type: "button", text: "+ 담기",
       title: "지금 고른 구간을 목록에 담습니다",
     });
     // 딸림창 여닫이. 담긴 것이 있을 때만 보인다.
-    el.clipsToggle = make("button", { class: "ytdl-add ytdl-toggle", type: "button", text: "구간 목록", hidden: true });
+    el.clipsToggle = make("button", { class: "ytdl-toggle", type: "button", text: "구간 목록", hidden: true });
     el.clipsToggle.addEventListener("click", () => {
       state.clipsShut = !state.clipsShut;
       render();
     });
-    el.leftoversToggle = make("button", { class: "ytdl-add ytdl-toggle", type: "button", text: "남은 조각", hidden: true });
+    el.leftoversToggle = make("button", { class: "ytdl-toggle", type: "button", text: "남은 조각", hidden: true });
     el.leftoversToggle.addEventListener("click", () => {
       state.leftoversShut = !state.leftoversShut;
       if (state.leftoversShut) render();
@@ -772,18 +773,20 @@
     // 시계를 잡고 끌면 패널이 딸려 온다. 칸에 글자를 넣으려는 것이지 옮기려는 게 아니다.
     clock.addEventListener("pointerdown", (event) => event.stopPropagation());
 
+    // 여닫이는 창 조작이라 머리줄에 둔다. 받기 줄에 섞어 두면 주 동작(구간 받기)과 경쟁한다.
     const head = make("div", { class: "ytdl-head" }, [
       make("span", { class: "ytdl-title", text: "구간 받기" }),
       clock,
+      make("span", { class: "ytdl-head-tools" }, [el.clipsToggle, el.leftoversToggle]),
       close,
     ]);
     if (floating) bindPanelDrag(head);
 
     // 딸림창 둘. **패널과 별개의 창**이다(문서 본문에 따로 붙는다).
     //
-    // 패널 안에 두면 패널의 스크롤·최대 높이에 갇혀 잘리고, 좁은 창에서는 안쪽으로
-    // 접혀 버린다. 그래서 따로 띄우고 `placeSides()` 가 패널 옆자리를 계산해 붙여 준다
-    // — 끌든 스크롤하든 창을 줄이든 늘 패널을 따라다닌다.
+    // 패널 안에 두면 패널의 스크롤·최대 높이에 갇혀 잘리고, 좁은 창에서는 안쪽으로 접혀
+    // 버린다. 그래서 따로 띄운다. 손대기 전에는 `placeSides()` 가 패널 옆자리에 붙여 주고,
+    // 머리를 잡아 끌면 그때부터 제자리를 지킨다(패널을 따라다니지 않는다).
     el.clipList = make("div", { class: "ytdl-clip-list" });
     el.clipSaveEach = make("button", { class: "ytdl-clip-btn", type: "button", text: "따로 저장" });
     el.clipSaveJoin = make("button", { class: "ytdl-clip-btn", type: "button", text: "이어붙여 저장" });
@@ -829,31 +832,29 @@
       head,
       make("div", { class: "ytdl-body" }, [
         buildTimeline(),
+        // 세 묶음으로 나눠 읽는다 — 어디를(구간), 무엇으로(내용·화질), 어떻게 할지(받기).
         make("div", { class: "ytdl-row" }, [
-          toStart,
-          markIn,
-          el.inputs.start,
-          make("span", { class: "ytdl-sep", text: "~" }),
-          el.inputs.end,
-          markOut,
-          toEnd,
-          el.length,
-          el.media,
-          el.quality,
-          el.addClip,
-          el.clipsToggle,
-          el.leftoversToggle,
-          el.go,
-          el.reveal,
-          el.hold,
-          el.halt,
-          el.discard,
+          make("span", { class: "ytdl-group" }, [
+            toStart,
+            markIn,
+            el.inputs.start,
+            make("span", { class: "ytdl-sep", text: "~" }),
+            el.inputs.end,
+            markOut,
+            toEnd,
+            el.length,
+            el.addClip,
+          ]),
+          make("span", { class: "ytdl-group" }, [el.media, el.quality]),
+          make("span", { class: "ytdl-group ytdl-actions" }, [el.go, el.reveal, el.hold, el.halt]),
         ]),
         el.status,
       ]),
     ]);
     el.panel = panel;
     document.body.append(el.leftovers, el.clips);
+    bindSideDrag(el.clips, "clips");
+    bindSideDrag(el.leftovers, "leftovers");
 
     for (const button of [markIn, markOut]) {
       button.addEventListener("click", () => markHere(button.dataset.mark));
@@ -1130,6 +1131,51 @@
    *
    * 옆에 자리가 모자라면 패널 아래로 내린다. 화면 밖으로 나가지 않게 가둔다.
    */
+  /**
+   * 딸림창을 따로 끌 수 있게 한다.
+   *
+   * 한 번이라도 옮기면 그때부터 **패널을 따라다니지 않는다**. 옆에 붙여 두는 것이 기본이지만
+   * 화면을 어떻게 쓸지는 사람마다 다르다 — 옮겨 놓은 자리를 우리가 도로 끌고 가면 안 된다.
+   * 머리줄을 두 번 누르면 다시 패널 옆으로 붙는다.
+   */
+  function bindSideDrag(side, key) {
+    const head = side.querySelector(".ytdl-side-head");
+    if (!head) return;
+    let grab = null;
+    head.addEventListener("pointerdown", (event) => {
+      if (event.target.closest("button")) return; // 접기 단추는 끌기가 아니다
+      const box = side.getBoundingClientRect();
+      grab = { x: event.clientX - box.left, y: event.clientY - box.top };
+      state[`${key}Free`] = true;
+      side.classList.add("ytdl-side-free");
+      try {
+        head.setPointerCapture(event.pointerId);
+      } catch {
+        // 못 잡아도 끌리기는 한다
+      }
+      event.preventDefault();
+    });
+    head.addEventListener("pointermove", (event) => {
+      if (!grab) return;
+      const width = side.offsetWidth;
+      const height = side.offsetHeight;
+      const 가두기 = (value, high) => Math.max(8, Math.min(value, Math.max(8, high)));
+      side.style.left = `${Math.round(가두기(event.clientX - grab.x, window.innerWidth - width - 8))}px`;
+      side.style.top = `${Math.round(가두기(event.clientY - grab.y, window.innerHeight - height - 8))}px`;
+    });
+    const drop = () => {
+      grab = null;
+    };
+    head.addEventListener("pointerup", drop);
+    head.addEventListener("pointercancel", drop);
+    // 두 번 누르면 다시 패널 옆으로.
+    head.addEventListener("dblclick", () => {
+      state[`${key}Free`] = false;
+      side.classList.remove("ytdl-side-free");
+      placeSides();
+    });
+  }
+
   function placeSides() {
     if (!el.panel || el.panel.hidden) {
       if (el.clips) el.clips.style.visibility = "hidden";
@@ -1164,6 +1210,15 @@
       if (!side) continue;
       if (side.hidden) {
         side.style.visibility = "hidden";
+        continue;
+      }
+      // 사람이 옮겨 놓은 창은 그 자리에 둔다. 화면 밖으로만 안 나가게 지켜본다.
+      if (state[`${side === el.clips ? "clips" : "leftovers"}Free`]) {
+        side.style.visibility = "visible";
+        const box2 = side.getBoundingClientRect();
+        const 가두기 = (value, high) => Math.max(8, Math.min(value, Math.max(8, high)));
+        side.style.left = `${Math.round(가두기(box2.left, window.innerWidth - box2.width - 8))}px`;
+        side.style.top = `${Math.round(가두기(box2.top, window.innerHeight - Math.min(box2.height, 160) - 8))}px`;
         continue;
       }
       if (자리있음) 옆에(side, where);
@@ -1348,7 +1403,6 @@
     el.go.disabled = state.busy || !state.formats || length < 0.05;
     el.hold.hidden = !state.busy;
     el.halt.hidden = !state.busy;
-    el.discard.hidden = state.busy || !state.hasLeftovers;
     el.reveal.hidden = state.busy || !state.saved || !runtime;
     el.hold.textContent = state.control?.paused ? "이어받기" : "일시정지";
     el.addClip.disabled = state.busy || state.end - state.start < 0.05;

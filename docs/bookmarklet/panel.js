@@ -4499,7 +4499,7 @@ window.__ytdlPageTeardown = () => {
       // 지금 보이는 그 자리에서 시작하도록 좌표를 굳힌다(가운데 맞춤을 풀어준다).
       el.panel.style.transform = "none";
       el.panel.style.bottom = "auto";
-      el.panel.style.width = `${Math.round(rect.width)}px`;
+      el.panel.style.width = `${Math.round(rect.width)}px`; // 놓을 때 푼다(drop)
       moveFloatingPanel(rect.left, rect.top);
       try {
         head.setPointerCapture(event.pointerId);
@@ -4516,9 +4516,19 @@ window.__ytdlPageTeardown = () => {
 
     const drop = () => {
       state.panelDrag = null;
+      // 끄는 동안만 너비를 굳혀 뒀다. 놓으면 푼다 —
+      // 그래야 창 크기가 같으면 패널 크기도 늘 같다(폭은 사람이 정하는 값이 아니다).
+      el.panel.style.width = "";
     };
     head.addEventListener("pointerup", drop);
     head.addEventListener("pointercancel", drop);
+
+    // 머리줄을 두 번 누르면 처음 자리로 돌아간다.
+    head.addEventListener("dblclick", (event) => {
+      if (event.target.closest("button, input, select, a")) return;
+      state.panelMoved = false;
+      placeFloatingPanel();
+    });
   }
 
   /** 화면 밖으로 나가지 않게 잡아두고 옮긴다. */
@@ -4658,8 +4668,10 @@ window.__ytdlPageTeardown = () => {
    */
   function placeFloatingPanel() {
     if (!el.panel || el.panel.hidden || !el.panel.classList.contains("ytdl-float")) return;
-    // 사용자가 직접 옮겼으면 화면 밖으로 나가지 않게만 봐준다.
+    // 사용자가 직접 옮겼으면 자리만 지켜주고, 화면 밖으로 나가지 않게 봐준다.
+    // **너비는 언제나 되돌린다** — 자리는 사람이 정하는 것이지만 크기는 화면이 정한다.
     if (state.panelMoved) {
+      el.panel.style.width = "";
       const rect = el.panel.getBoundingClientRect();
       moveFloatingPanel(rect.left, rect.top);
       return;

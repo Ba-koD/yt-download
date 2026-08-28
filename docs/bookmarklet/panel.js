@@ -5075,12 +5075,50 @@ window.__ytdlPageTeardown = () => {
         const again = make("button", { class: "ytdl-clip-btn ytdl-clip-save", type: "button", text: "저장" });
         again.addEventListener("click", async (event) => {
           event.stopPropagation();
+          const 이름 = done.name || `${item.videoId} [받아둔 구간].mp4`;
+
+          // 저장 자리를 직접 고르게 한다.
+          //
+          // `<a download>` 는 저장을 시작만 시킬 뿐 끝났는지 취소했는지 알려주지 않는다.
+          // 이 길은 알려준다 — 취소하면 AbortError 가 온다. 그래서 목록에 "저장함 / 저장
+          // 안 함"을 적어줄 수 있다. **고르기를 먼저 부른다** — 파일을 읽고 나서 부르면
+          // 사용자가 누른 순간이 지나 브라우저가 거절한다.
+          let 자리 = null;
+          if (window.showSaveFilePicker) {
+            try {
+              자리 = await window.showSaveFilePicker({
+                suggestedName: 이름,
+                types: [{ description: "동영상", accept: { "video/mp4": [".mp4", ".m4a"] } }],
+              });
+            } catch (error) {
+              if (error?.name === "AbortError") {
+                markSaved(item.videoId, done.key, false);
+                setStatus("저장을 취소했습니다");
+                render();
+                return;
+              }
+              자리 = null; // 이 길이 막히면 아래 예전 방식으로 간다
+            }
+          }
+
           const file = await store.readOutput(item.videoId, done.key).catch(() => null);
           if (!file) {
             setStatus("저장해 둔 파일을 찾지 못했습니다");
             return;
           }
-          const 이름 = done.name || `${item.videoId} [받아둔 구간].mp4`;
+          if (자리) {
+            try {
+              const writable = await 자리.createWritable();
+              await file.stream().pipeTo(writable);
+              markSaved(item.videoId, done.key, true);
+              setStatus(`저장했습니다 · ${showMb(file.size)} MB`, "ytdl-ok");
+              render();
+              return;
+            } catch (error) {
+              setStatus(`저장하지 못했습니다: ${String(error?.message || error).slice(0, 60)}`);
+              return;
+            }
+          }
           offerLink(save(file, 이름), `받아둔 파일을 내보냈습니다 · ${showMb(file.size)} MB`);
         });
         const drop = make("button", { class: "ytdl-clip-del", type: "button", text: "✕", title: "이 파일을 지웁니다" });

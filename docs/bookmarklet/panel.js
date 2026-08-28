@@ -4211,7 +4211,9 @@ window.__ytdlPageTeardown = () => {
       const clip = { id: (state.clipSeq = (state.clipSeq || 0) + 1),
                      start: state.start, end: state.end, picked: true };
       state.clips.push(clip);
-      state.activeClip = clip.id;
+      // 담은 뒤에는 **편집 대상을 놓는다.** 그대로 붙들고 있으면 다음 구간을 잡으려고
+      // 시각을 바꿀 때 방금 담은 구간이 덮어써진다. 고치고 싶으면 목록에서 누르면 된다.
+      state.activeClip = null;
       render();
     });
     el.clipAll.addEventListener("click", () => {

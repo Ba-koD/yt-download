@@ -156,6 +156,8 @@
     // 딸림창을 접어 뒀는지. 담긴 것이 있어도 접혀 있으면 안 보인다.
     clipsShut: false,
     leftoversShut: false,
+    // 남은 조각을 이 영상 것만 볼지, 이 브라우저에 쌓인 것을 전부 볼지.
+    leftoversAll: false,
     // 받을 내용(영상+소리 / 영상만 / 소리만). 마지막 선택을 기억한다.
     media: savedMediaMode(),
     // 끝점을 "끝까지"로 둔 상태. 라이브면 방송이 진행되는 만큼 따라간다.
@@ -800,6 +802,11 @@
     ]);
 
     el.leftoverList = make("div", { class: "ytdl-leftover-list" });
+    el.leftoverScope = make("button", { class: "ytdl-clip-btn", type: "button", text: "전체 보기" });
+    el.leftoverScope.addEventListener("click", () => {
+      state.leftoversAll = !state.leftoversAll;
+      render();
+    });
     el.leftoverAll = make("button", { class: "ytdl-clip-btn", type: "button", text: "모두 버리기" });
     const shutLeft = make("button", { class: "ytdl-side-shut", type: "button", text: "✕", title: "접기" });
     shutLeft.addEventListener("click", () => {
@@ -812,7 +819,7 @@
         shutLeft,
       ]),
       el.leftoverList,
-      make("div", { class: "ytdl-side-foot" }, [el.leftoverAll]),
+      make("div", { class: "ytdl-side-foot" }, [el.leftoverScope, el.leftoverAll]),
     ]);
 
     // 숏츠에는 영상 아래에 끼워 넣을 자리가 없다. 화면 위에 띄운다.
@@ -923,8 +930,12 @@
     el.clipSaveEach.addEventListener("click", () => saveClips(false));
     el.clipSaveJoin.addEventListener("click", () => saveClips(true));
     el.leftoverAll.addEventListener("click", async () => {
-      for (const item of state.leftovers) await store.discard(item.videoId);
-      if (state.videoId) state.hasLeftovers = false;
+      // 지금 보이는 것만 버린다. "이 영상만" 보기에서 다른 영상 것까지 지우면 놀란다.
+      const 대상 = state.leftoversAll
+        ? state.leftovers
+        : state.leftovers.filter((item) => item.videoId === state.videoId);
+      for (const item of 대상) await store.discard(item.videoId);
+      if (대상.some((item) => item.videoId === state.videoId)) state.hasLeftovers = false;
       await refreshLeftovers();
     });
     el.reveal.addEventListener("click", () => {
@@ -1427,12 +1438,21 @@
   /** 왼쪽 남은 조각 목록. 이 브라우저에 쌓인 것을 영상별로 보여준다. */
   function renderLeftovers() {
     if (!el.leftovers) return;
-    el.leftovers.hidden = !state.leftovers.length || state.leftoversShut;
-    el.leftoversToggle.hidden = !state.leftovers.length;
-    el.leftoversToggle.textContent = `남은 조각 ${state.leftovers.length}`;
+    // 기본은 지금 보고 있는 영상 것만. "전체 보기"를 누르면 이 브라우저에 쌓인 것을 다 보여준다.
+    const 보일것 = state.leftoversAll
+      ? state.leftovers
+      : state.leftovers.filter((item) => item.videoId === state.videoId);
+    const 다른것 = state.leftovers.length - 보일것.length;
+    el.leftovers.hidden = !보일것.length || state.leftoversShut;
+    el.leftoversToggle.hidden = !보일것.length;
+    el.leftoversToggle.textContent = `남은 조각 ${보일것.length}`;
     el.leftoversToggle.classList.toggle("on", !state.leftoversShut);
+    el.leftoverScope.textContent = state.leftoversAll ? "이 영상만" : `전체 보기${다른것 ? ` (+${다른것})` : ""}`;
+    el.leftoverScope.classList.toggle("on", state.leftoversAll);
+    el.leftoverScope.hidden = !state.leftoversAll && !다른것;
+    el.leftoverAll.textContent = state.leftoversAll ? "모두 버리기" : "조각 버리기";
     el.leftoverList.replaceChildren(
-      ...state.leftovers.map((item) => {
+      ...보일것.map((item) => {
         const drop = make("button", { class: "ytdl-clip-del", type: "button", text: "✕", title: "이 영상의 조각을 지웁니다" });
         drop.addEventListener("click", async (event) => {
           event.stopPropagation();

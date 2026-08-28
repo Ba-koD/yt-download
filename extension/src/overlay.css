@@ -986,3 +986,13 @@ html[dark] .ytdl-side {
 .ytdl-side-free {
   border-color: currentColor;
 }
+
+/* 남은 조각의 영상 섬네일. 제목을 못 적어둔 것도 이걸로 알아본다. */
+.ytdl-clip-thumb {
+  width: 44px;
+  height: 33px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex: 0 0 auto;
+  background: rgba(127, 127, 127, 0.2);
+}

@@ -317,6 +317,33 @@
       .map((clip) => ({ ...clip, id: (state.clipSeq = (state.clipSeq || 0) + 1) }));
   }
 
+  // 남은 조각 목록에 영상 제목을 보여주려고 기억해 둔다. 저장소에는 영상 ID 밖에 없는데,
+  // ID 만 늘어놓으면 어느 영상인지 알 수 없다.
+  const TITLE_KEY = "ytdl-titles";
+  const TITLE_LIMIT = 200;
+
+  function rememberTitle(videoId, title) {
+    if (!videoId || !title) return;
+    try {
+      const all = JSON.parse(localStorage.getItem(TITLE_KEY) || "{}");
+      all[videoId] = { title, at: Date.now() };
+      const keys = Object.keys(all).sort((a, b) => (all[b].at || 0) - (all[a].at || 0));
+      const trimmed = {};
+      for (const key of keys.slice(0, TITLE_LIMIT)) trimmed[key] = all[key];
+      localStorage.setItem(TITLE_KEY, JSON.stringify(trimmed));
+    } catch {
+      // 못 적어도 ID 로 보여주면 된다.
+    }
+  }
+
+  function knownTitle(videoId) {
+    try {
+      return JSON.parse(localStorage.getItem(TITLE_KEY) || "{}")[videoId]?.title || "";
+    } catch {
+      return "";
+    }
+  }
+
   function savedRange(videoId) {
     const saved = readSaved()[videoId];
     if (!saved || !Number.isFinite(saved.start) || !Number.isFinite(saved.end)) return null;
@@ -1589,14 +1616,24 @@
           make("span", { text: 글 }),
           make("span", { class: "ytdl-clip-set", text: 작게 }),
         ]);
+      const 이름 = knownTitle(item.videoId);
       const 이동 = (row) => {
         if (지금) return row;
-        row.title = "이 영상으로 갑니다";
+        row.title = `${이름 || item.videoId} — 새 창에서 엽니다`;
         row.addEventListener("click", () => {
-          location.href = `https://www.youtube.com/watch?v=${encodeURIComponent(item.videoId)}`;
+          // 새 창으로 연다. 지금 보던 영상을 잃지 않고 확인만 하러 갈 수 있어야 한다.
+          window.open(`https://www.youtube.com/watch?v=${encodeURIComponent(item.videoId)}`, "_blank", "noopener");
         });
         return row;
       };
+      // 어느 영상인지 한눈에 보이게 섬네일을 붙인다. 제목을 못 적어둔 옛 것도 이걸로 알아본다.
+      const 섬네일 = () =>
+        make("img", {
+          class: "ytdl-clip-thumb",
+          src: `https://i.ytimg.com/vi/${item.videoId}/default.jpg`,
+          alt: "",
+          loading: "lazy",
+        });
 
       for (const done of item.outputs || []) {
         const again = make("button", { class: "ytdl-clip-btn ytdl-clip-save", type: "button", text: "저장" });
@@ -1620,8 +1657,11 @@
         const 구간 = ((done.name || "").match(/\[([0-9:.~\-]+)\]/) || [])[1] || done.key || "받아둔 파일";
         rows.push(
           이동(make("div", { class: `ytdl-clip${지금 ? " on" : ""}` }, [
-            make("span", { class: "ytdl-clip-no", text: 지금 ? "받음" : "" }),
-            꼬리표(구간.replace(/-/g, ":"), `${지금 ? "" : item.videoId + " · "}${showMb(done.bytes)} MB`),
+            ...(지금 ? [make("span", { class: "ytdl-clip-no", text: "받음" })] : [섬네일()]),
+            꼬리표(
+              구간.replace(/-/g, ":"),
+              `${지금 ? "" : `${이름 || item.videoId} · `}${showMb(done.bytes)} MB`,
+            ),
             again,
             drop,
           ])),
@@ -1638,8 +1678,11 @@
         });
         rows.push(
           이동(make("div", { class: `ytdl-clip${지금 ? " on" : ""}` }, [
-            make("span", { class: "ytdl-clip-no", text: 지금 ? "조각" : "" }),
-            꼬리표("이어받기용 조각", `${지금 ? "" : item.videoId + " · "}${item.chunks}개 · ${showMb(item.bytes)} MB`),
+            ...(지금 ? [make("span", { class: "ytdl-clip-no", text: "조각" })] : [섬네일()]),
+            꼬리표(
+              지금 ? "이어받기용 조각" : 이름 || item.videoId,
+              `조각 ${item.chunks}개 · ${showMb(item.bytes)} MB`,
+            ),
             drop,
           ])),
         );
@@ -1735,6 +1778,7 @@
         throw new Error("받을 수 있는 mp4 화질이 없습니다");
       }
       state.formats = formats;
+      rememberTitle(videoId, formats.title);
       fillQuality();
       const saved = savedRange(videoId);
       if (saved) {

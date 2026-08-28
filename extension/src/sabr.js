@@ -146,11 +146,13 @@ const abrState = (playerTimeMs) => [
  *
  * **선호 포맷(16·17)을 안 주면 서버가 멋대로 고른다.** 우리가 고른 화질이 아닌 것을
  * 받아오게 되므로 반드시 넣는다.
+ *
+ * **고른 포맷(2)은 일부러 안 보낸다.** 그 자리는 "이 포맷들은 이미 받아뒀다"는 뜻이라,
+ * 넣으면 서버가 앞머리(ftyp+moov)를 생략한다. 조각은 `moof`+`mdat` 뿐이라 앞머리가 없으면
+ * 파일을 만들 수 없다. 빼두면 어느 재생 위치에서 물어도 앞머리를 함께 준다(실측).
  */
 export function buildRequest({ playerTimeMs, video, audio, config, poToken, contexts, clientVersion }) {
   const out = [...buf(1, abrState(playerTimeMs))];
-  if (audio) out.push(...buf(2, formatId(audio)));
-  if (video) out.push(...buf(2, formatId(video)));
   out.push(...buf(5, [...config]));
   if (audio) out.push(...buf(16, formatId(audio)));
   if (video) out.push(...buf(17, formatId(video)));
@@ -315,17 +317,6 @@ export async function fetchSabrSection({
     return last;
   };
   const 남은트랙 = () => [tracks.video, tracks.audio].filter((t) => t.format);
-
-  // 앞머리(init)는 **맨 앞에서 시작할 때만** 온다. 뒤쪽 구간을 고르면 그냥 조각만 오므로,
-  // 먼저 0초를 한 번 물어 앞머리만 챙긴다(딸려 오는 조각은 아래 걸러내기에 걸려 버려진다).
-  if (start > 0) {
-    control?.throwIfStopped?.();
-    const 첫판 = await session.pull({ playerTimeMs: 0, video: videoFormat, audio: audioFormat });
-    for (const segment of 첫판.segments) {
-      const track = byItag.get(Number(segment.itag));
-      if (track && segment.init && !track.init) track.init = segment.bytes;
-    }
-  }
 
   let playerTimeMs = Math.max(0, start) * 1000;
   let guard = 0;

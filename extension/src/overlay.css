@@ -750,3 +750,20 @@ html[dark] .ytdl-side {
   color: #f1f1f1;
 }
 
+/* 좁은 화면에서 패널 폭에 맞춰 눕는 꼴.
+   줄이 세로로만 쌓이면 띠가 길어져 화면을 다 먹는다. 가로로 흘려 여러 줄에 나눠 담는다. */
+.ytdl-side-wide .ytdl-clip-list,
+.ytdl-side-wide .ytdl-leftover-list {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+.ytdl-side-wide .ytdl-clip {
+  flex: 0 1 auto;
+  min-width: 190px;
+  border: 1px solid rgba(127, 127, 127, 0.25);
+}
+
+.ytdl-side-wide .ytdl-clip.on {
+  border-color: currentColor;
+}

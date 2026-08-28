@@ -3680,6 +3680,54 @@ window.__ytdlPageTeardown = () => {
     }
   }
 
+  // 담아둔 구간 목록도 영상별로 기억한다. 여러 구간을 잡아두는 일은 한 번에 끝나지 않는다 —
+  // 창을 닫거나 다른 영상에 갔다 와도 그대로 있어야 쓸모가 있다.
+  const CLIPS_KEY = "ytdl-clips";
+  const CLIPS_LIMIT = 50;
+
+  function readClipStore() {
+    try {
+      return JSON.parse(localStorage.getItem(CLIPS_KEY) || "{}");
+    } catch {
+      return {};
+    }
+  }
+
+  function saveClipList() {
+    if (!state.videoId) return;
+    try {
+      const all = readClipStore();
+      if (state.clips.length) {
+        all[state.videoId] = {
+          at: Date.now(),
+          clips: state.clips.map((clip) => ({
+            start: clip.start,
+            end: clip.end,
+            picked: clip.picked,
+            mode: clip.mode,
+            itag: clip.itag,
+          })),
+        };
+      } else {
+        delete all[state.videoId];
+      }
+      const keys = Object.keys(all).sort((a, b) => (all[b].at || 0) - (all[a].at || 0));
+      const trimmed = {};
+      for (const key of keys.slice(0, CLIPS_LIMIT)) trimmed[key] = all[key];
+      localStorage.setItem(CLIPS_KEY, JSON.stringify(trimmed));
+    } catch {
+      // 저장 공간이 막혀 있어도 기능 자체는 계속 쓸 수 있어야 한다.
+    }
+  }
+
+  function savedClips(videoId) {
+    const saved = readClipStore()[videoId];
+    if (!saved?.clips?.length) return [];
+    return saved.clips
+      .filter((clip) => Number.isFinite(clip.start) && Number.isFinite(clip.end) && clip.end > clip.start)
+      .map((clip) => ({ ...clip, id: (state.clipSeq = (state.clipSeq || 0) + 1) }));
+  }
+
   function savedRange(videoId) {
     const saved = readSaved()[videoId];
     if (!saved || !Number.isFinite(saved.start) || !Number.isFinite(saved.end)) return null;
@@ -4340,11 +4388,13 @@ window.__ytdlPageTeardown = () => {
       // 시각을 바꿀 때 방금 담은 구간이 덮어써진다. 고치고 싶으면 목록에서 누르면 된다.
       state.activeClip = null;
       state.clipsShut = false; // 담았으면 보여준다
+      saveClipList();
       render();
     });
     el.clipAll.addEventListener("click", () => {
       const 켤까 = state.clips.some((clip) => !clip.picked);
       for (const clip of state.clips) clip.picked = 켤까;
+      saveClipList();
       render();
     });
     el.clipSaveEach.addEventListener("click", () => saveClips(false));
@@ -4816,6 +4866,7 @@ window.__ytdlPageTeardown = () => {
     if (editing) {
       editing.start = state.start;
       editing.end = state.end;
+      saveClipList();
     }
     render();
     clearTimeout(state.saveTimer);
@@ -4848,6 +4899,7 @@ window.__ytdlPageTeardown = () => {
     if (!editing) return;
     editing.mode = state.media || "merged";
     editing.itag = el.quality.value;
+    saveClipList();
   }
 
   /** 구간에 적힌 설정을 화면(내용·화질 칸)에 되돌려 놓는다. */
@@ -4884,12 +4936,14 @@ window.__ytdlPageTeardown = () => {
       pick.addEventListener("click", (event) => event.stopPropagation());
       pick.addEventListener("change", () => {
         clip.picked = pick.checked;
+        saveClipList();
       });
       const drop = make("button", { class: "ytdl-clip-del", type: "button", text: "✕", title: "목록에서 뺍니다" });
       drop.addEventListener("click", (event) => {
         event.stopPropagation();
         state.clips = state.clips.filter((one) => one !== clip);
         if (state.activeClip === clip.id) state.activeClip = null;
+        saveClipList();
         render();
       });
       const row = make(
@@ -5067,6 +5121,9 @@ window.__ytdlPageTeardown = () => {
     state.videoId = videoId;
     state.formats = null;
     state.saved = false;
+    // 이 영상에 담아둔 구간을 되살린다.
+    state.clips = savedClips(videoId);
+    state.activeClip = null;
     el.quality.replaceChildren(make("option", { text: "불러오는 중…" }));
     setStatus("화질 목록을 불러오는 중입니다");
 

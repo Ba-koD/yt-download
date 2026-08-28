@@ -800,7 +800,7 @@
     ]);
 
     el.leftoverList = make("div", { class: "ytdl-leftover-list" });
-    el.leftoverAll = make("button", { class: "ytdl-clip-btn", type: "button", text: "조각 버리기" });
+    el.leftoverAll = make("button", { class: "ytdl-clip-btn", type: "button", text: "모두 버리기" });
     const shutLeft = make("button", { class: "ytdl-side-shut", type: "button", text: "✕", title: "접기" });
     shutLeft.addEventListener("click", () => {
       state.leftoversShut = true;
@@ -1126,9 +1126,15 @@
     const box = el.panel.getBoundingClientRect();
     const gap = 10;
 
+    // 딸림창 너비는 화면에 맞춘다(좁으면 좁게, 넓으면 넉넉하게).
+    const 옆너비 = Math.round(Math.max(200, Math.min(window.innerWidth * 0.22, 320)));
+    for (const side of [el.clips, el.leftovers]) {
+      if (side) side.style.setProperty("--ytdl-side-width", `${옆너비}px`);
+    }
+
     // 좁은 화면에서는 옆에 못 세운다. 위아래 중 **남는 쪽**에 패널 폭짜리 띠로 쌓는다.
     // 무조건 아래로 붙이면 패널이 화면 아래쪽에 있을 때 띠가 화면 밖으로 나간다(실제로 그랬다).
-    const 좁은가 = box.width + 240 + gap * 2 > window.innerWidth - 16;
+    const 좁은가 = box.width + 옆너비 * 2 + gap * 3 > window.innerWidth - 16;
     if (좁은가) {
       const 보이는것 = [el.clips, el.leftovers].filter((side) => side && !side.hidden);
       for (const side of [el.clips, el.leftovers]) {
@@ -1158,14 +1164,14 @@
     const put = (side, prefer) => {
       if (!side || side.hidden) return;
       side.style.visibility = "visible";
-      const width = side.offsetWidth || 240;
+      const width = side.offsetWidth || 옆너비;
       const 옆자리 = prefer === "right" ? box.right + gap : box.left - width - gap;
       const 옆이좁다 = prefer === "right" ? 옆자리 + width > window.innerWidth - 8 : 옆자리 < 8;
 
       if (!옆이좁다) {
         // 넓은 화면: 패널 옆에 나란히 선다.
         side.classList.remove("ytdl-side-wide");
-        side.style.width = "";
+        side.style.width = `${옆너비}px`;
         side.style.maxHeight = `${Math.round(Math.max(140, window.innerHeight - box.top - 16))}px`;
         side.style.left = `${Math.round(옆자리)}px`;
         side.style.top = `${Math.round(Math.max(8, box.top))}px`;
@@ -1436,14 +1442,17 @@
     el.leftoverList.replaceChildren(
       ...state.leftovers.map((item) => {
         const drop = make("button", { class: "ytdl-clip-del", type: "button", text: "✕", title: "이 영상의 조각을 지웁니다" });
-        drop.addEventListener("click", async () => {
+        drop.addEventListener("click", async (event) => {
+          event.stopPropagation();
           await store.discard(item.videoId);
           if (item.videoId === state.videoId) state.hasLeftovers = false;
           await refreshLeftovers();
         });
+        const 지금 = item.videoId === state.videoId;
         const 줄 = [
+          make("span", { class: "ytdl-clip-no", text: 지금 ? "지금" : "" }),
           make("span", { class: "ytdl-clip-time" }, [
-            make("span", { text: `조각 ${item.chunks}개 · ${showMb(item.bytes)} MB` }),
+            make("span", { text: `${item.videoId} · 조각 ${showMb(item.bytes)} MB` }),
             make("span", {
               class: "ytdl-clip-set",
               text: item.output ? `받아둔 파일 ${showMb(item.output)} MB` : "완성본 없음",
@@ -1464,23 +1473,33 @@
             // 처음 저장할 때 쓴 이름 그대로 내준다. 못 찾으면(옛 것) 영상 제목으로 짓는다.
             const 이름 =
               item.outputName ||
-              (state.formats ? `${safeFileName(state.formats.title)}.mp4` : `${item.videoId}.mp4`);
+              (지금 && state.formats ? `${safeFileName(state.formats.title)}.mp4` : `${item.videoId}.mp4`);
             const handed = save(file, 이름);
             offerLink(handed, `받아둔 파일을 내보냈습니다 · ${showMb(file.size)} MB`);
           });
           줄.push(again);
         }
         줄.push(drop);
-        return make("div", { class: "ytdl-clip" }, 줄);
+        const row = make("div", { class: `ytdl-clip${지금 ? " on" : ""}` }, 줄);
+        // 다른 영상 줄을 누르면 그 영상으로 옮겨간다. 조각이 어느 영상 것인지 보러 갈 수 있어야 한다.
+        if (!지금) {
+          row.title = "이 영상으로 갑니다";
+          row.addEventListener("click", () => {
+            location.href = `https://www.youtube.com/watch?v=${encodeURIComponent(item.videoId)}`;
+          });
+        }
+        return row;
       }),
     );
   }
 
   async function refreshLeftovers() {
-    // 지금 보고 있는 영상 것만 보여준다. 다른 영상 조각까지 늘어놓으면 지금 할 일과 상관없는
-    // 목록이 되고, 그건 오래된 것을 걷어내는 cleanup 의 몫이다.
+    // 이 브라우저에 쌓인 것을 영상 가리지 않고 다 보여준다. 지금 영상 것이 맨 앞에 온다.
     const all = await store.listLeftovers().catch(() => []);
-    state.leftovers = state.videoId ? all.filter((item) => item.videoId === state.videoId) : [];
+    state.leftovers = all.sort((a, b) => {
+      const 지금 = (item) => (item.videoId === state.videoId ? 0 : 1);
+      return 지금(a) - 지금(b) || b.usedAt - a.usedAt;
+    });
     render();
   }
 

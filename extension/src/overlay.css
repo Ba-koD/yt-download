@@ -627,7 +627,8 @@ html[dark] .ytdl-go:disabled {
    패널의 자식이라 패널을 끌면 함께 따라온다. 자리가 좁으면 아래로 접어 넣는다. */
 .ytdl-side {
   position: fixed;
-  width: 240px;
+  /* 너비는 placeSides() 가 화면 크기를 보고 정해 준다. 여기 값은 처음 한 번의 눈금이다. */
+  width: var(--ytdl-side-width, 240px);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -821,4 +822,31 @@ html[dark] .ytdl-side {
 .ytdl-toggle.on {
   background: rgba(127, 127, 127, 0.2);
   border-color: currentColor;
+}
+
+/* 화면이 작아지면 글자와 여백도 함께 줄인다. 좁은 창에서 줄이 두 줄로 접히지 않게. */
+@media (max-width: 800px) {
+  .ytdl-side {
+    padding: 8px;
+    font-size: 13px;
+  }
+
+  .ytdl-side-wide .ytdl-clip {
+    min-width: 150px;
+  }
+
+  .ytdl-clip-btn {
+    height: 30px;
+    padding: 0 10px;
+  }
+}
+
+@media (max-width: 500px) {
+  .ytdl-side-wide .ytdl-clip {
+    min-width: 100%;
+  }
+
+  .ytdl-clip-no {
+    min-width: 0;
+  }
 }

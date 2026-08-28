@@ -1389,8 +1389,8 @@
               item.videoId === state.videoId && state.formats
                 ? `${safeFileName(state.formats.title)} [다시저장].mp4`
                 : `${item.videoId} [다시저장].mp4`;
-            save(file, 이름);
-            setStatus(`받아둔 파일을 다시 내보냈습니다 · ${showMb(file.size)} MB`, "ytdl-ok");
+            const handed = save(file, 이름);
+            offerLink(handed, `받아둔 파일을 내보냈습니다 · ${showMb(file.size)} MB`);
           });
           줄.push(again);
         }
@@ -1747,14 +1747,37 @@
     }
   }
 
+  /**
+   * 만든 파일을 브라우저에 넘긴다.
+   *
+   * **문서에 붙였다 누른다.** 떼어 놓은 채로 누르면 크롬이 그냥 무시할 때가 있다
+   * (실제로 "다시 저장"이 조용히 아무 일도 안 했다).
+   *
+   * 그래도 안 되는 경우가 있어서(누른 지 시간이 지나 사용자 동작으로 안 쳐줄 때),
+   * 같은 주소를 가리키는 링크를 하나 돌려준다 — 부르는 쪽이 눌러볼 수 있게 띄운다.
+   */
   function save(blob, name) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
     link.download = name;
+    link.style.display = "none";
+    document.body.append(link);
     link.click();
+    setTimeout(() => link.remove(), 1000);
     // 브라우저가 내려받기를 시작할 틈을 준 뒤 정리한다.
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000);
+    return { url, name };
+  }
+
+  /** 저장이 막혔을 때 사람이 직접 누를 수 있는 링크를 상태줄에 띄운다. */
+  function offerLink({ url, name }, text) {
+    if (!el.status) return;
+    const link = make("a", { class: "ytdl-save-link", text: "여기를 눌러 저장" });
+    link.href = url;
+    link.download = name;
+    el.status.className = "ytdl-status ytdl-ok";
+    el.status.replaceChildren(document.createTextNode(`${text} · `), link);
   }
 
   // 북마클릿은 사용자가 "지금 받겠다"고 눌러서 들어온 길이다. 패널을 바로 펼쳐 준다.

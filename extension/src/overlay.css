@@ -130,6 +130,8 @@
 /* 딸림창(구간 목록·남은 조각)을 패널 양옆에 세우는 기준점. */
 .ytdl-panel {
   position: relative;
+  /* 끌 때 잰 너비를 그대로 다시 넣는다. 테두리를 너비에 포함시키지 않으면 넣을 때마다 커진다. */
+  box-sizing: border-box;
   container-type: inline-size;
   margin: 12px 0 16px;
   border: 1px solid rgba(0, 0, 0, 0.1);

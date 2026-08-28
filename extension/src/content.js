@@ -1095,8 +1095,12 @@
 
   function bindPanelDrag(head) {
     head.addEventListener("pointerdown", (event) => {
-      // 닫기 단추를 누른 것은 끌기가 아니다.
-      if (event.target.closest(".ytdl-close")) return;
+      // 머리줄에 놓인 단추·칸을 누른 것은 끌기가 아니다.
+      //
+      // 닫기만 빼뒀더니 머리줄로 옮긴 창 여닫이가 먹통이 됐다 — 끌기가 `preventDefault()` 로
+      // 클릭을 삼켜 창이 안 열리고, 게다가 끌기 준비가 패널 너비를 다시 잡아 누를 때마다
+      // 조금씩 커졌다(테두리·안여백이 매번 더해져서).
+      if (event.target.closest("button, input, select, a")) return;
       const rect = el.panel.getBoundingClientRect();
       state.panelDrag = { x: event.clientX - rect.left, y: event.clientY - rect.top };
       state.panelMoved = true;

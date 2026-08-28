@@ -56,6 +56,7 @@ MODULES = [
     "mp4mux.js",
     "mp4file.js",
     "store.js",
+    "sabr.js",
     "download.js",
     "nsig.js",
 ]

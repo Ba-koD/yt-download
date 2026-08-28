@@ -1213,7 +1213,7 @@
           onStep: (text) => setStatus(text),
         });
       // PO 토큰은 페이지 안의 유튜브 발급기가 만든다. 없으면 앞 60초까지만 받힌다.
-      const mintPot = async () => (await viaPage.ask({}, "pot"))?.token;
+      const mintPot = async (bind) => (await viaPage.ask({ bind }, "pot"))?.token;
       // 로그아웃일 때 TVHTML5_SIMPLY 로 물으려면 페이지의 STS 가 있어야 한다.
       const getSts = async () => (await viaPage.ask({}, "sts"))?.sts;
       const formats = await getFormats(videoId, null, unlock, undefined, mintPot, getSts);

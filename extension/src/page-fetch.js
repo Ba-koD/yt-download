@@ -90,7 +90,7 @@ var playerSource = null;
  * 이 토큰은 **웹 계열 클라이언트에만 통한다.** ANDROID_VR 주소에 붙여봐야 403 그대로다
  * (안드로이드는 DroidGuard 토큰을 따로 요구한다 — 실측했다).
  */
-async function mintPoToken() {
+async function mintPoToken(bind) {
   // 발급기는 유튜브가 이름을 난독화해 두었다. 없으면 실험이 안 켜진 것이다.
   const make = window.top?.["havuokmhhs-0"]?.bevasrs?.wpc;
   if (typeof make !== "function") throw new Error("토큰 발급기를 찾지 못했습니다");
@@ -98,8 +98,15 @@ async function mintPoToken() {
   const cfg = window.ytcfg;
   const dataSync = cfg?.get?.("DATASYNC_ID");
   const visitor = cfg?.get?.("INNERTUBE_CONTEXT")?.client?.visitorData;
+  // 무엇에 묶을지는 **주소를 어떻게 받았는지**로 갈린다.
+  //
+  // `WEB_CREATOR` 처럼 인증(SAPISIDHASH)해서 받은 주소는 계정에 묶어야 하고,
+  // `TVHTML5_SIMPLY` 처럼 인증 없이 받은 주소는 로그인해 있더라도 **방문자에 묶어야 한다.**
+  // 로그인 상태에서 TV 주소에 계정 토큰을 붙이면 60초 너머가 그대로 403 이다(실측).
+  //
   // DATASYNC_ID 는 `계정||기기` 꼴이다. 앞쪽만 쓴다.
-  const binding = (cfg?.get?.("LOGGED_IN") && dataSync ? dataSync.split("||")[0] : visitor) || visitor;
+  const account = cfg?.get?.("LOGGED_IN") && dataSync ? dataSync.split("||")[0] : null;
+  const binding = (bind === "visitor" ? visitor : account || visitor) || visitor;
   if (!binding) throw new Error("토큰을 묶을 값을 찾지 못했습니다");
 
   // 발급기가 아직 덥혀지지 않았으면 "backoff" 를 준다. 잠깐 두었다 다시 묻는다.
@@ -180,7 +187,7 @@ async function onMessage(event) {
 
   if (message?.ytdl === "pot") {
     try {
-      const token = await mintPoToken();
+      const token = await mintPoToken(message.bind);
       window.postMessage({ ytdl: "response", id: message.id, ok: true, token }, "*");
     } catch (error) {
       window.postMessage({

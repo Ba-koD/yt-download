@@ -137,39 +137,43 @@ const ORIGIN = "https://www.youtube.com";
  * 완전히 같아서 색인·조각 경계·이어받기가 그대로 맞는다. 대신 주소에 `n` 이 붙어 있어
  * 풀어야 한다(`nsig.js`. 안 풀면 403).
  *
- * 로그인이 없으면 `TVHTML5_SIMPLY` 로 물어본다 — 이쪽도 평범한 주소를 주고, PO 토큰을
- * 붙이면 끝까지 받힌다. 그것마저 안 되면(공식 뮤직비디오) 예전대로 `ANDROID_VR` 이라
- * 앞 60초까지만 받힌다.
+ * **로그인 여부와 상관없이 `TVHTML5_SIMPLY` 를 먼저 본다.** 무료 계정에서는 `WEB_CREATOR` 가
+ * PO 토큰을 붙여도 벽을 못 넘는다(실측). 전에 넘었던 것은 프리미엄 면제 덕이었다.
+ * `TVHTML5_SIMPLY` 는 무료·게스트 모두 끝까지 준다. 다만 **토큰을 방문자에 묶어야 한다** —
+ * 인증 없이 받은 주소라 계정 토큰을 붙이면 403 그대로다.
+ *
+ * `WEB_CREATOR` 는 이제 비공개·멤버 전용처럼 계정이 있어야 나오는 것만 맡는다.
+ * 둘 다 주소를 못 주면(공식 뮤직비디오) 예전대로 `ANDROID_VR` 이라 앞 60초까지만 받힌다.
  *
  * @param options.sts 페이지의 `STS`. TVHTML5_SIMPLY 를 쓰려면 꼭 있어야 한다.
  */
 export async function fetchPlayerResponse(videoId, visitorData, client = CLIENT, options = {}) {
   // 부르는 쪽이 클라이언트를 콕 집어 줬으면(갈아타기 중이다) 그대로 따른다.
   if (client === CLIENT) {
-    let loggedIn = false;
+    // 로그인 여부와 상관없이 이쪽을 먼저 본다. **인증 없이** 물어야 한다
+    // (인증 헤더를 붙이면 HTTP 400 이다 — 실측).
+    const sts = await readSts(options.sts);
+    if (sts) {
+      try {
+        const open = await requestPlayer(videoId, visitorData, TV_CLIENT, null, sts);
+        // 주소를 실제로 줬을 때만 받아들인다. 뮤직비디오는 status 가 OK 라도
+        // SABR 만 주므로, 그때는 아래 길로 떨어지는 편이 낫다.
+        if (open?.playabilityStatus?.status === "OK" && hasDirectUrl(open)) return open;
+      } catch {
+        // 이 길이 막히면 조용히 아래로 간다.
+      }
+    }
+
+    // 내 비공개·멤버 전용 영상은 계정으로 물어야 나온다. 여기도 STS 가 필요하다 —
+    // 없으면 "페이지를 새로고침해야 합니다"(UNPLAYABLE)로 끝난다(실측).
     try {
       const auth = await authHeaders();
       if (auth) {
-        loggedIn = true;
-        const mine = await requestPlayer(videoId, visitorData, CREATOR_CLIENT, auth);
-        if (mine?.playabilityStatus?.status === "OK") return mine;
+        const mine = await requestPlayer(videoId, visitorData, CREATOR_CLIENT, auth, sts);
+        if (mine?.playabilityStatus?.status === "OK" && hasDirectUrl(mine)) return mine;
       }
     } catch {
       // 로그인 쪽이 안 되면 조용히 아래 길로 간다.
-    }
-
-    // 로그아웃일 때만. STS 를 구할 수 있을 때만 뜻이 있다(다리를 한 번 건너므로
-    // 로그인해 있으면 아예 묻지 않는다).
-    const sts = loggedIn ? null : await readSts(options.sts);
-    if (sts) {
-      try {
-        const guest = await requestPlayer(videoId, visitorData, TV_CLIENT, null, sts);
-        // 주소를 실제로 줬을 때만 받아들인다. 뮤직비디오는 status 가 OK 라도
-        // SABR 만 주므로, 그때는 아래 ANDROID_VR 로 떨어지는 편이 낫다.
-        if (guest?.playabilityStatus?.status === "OK" && hasDirectUrl(guest)) return guest;
-      } catch {
-        // 이 길이 막히면 조용히 예전 길로 간다.
-      }
     }
   }
 

@@ -347,7 +347,7 @@ Deno.test("통로 계량기는 지나간 바이트를 알려준다", async () =>
 });
 
 // --- 조각 저장소와 이어받기 ---
-import { downloadTrack, fetchSegments } from "../src/download.js";
+import { downloadTrack, fetchSegments, getFormats } from "../src/download.js";
 import { directTransport, useTransport } from "../src/net.js";
 import { openMemory } from "../src/store.js";
 
@@ -756,4 +756,27 @@ Deno.test("주소 없이 SABR 만 오면 ANDROID_VR 로 떨어진다 (공식 뮤
 
   assertEquals(asked.map((a) => a.client), ["TVHTML5_SIMPLY", "ANDROID_VR"]);
   assert(player.streamingData.adaptiveFormats[0].url.includes("c=ANDROID_VR"));
+});
+
+Deno.test("TVHTML5 주소면 토큰을 방문자에 묶는다", async () => {
+  const asked = [];
+  const sent = fakePlayerServer(asked, {
+    TVHTML5_SIMPLY: okResponse("https://r1.googlevideo.com/x?c=TVHTML5_SIMPLY&n=abc"),
+  });
+  const bind = [];
+  await getFormats("v1", "VISITOR", null, undefined, (b) => { bind.push(b); return "TOKEN"; }, 20690);
+  sent.restore();
+  // 인증 없이 받은 주소라 계정이 아니라 방문자에 묶어야 한다.
+  assertEquals(bind, ["visitor"]);
+});
+
+Deno.test("WEB_CREATOR 주소면 묶는 대상을 페이지 규칙에 맡긴다", async () => {
+  const asked = [];
+  const sent = fakePlayerServer(asked, {
+    ANDROID_VR: okResponse("https://r1.googlevideo.com/x?c=WEB_CREATOR&n=abc"),
+  });
+  const bind = [];
+  await getFormats("v1", "VISITOR", null, undefined, (b) => { bind.push(b); return "TOKEN"; }, null);
+  sent.restore();
+  assertEquals(bind, [undefined]);
 });

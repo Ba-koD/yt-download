@@ -41,7 +41,10 @@ export async function getFormats(videoId, visitorData, unlock, client, mintPot, 
   // 못 만들어도 받기를 막지는 않는다. 앞 60초까지는 그대로 되니까.
   if (mintPot && tracks.some((track) => isWebUrl(track.url) && !/[?&]pot=/.test(track.url))) {
     try {
-      const token = await mintPot();
+      // 무엇에 묶을지는 주소를 준 클라이언트가 정한다. `TVHTML5_SIMPLY` 는 인증 없이
+      // 받은 주소라 **방문자**에 묶어야 한다(계정에 묶으면 로그인 상태에서 403).
+      const guestUrl = tracks.some((track) => /[?&]c=TVHTML5/.test(track.url));
+      const token = await mintPot(guestUrl ? "visitor" : undefined);
       if (token) {
         for (const track of tracks) {
           if (isWebUrl(track.url) && !/[?&]pot=/.test(track.url)) {

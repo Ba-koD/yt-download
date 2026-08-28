@@ -470,39 +470,43 @@ const ORIGIN = "https://www.youtube.com";
  * 완전히 같아서 색인·조각 경계·이어받기가 그대로 맞는다. 대신 주소에 `n` 이 붙어 있어
  * 풀어야 한다(`nsig.js`. 안 풀면 403).
  *
- * 로그인이 없으면 `TVHTML5_SIMPLY` 로 물어본다 — 이쪽도 평범한 주소를 주고, PO 토큰을
- * 붙이면 끝까지 받힌다. 그것마저 안 되면(공식 뮤직비디오) 예전대로 `ANDROID_VR` 이라
- * 앞 60초까지만 받힌다.
+ * **로그인 여부와 상관없이 `TVHTML5_SIMPLY` 를 먼저 본다.** 무료 계정에서는 `WEB_CREATOR` 가
+ * PO 토큰을 붙여도 벽을 못 넘는다(실측). 전에 넘었던 것은 프리미엄 면제 덕이었다.
+ * `TVHTML5_SIMPLY` 는 무료·게스트 모두 끝까지 준다. 다만 **토큰을 방문자에 묶어야 한다** —
+ * 인증 없이 받은 주소라 계정 토큰을 붙이면 403 그대로다.
+ *
+ * `WEB_CREATOR` 는 이제 비공개·멤버 전용처럼 계정이 있어야 나오는 것만 맡는다.
+ * 둘 다 주소를 못 주면(공식 뮤직비디오) 예전대로 `ANDROID_VR` 이라 앞 60초까지만 받힌다.
  *
  * @param options.sts 페이지의 `STS`. TVHTML5_SIMPLY 를 쓰려면 꼭 있어야 한다.
  */
 async function fetchPlayerResponse(videoId, visitorData, client = CLIENT, options = {}) {
   // 부르는 쪽이 클라이언트를 콕 집어 줬으면(갈아타기 중이다) 그대로 따른다.
   if (client === CLIENT) {
-    let loggedIn = false;
+    // 로그인 여부와 상관없이 이쪽을 먼저 본다. **인증 없이** 물어야 한다
+    // (인증 헤더를 붙이면 HTTP 400 이다 — 실측).
+    const sts = await readSts(options.sts);
+    if (sts) {
+      try {
+        const open = await requestPlayer(videoId, visitorData, TV_CLIENT, null, sts);
+        // 주소를 실제로 줬을 때만 받아들인다. 뮤직비디오는 status 가 OK 라도
+        // SABR 만 주므로, 그때는 아래 길로 떨어지는 편이 낫다.
+        if (open?.playabilityStatus?.status === "OK" && hasDirectUrl(open)) return open;
+      } catch {
+        // 이 길이 막히면 조용히 아래로 간다.
+      }
+    }
+
+    // 내 비공개·멤버 전용 영상은 계정으로 물어야 나온다. 여기도 STS 가 필요하다 —
+    // 없으면 "페이지를 새로고침해야 합니다"(UNPLAYABLE)로 끝난다(실측).
     try {
       const auth = await authHeaders();
       if (auth) {
-        loggedIn = true;
-        const mine = await requestPlayer(videoId, visitorData, CREATOR_CLIENT, auth);
-        if (mine?.playabilityStatus?.status === "OK") return mine;
+        const mine = await requestPlayer(videoId, visitorData, CREATOR_CLIENT, auth, sts);
+        if (mine?.playabilityStatus?.status === "OK" && hasDirectUrl(mine)) return mine;
       }
     } catch {
       // 로그인 쪽이 안 되면 조용히 아래 길로 간다.
-    }
-
-    // 로그아웃일 때만. STS 를 구할 수 있을 때만 뜻이 있다(다리를 한 번 건너므로
-    // 로그인해 있으면 아예 묻지 않는다).
-    const sts = loggedIn ? null : await readSts(options.sts);
-    if (sts) {
-      try {
-        const guest = await requestPlayer(videoId, visitorData, TV_CLIENT, null, sts);
-        // 주소를 실제로 줬을 때만 받아들인다. 뮤직비디오는 status 가 OK 라도
-        // SABR 만 주므로, 그때는 아래 ANDROID_VR 로 떨어지는 편이 낫다.
-        if (guest?.playabilityStatus?.status === "OK" && hasDirectUrl(guest)) return guest;
-      } catch {
-        // 이 길이 막히면 조용히 예전 길로 간다.
-      }
     }
   }
 
@@ -1686,7 +1690,10 @@ async function getFormats(videoId, visitorData, unlock, client, mintPot, getSts)
   // 못 만들어도 받기를 막지는 않는다. 앞 60초까지는 그대로 되니까.
   if (mintPot && tracks.some((track) => isWebUrl(track.url) && !/[?&]pot=/.test(track.url))) {
     try {
-      const token = await mintPot();
+      // 무엇에 묶을지는 주소를 준 클라이언트가 정한다. `TVHTML5_SIMPLY` 는 인증 없이
+      // 받은 주소라 **방문자**에 묶어야 한다(계정에 묶으면 로그인 상태에서 403).
+      const guestUrl = tracks.some((track) => /[?&]c=TVHTML5/.test(track.url));
+      const token = await mintPot(guestUrl ? "visitor" : undefined);
       if (token) {
         for (const track of tracks) {
           if (isWebUrl(track.url) && !/[?&]pot=/.test(track.url)) {
@@ -2512,7 +2519,7 @@ var playerSource = null;
  * 이 토큰은 **웹 계열 클라이언트에만 통한다.** ANDROID_VR 주소에 붙여봐야 403 그대로다
  * (안드로이드는 DroidGuard 토큰을 따로 요구한다 — 실측했다).
  */
-async function mintPoToken() {
+async function mintPoToken(bind) {
   // 발급기는 유튜브가 이름을 난독화해 두었다. 없으면 실험이 안 켜진 것이다.
   const make = window.top?.["havuokmhhs-0"]?.bevasrs?.wpc;
   if (typeof make !== "function") throw new Error("토큰 발급기를 찾지 못했습니다");
@@ -2520,8 +2527,15 @@ async function mintPoToken() {
   const cfg = window.ytcfg;
   const dataSync = cfg?.get?.("DATASYNC_ID");
   const visitor = cfg?.get?.("INNERTUBE_CONTEXT")?.client?.visitorData;
+  // 무엇에 묶을지는 **주소를 어떻게 받았는지**로 갈린다.
+  //
+  // `WEB_CREATOR` 처럼 인증(SAPISIDHASH)해서 받은 주소는 계정에 묶어야 하고,
+  // `TVHTML5_SIMPLY` 처럼 인증 없이 받은 주소는 로그인해 있더라도 **방문자에 묶어야 한다.**
+  // 로그인 상태에서 TV 주소에 계정 토큰을 붙이면 60초 너머가 그대로 403 이다(실측).
+  //
   // DATASYNC_ID 는 `계정||기기` 꼴이다. 앞쪽만 쓴다.
-  const binding = (cfg?.get?.("LOGGED_IN") && dataSync ? dataSync.split("||")[0] : visitor) || visitor;
+  const account = cfg?.get?.("LOGGED_IN") && dataSync ? dataSync.split("||")[0] : null;
+  const binding = (bind === "visitor" ? visitor : account || visitor) || visitor;
   if (!binding) throw new Error("토큰을 묶을 값을 찾지 못했습니다");
 
   // 발급기가 아직 덥혀지지 않았으면 "backoff" 를 준다. 잠깐 두었다 다시 묻는다.
@@ -2602,7 +2616,7 @@ async function onMessage(event) {
 
   if (message?.ytdl === "pot") {
     try {
-      const token = await mintPoToken();
+      const token = await mintPoToken(message.bind);
       window.postMessage({ ytdl: "response", id: message.id, ok: true, token }, "*");
     } catch (error) {
       window.postMessage({
@@ -3885,7 +3899,7 @@ window.__ytdlPageTeardown = () => {
           onStep: (text) => setStatus(text),
         });
       // PO 토큰은 페이지 안의 유튜브 발급기가 만든다. 없으면 앞 60초까지만 받힌다.
-      const mintPot = async () => (await viaPage.ask({}, "pot"))?.token;
+      const mintPot = async (bind) => (await viaPage.ask({ bind }, "pot"))?.token;
       // 로그아웃일 때 TVHTML5_SIMPLY 로 물으려면 페이지의 STS 가 있어야 한다.
       const getSts = async () => (await viaPage.ask({}, "sts"))?.sts;
       const formats = await getFormats(videoId, null, unlock, undefined, mintPot, getSts);

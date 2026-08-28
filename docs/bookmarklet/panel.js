@@ -1469,6 +1469,8 @@ __define("store.js", (__need) => {
 const ROOT = "ytdl-media";
 const STAMP = "stamp";
 const OUTPUT = "out.mp4";
+// 저장할 때 쓴 파일 이름. 완성본 옆에 적어 둬야 나중에 그대로 다시 내줄 수 있다.
+const OUTNAME = "out.name";
 
 /** OPFS 를 쓸 수 있는 곳인가. 아니면 메모리 저장소로 대신한다(이어받기만 없어진다). */
 async function diskAvailable() {
@@ -1565,6 +1567,11 @@ async function openDisk(videoId) {
       };
     },
 
+    /** 저장할 때 쓴 이름을 적어 둔다. 나중에 "저장"을 다시 눌러도 같은 이름으로 나간다. */
+    async rememberName(text) {
+      await writeFileIn(home, OUTNAME, new TextEncoder().encode(String(text)));
+    },
+
     /** 저장까지 끝났으면 조각은 더 필요 없다. 완성본(out.mp4)은 브라우저가 아직
      *  내려받기로 옮기는 중일 수 있어 여기서 지우지 않는다 — cleanup 몫이다. */
     async clearChunks() {
@@ -1617,6 +1624,12 @@ async function listLeftovers() {
         // 도장이 없으면 0 으로 둔다
       }
       let output = 0;
+      let outputName = "";
+      try {
+        outputName = new TextDecoder().decode(await readFileIn(home, OUTNAME));
+      } catch {
+        // 이름을 안 적어둔 옛 것이면 부르는 쪽이 알아서 짓는다
+      }
       for await (const [name, box] of home.entries()) {
         if (box.kind === "file") {
           // 조립까지 끝난 파일. 저장을 취소했어도 여기 그대로 있다 — 다시 꺼내 쓸 수 있다.
@@ -1640,7 +1653,7 @@ async function listLeftovers() {
           }
         }
       }
-      if (chunks || output) out.push({ videoId, bytes, chunks, output, usedAt: stamped });
+      if (chunks || output) out.push({ videoId, bytes, chunks, output, outputName, usedAt: stamped });
     }
   } catch {
     // 디스크가 없는 곳이면 빈 목록이다
@@ -1711,6 +1724,8 @@ function openMemory() {
   const tracks = new Map();
   return {
     kind: "memory",
+    // 메모리에는 남길 자리가 없다. 모양만 맞춰 둔다.
+    async rememberName() {},
     async track(itag) {
       if (!tracks.has(itag)) tracks.set(itag, new Map());
       const box = tracks.get(itag);
@@ -4759,10 +4774,12 @@ window.__ytdlPageTeardown = () => {
               setStatus("저장해 둔 파일을 찾지 못했습니다");
               return;
             }
+            // 처음 저장할 때 쓴 이름 그대로 내준다. 못 찾으면(옛 것) 영상 제목으로 짓는다.
             const 이름 =
-              item.videoId === state.videoId && state.formats
-                ? `${safeFileName(state.formats.title)} [다시저장].mp4`
-                : `${item.videoId} [다시저장].mp4`;
+              item.outputName ||
+              (item.videoId === state.videoId && state.formats
+                ? `${safeFileName(state.formats.title)}.mp4`
+                : `${item.videoId}.mp4`);
             const handed = save(file, 이름);
             offerLink(handed, `받아둔 파일을 내보냈습니다 · ${showMb(file.size)} MB`);
           });
@@ -5036,11 +5053,12 @@ window.__ytdlPageTeardown = () => {
       const ext = mode === "audio" ? "m4a" : "mp4";
       // 어떤 화질로 받았는지 파일 이름만 봐도 알 수 있게 앞에 붙인다. 예: [2160p60 AV1]
       const quality = innertube.formatLabel(chosenFormat);
-      save(
-        file,
+      const fileName =
         `[${quality}] ${safeFileName(state.formats.title)} ` +
-          `[${clockLabel(realStart)}~${clockLabel(realEnd)}]${marker}.${ext}`,
-      );
+        `[${clockLabel(realStart)}~${clockLabel(realEnd)}]${marker}.${ext}`;
+      save(file, fileName);
+      // 같은 이름으로 다시 내줄 수 있게 완성본 옆에 적어 둔다(저장을 취소했을 때 쓴다).
+      media.rememberName?.(fileName).catch(() => {});
       // 조각을 언제 지울지.
       //
       // 예전에는 저장 버튼을 누르자마자 지웠다. 그런데 `<a download>` 는 저장을 **시작**만

@@ -18,6 +18,8 @@
 const ROOT = "ytdl-media";
 const STAMP = "stamp";
 const OUTPUT = "out.mp4";
+// 저장할 때 쓴 파일 이름. 완성본 옆에 적어 둬야 나중에 그대로 다시 내줄 수 있다.
+const OUTNAME = "out.name";
 
 /** OPFS 를 쓸 수 있는 곳인가. 아니면 메모리 저장소로 대신한다(이어받기만 없어진다). */
 export async function diskAvailable() {
@@ -114,6 +116,11 @@ export async function openDisk(videoId) {
       };
     },
 
+    /** 저장할 때 쓴 이름을 적어 둔다. 나중에 "저장"을 다시 눌러도 같은 이름으로 나간다. */
+    async rememberName(text) {
+      await writeFileIn(home, OUTNAME, new TextEncoder().encode(String(text)));
+    },
+
     /** 저장까지 끝났으면 조각은 더 필요 없다. 완성본(out.mp4)은 브라우저가 아직
      *  내려받기로 옮기는 중일 수 있어 여기서 지우지 않는다 — cleanup 몫이다. */
     async clearChunks() {
@@ -166,6 +173,12 @@ export async function listLeftovers() {
         // 도장이 없으면 0 으로 둔다
       }
       let output = 0;
+      let outputName = "";
+      try {
+        outputName = new TextDecoder().decode(await readFileIn(home, OUTNAME));
+      } catch {
+        // 이름을 안 적어둔 옛 것이면 부르는 쪽이 알아서 짓는다
+      }
       for await (const [name, box] of home.entries()) {
         if (box.kind === "file") {
           // 조립까지 끝난 파일. 저장을 취소했어도 여기 그대로 있다 — 다시 꺼내 쓸 수 있다.
@@ -189,7 +202,7 @@ export async function listLeftovers() {
           }
         }
       }
-      if (chunks || output) out.push({ videoId, bytes, chunks, output, usedAt: stamped });
+      if (chunks || output) out.push({ videoId, bytes, chunks, output, outputName, usedAt: stamped });
     }
   } catch {
     // 디스크가 없는 곳이면 빈 목록이다
@@ -260,6 +273,8 @@ export function openMemory() {
   const tracks = new Map();
   return {
     kind: "memory",
+    // 메모리에는 남길 자리가 없다. 모양만 맞춰 둔다.
+    async rememberName() {},
     async track(itag) {
       if (!tracks.has(itag)) tracks.set(itag, new Map());
       const box = tracks.get(itag);

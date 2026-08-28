@@ -1385,10 +1385,12 @@
               setStatus("저장해 둔 파일을 찾지 못했습니다");
               return;
             }
+            // 처음 저장할 때 쓴 이름 그대로 내준다. 못 찾으면(옛 것) 영상 제목으로 짓는다.
             const 이름 =
-              item.videoId === state.videoId && state.formats
-                ? `${safeFileName(state.formats.title)} [다시저장].mp4`
-                : `${item.videoId} [다시저장].mp4`;
+              item.outputName ||
+              (item.videoId === state.videoId && state.formats
+                ? `${safeFileName(state.formats.title)}.mp4`
+                : `${item.videoId}.mp4`);
             const handed = save(file, 이름);
             offerLink(handed, `받아둔 파일을 내보냈습니다 · ${showMb(file.size)} MB`);
           });
@@ -1662,11 +1664,12 @@
       const ext = mode === "audio" ? "m4a" : "mp4";
       // 어떤 화질로 받았는지 파일 이름만 봐도 알 수 있게 앞에 붙인다. 예: [2160p60 AV1]
       const quality = innertube.formatLabel(chosenFormat);
-      save(
-        file,
+      const fileName =
         `[${quality}] ${safeFileName(state.formats.title)} ` +
-          `[${clockLabel(realStart)}~${clockLabel(realEnd)}]${marker}.${ext}`,
-      );
+        `[${clockLabel(realStart)}~${clockLabel(realEnd)}]${marker}.${ext}`;
+      save(file, fileName);
+      // 같은 이름으로 다시 내줄 수 있게 완성본 옆에 적어 둔다(저장을 취소했을 때 쓴다).
+      media.rememberName?.(fileName).catch(() => {});
       // 조각을 언제 지울지.
       //
       // 예전에는 저장 버튼을 누르자마자 지웠다. 그런데 `<a download>` 는 저장을 **시작**만

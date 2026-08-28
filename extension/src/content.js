@@ -1599,8 +1599,9 @@
       ? state.leftovers
       : state.leftovers.filter((item) => item.videoId === state.videoId);
     const 다른것 = state.leftovers.length - 보일것.length;
-    el.leftovers.hidden = !state.leftovers.length || state.leftoversShut;
-    el.leftoversToggle.hidden = !state.leftovers.length;
+    // 늘 보여준다. 비어 있을 때도 "없다"는 것이 보여야 어디를 봐야 할지 알 수 있다.
+    el.leftovers.hidden = state.leftoversShut;
+    el.leftoversToggle.hidden = false;
     el.leftoversToggle.textContent = `남은 조각 ${보일것.length}`;
     el.leftoversToggle.classList.toggle("on", !state.leftoversShut);
     el.leftoverScope.textContent = state.leftoversAll ? "이 영상만" : `전체 보기${다른것 ? ` (+${다른것})` : ""}`;
@@ -1687,6 +1688,16 @@
           ])),
         );
       }
+    }
+    if (!rows.length) {
+      rows.push(
+        make("div", { class: "ytdl-clip ytdl-empty" }, [
+          make("span", {
+            class: "ytdl-clip-time",
+            text: state.leftoversAll ? "쌓아둔 것이 없습니다" : "이 영상에 쌓아둔 것이 없습니다",
+          }),
+        ]),
+      );
     }
     el.leftoverList.replaceChildren(...rows);
   }
@@ -1952,6 +1963,9 @@
         store: media,
         renewUrl,
         onProgress: (done, total, stage, size) => {
+          // 멈춘 뒤에도 이미 날아간 요청이 뒤늦게 보고해 온다. 그것까지 받아 적으면
+          // "멈췄습니다"를 곧바로 "받는 중 54%"가 덮어써서 멈춘 줄 모르게 된다(실제로 그랬다).
+          if (state.control?.stopped) return;
           lastProgress = { done, total, stage, size };
           if (stage === "받는 중") paceAdd(done);
           showProgress();

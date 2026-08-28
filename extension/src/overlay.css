@@ -996,3 +996,13 @@ html[dark] .ytdl-side {
   flex: 0 0 auto;
   background: rgba(127, 127, 127, 0.2);
 }
+
+/* 쌓아둔 것이 없을 때의 안내. 눌러도 아무 일 없다는 것이 보이게 흐리게 둔다. */
+.ytdl-empty {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ytdl-empty:hover {
+  background: transparent;
+}

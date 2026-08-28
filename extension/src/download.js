@@ -17,19 +17,40 @@ import { mediaTimescaleOf, readSamples, splitLiveSegment } from "./mp4mux.js";
 /** 한 번에 보내는 요청 수. 너무 늘리면 유튜브가 속도를 깎는다. */
 const CONCURRENCY = 6;
 
-export async function getFormats(videoId, visitorData, unlock, client) {
+/** 웹 계열 클라이언트가 준 주소인가. 이쪽만 PO 토큰이 통한다. */
+const isWebUrl = (url) => /[?&]c=(WEB|MWEB|TVHTML5)/.test(url);
+
+export async function getFormats(videoId, visitorData, unlock, client, mintPot) {
   const visitor = visitorData || (await fetchVisitorData());
   const player = await fetchPlayerResponse(videoId, visitor, client);
   const formats = readFormats(player);
 
-  // 로그인해야 볼 수 있는 영상의 주소에는 `n` 이 붙어 있고, 풀지 않으면 403 이다.
-  // 공개 영상 주소에는 아예 없으므로 이 길로 오지 않는다.
+  // 웹 계열이 주는 주소에는 `n` 이 붙어 있고, 풀지 않으면 403 이다.
+  // ANDROID_VR 주소에는 아예 없으므로 이 길로 오지 않는다.
   const tracks = [...formats.video, ...formats.audio];
   if (unlock && tracks.some((track) => track.url.includes("n="))) {
     const solved = await unlock(tracks.map((track) => track.url));
     tracks.forEach((track, index) => {
       track.url = solved[index];
     });
+  }
+
+  // PO 토큰이 없으면 유튜브는 앞부분 약 60초까지만 내어준다. 웹 계열 주소에만 통하므로
+  // 그쪽일 때만 붙인다(ANDROID_VR 주소에 붙여봐야 403 그대로다 — 실측).
+  // 못 만들어도 받기를 막지는 않는다. 앞 60초까지는 그대로 되니까.
+  if (mintPot && tracks.some((track) => isWebUrl(track.url) && !/[?&]pot=/.test(track.url))) {
+    try {
+      const token = await mintPot();
+      if (token) {
+        for (const track of tracks) {
+          if (isWebUrl(track.url) && !/[?&]pot=/.test(track.url)) {
+            track.url += `&pot=${encodeURIComponent(token)}`;
+          }
+        }
+      }
+    } catch {
+      // 발급기가 없거나 아직 안 덥혀졌다. 앞부분만이라도 받게 두고 넘어간다.
+    }
   }
   return formats;
 }
@@ -42,12 +63,13 @@ async function fetchRange(url, start, end) {
 const statusOf = (error) => Number(/HTTP (\d{3})/.exec(error?.message || "")?.[1]) || 0;
 
 /**
- * 조각을 받아 온다. 몫이 떨어져 403 이 나면 주소를 새로 받아 한 번 더 해본다.
+ * 조각을 받아 온다. 403 이 나면 주소를 새로 받아 한 번 더 해본다.
  *
- * 유튜브는 (아이피 × 영상 × 클라이언트)마다 받을 수 있는 몫을 둔다. 다 쓰면 그 뒤 자리는
- * 403 이고, 같은 클라이언트로는 주소를 새로 받아도 열리지 않는다(방문자 ID 를 새로
- * 만들어도, 쿠키를 빼도 마찬가지다). 다른 클라이언트로 물으면 새 몫이 나오고, 같은
- * itag 면 바이트가 완전히 같아서 받던 자리에서 그대로 이어진다.
+ * 403 의 큰 원인은 두 가지다.
+ * - **주소 만료.** 새로 받으면 풀린다. 이 갈아타기가 그 경우를 잡는다.
+ * - **60초 벽.** 로그인하지 않으면 유튜브가 앞부분 약 60초까지만 내어준다(PO 토큰이
+ *   없어서다). 이건 갈아타도 못 넘는다 — 세 클라이언트의 경계가 바이트까지 같다.
+ *   로그인해 있으면 `WEB_CREATOR` 로 물어 끝까지 받으므로 애초에 여기 오지 않는다.
  *
  * 영상과 소리가 거의 동시에 403 을 맞으므로 갈아타기는 한 번만 한다(같은 약속을 나눠 쓴다).
  *

@@ -74,6 +74,44 @@ var playerSource = null;
  *    페이지 이동이다. 본 화면에서 하면 유튜브가 날아간다. 틀 안이라 안전하고,
  *    답은 그전에 이미 나오므로(푸는 일은 동기다) 받자마자 틀을 치운다.
  */
+/**
+ * GVS(googlevideo) PO 토큰을 만든다.
+ *
+ * 왜 필요한가 — 유튜브가 2026-08-02 에 바꿔서, PO 토큰이 없으면 영상 **앞부분 약 60초까지만**
+ * 내어준다. 그 너머는 언제나 403 이다(위치 제한이지 몫이 아니다. 기다려도 안 열린다).
+ *
+ * 어떻게 만드나 — 유튜브 페이지 자신이 토큰 발급기(WebPoClient)를 들고 있다. yt-dlp 같은
+ * 바깥 도구는 이걸 쓰려고 브라우저를 따로 띄워야 하지만, 우리는 이미 페이지 안이라
+ * 그냥 부르면 된다. 여기가 우리가 유리한 자리다.
+ *
+ * 무엇에 묶나 — GVS 토큰은 로그인해 있으면 계정(DATASYNC_ID), 아니면 방문자(visitorData)에
+ * 묶는다(yt-dlp 의 get_webpo_content_binding 과 같은 규칙이다).
+ *
+ * 이 토큰은 **웹 계열 클라이언트에만 통한다.** ANDROID_VR 주소에 붙여봐야 403 그대로다
+ * (안드로이드는 DroidGuard 토큰을 따로 요구한다 — 실측했다).
+ */
+async function mintPoToken() {
+  // 발급기는 유튜브가 이름을 난독화해 두었다. 없으면 실험이 안 켜진 것이다.
+  const make = window.top?.["havuokmhhs-0"]?.bevasrs?.wpc;
+  if (typeof make !== "function") throw new Error("토큰 발급기를 찾지 못했습니다");
+
+  const cfg = window.ytcfg;
+  const dataSync = cfg?.get?.("DATASYNC_ID");
+  const visitor = cfg?.get?.("INNERTUBE_CONTEXT")?.client?.visitorData;
+  // DATASYNC_ID 는 `계정||기기` 꼴이다. 앞쪽만 쓴다.
+  const binding = (cfg?.get?.("LOGGED_IN") && dataSync ? dataSync.split("||")[0] : visitor) || visitor;
+  if (!binding) throw new Error("토큰을 묶을 값을 찾지 못했습니다");
+
+  // 발급기가 아직 덥혀지지 않았으면 "backoff" 를 준다. 잠깐 두었다 다시 묻는다.
+  for (let tries = 0; tries < 8; tries += 1) {
+    const client = await make();
+    const token = await client.mws({ c: binding, mc: false, me: false });
+    if (token && token !== "backoff") return token;
+    await new Promise((done) => setTimeout(done, 500));
+  }
+  throw new Error("토큰 발급기가 준비되지 않았습니다");
+}
+
 async function solveChallenges({ lib, core, challenges }) {
   if (!playerSource) {
     const jsUrl = window.ytcfg?.get?.("PLAYER_JS_URL");
@@ -128,6 +166,22 @@ async function onMessage(event) {
     try {
       const answers = await solveChallenges(message);
       window.postMessage({ ytdl: "response", id: message.id, ok: true, answers }, "*");
+    } catch (error) {
+      window.postMessage({
+        ytdl: "response",
+        id: message.id,
+        ok: false,
+        status: 0,
+        error: String(error?.message || error),
+      }, "*");
+    }
+    return;
+  }
+
+  if (message?.ytdl === "pot") {
+    try {
+      const token = await mintPoToken();
+      window.postMessage({ ytdl: "response", id: message.id, ok: true, token }, "*");
     } catch (error) {
       window.postMessage({
         ytdl: "response",

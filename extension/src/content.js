@@ -1204,7 +1204,7 @@
     setStatus("화질 목록을 불러오는 중입니다");
 
     try {
-      // 로그인해야 볼 수 있는 영상은 주소의 `n` 을 풀어야 받을 수 있다.
+      // 로그인해서 받은 주소에는 `n` 이 붙어 있다. 풀지 않으면 403 이다.
       const unlock = (urls) =>
         nsig.solveUrls(urls, {
           // 해결기 원본이 있는 곳. 북마클릿은 확장 주소가 없어 배포처에서 받아온다.
@@ -1212,7 +1212,9 @@
           ask: (payload) => viaPage.ask(payload, "solve"),
           onStep: (text) => setStatus(text),
         });
-      const formats = await getFormats(videoId, null, unlock);
+      // PO 토큰은 페이지 안의 유튜브 발급기가 만든다. 없으면 앞 60초까지만 받힌다.
+      const mintPot = async () => (await viaPage.ask({}, "pot"))?.token;
+      const formats = await getFormats(videoId, null, unlock, undefined, mintPot);
       if (state.videoId !== videoId) return; // 그 사이 다른 영상으로 옮겼다
       if (!formats.video.length || !formats.audio.length) {
         throw new Error("받을 수 있는 mp4 화질이 없습니다");
@@ -1328,7 +1330,7 @@
         if (!next) return null;
         setStatus(`몫이 떨어져 ${next.clientName} 로 갈아타 이어받습니다`);
         // 이 클라이언트들의 주소에는 `n` 이 붙지 않아 해독기가 필요 없다(확인했다).
-        const fresh = await getFormats(state.videoId, null, null, next);
+        const fresh = await getFormats(state.videoId, null, null, next, null);
         const table = new Map(
           [...fresh.video, ...fresh.audio].map((f) => [String(f.itag), f.url]),
         );

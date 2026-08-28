@@ -33,7 +33,7 @@ export async function solveUrls(urls, { runtime, ask, onStep }) {
   const challenges = [...new Set(urls.map(challengeOf).filter(Boolean))];
   if (!challenges.length) return urls;
 
-  onStep?.("로그인 영상이라 주소를 푸는 중입니다");
+  onStep?.("주소를 푸는 중입니다");
   const { lib, core } = await loadSolver(runtime);
   const answered = await ask({ lib, core, challenges });
   const answers = answered?.answers;

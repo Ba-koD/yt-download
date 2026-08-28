@@ -355,12 +355,12 @@ const CLIENT = {
 };
 
 /**
- * 몫이 떨어졌을 때 갈아탈 클라이언트들.
+ * 403 이 났을 때 갈아탈 클라이언트들.
  *
- * 유튜브는 (아이피 × 영상 × 클라이언트)마다 받을 수 있는 몫을 둔다. 다 쓰면 그 뒤로는
- * 403 이고, **같은 클라이언트로는 주소를 새로 받아도 열리지 않는다**(방문자 ID 를 새로
- * 만들어도, 쿠키를 빼도 마찬가지다 — 전부 확인했다). 다른 클라이언트로 물으면 새 몫이
- * 나온다.
+ * 주소가 만료된 경우를 잡는 용도다. **60초 벽에는 소용이 없다** — 로그인하지 않으면
+ * 유튜브가 앞부분 약 60초까지만 내어주는데, `ANDROID_VR`·`IOS`·`ANDROID` 셋의 경계가
+ * 바이트까지 똑같아서(245.7MB 파일에서 셋 다 23.27MB) 갈아타도 그대로 막힌다.
+ * 60초 너머를 받으려면 로그인해서 `WEB_CREATOR` 로 물어야 한다(`fetchPlayerResponse`).
  *
  * 갈아타도 안전한 이유: 같은 itag 면 세 클라이언트가 **완전히 같은 파일**을 준다.
  * contentLength·initRange·indexRange·lastModified 가 모두 같고, 앞부분 바이트를 받아
@@ -427,7 +427,35 @@ const CREATOR_CLIENT = {
 
 const ORIGIN = "https://www.youtube.com";
 
+/**
+ * 포맷 주소를 받아 온다. **로그인해 있으면 내 계정으로 먼저 물어본다.**
+ *
+ * 왜 로그인 쪽이 먼저인가 — 유튜브가 2026-08-02 에 바꿔서, `ANDROID_VR` 같은 클라이언트는
+ * PO 토큰 없이는 **영상 앞부분 약 60초까지만** 내어준다. 그 너머는 받은 양과 상관없이
+ * 언제나 403 이고, 클라이언트를 갈아타도(IOS·ANDROID) 경계가 바이트까지 똑같다.
+ * 기다려도 열리지 않는다 — 위치 제한이지 몫이 아니다.
+ *
+ * 반면 `WEB_CREATOR` 로 로그인해 물으면 **파일 끝까지 준다**(0%·50%·99% 전부 206 확인).
+ * 영상 넷으로 재봤고, `contentLength`·`initRange`·`indexRange` 가 `ANDROID_VR` 것과
+ * 완전히 같아서 색인·조각 경계·이어받기가 그대로 맞는다. 대신 주소에 `n` 이 붙어 있어
+ * 풀어야 한다(`nsig.js`. 안 풀면 403).
+ *
+ * 로그인이 없으면 예전대로 `ANDROID_VR` 이다 — 60초까지만 받힌다.
+ */
 async function fetchPlayerResponse(videoId, visitorData, client = CLIENT) {
+  // 부르는 쪽이 클라이언트를 콕 집어 줬으면(갈아타기 중이다) 그대로 따른다.
+  if (client === CLIENT) {
+    try {
+      const auth = await authHeaders();
+      if (auth) {
+        const mine = await requestPlayer(videoId, visitorData, CREATOR_CLIENT, auth);
+        if (mine?.playabilityStatus?.status === "OK") return mine;
+      }
+    } catch {
+      // 로그인 쪽이 안 되면 조용히 아래 길로 간다.
+    }
+  }
+
   const first = await requestPlayer(videoId, visitorData, client);
   if (first?.playabilityStatus?.status === "OK") return first;
 
@@ -1564,19 +1592,40 @@ const { mediaTimescaleOf, readSamples, splitLiveSegment } = __need("mp4mux.js");
 /** 한 번에 보내는 요청 수. 너무 늘리면 유튜브가 속도를 깎는다. */
 const CONCURRENCY = 6;
 
-async function getFormats(videoId, visitorData, unlock, client) {
+/** 웹 계열 클라이언트가 준 주소인가. 이쪽만 PO 토큰이 통한다. */
+const isWebUrl = (url) => /[?&]c=(WEB|MWEB|TVHTML5)/.test(url);
+
+async function getFormats(videoId, visitorData, unlock, client, mintPot) {
   const visitor = visitorData || (await fetchVisitorData());
   const player = await fetchPlayerResponse(videoId, visitor, client);
   const formats = readFormats(player);
 
-  // 로그인해야 볼 수 있는 영상의 주소에는 `n` 이 붙어 있고, 풀지 않으면 403 이다.
-  // 공개 영상 주소에는 아예 없으므로 이 길로 오지 않는다.
+  // 웹 계열이 주는 주소에는 `n` 이 붙어 있고, 풀지 않으면 403 이다.
+  // ANDROID_VR 주소에는 아예 없으므로 이 길로 오지 않는다.
   const tracks = [...formats.video, ...formats.audio];
   if (unlock && tracks.some((track) => track.url.includes("n="))) {
     const solved = await unlock(tracks.map((track) => track.url));
     tracks.forEach((track, index) => {
       track.url = solved[index];
     });
+  }
+
+  // PO 토큰이 없으면 유튜브는 앞부분 약 60초까지만 내어준다. 웹 계열 주소에만 통하므로
+  // 그쪽일 때만 붙인다(ANDROID_VR 주소에 붙여봐야 403 그대로다 — 실측).
+  // 못 만들어도 받기를 막지는 않는다. 앞 60초까지는 그대로 되니까.
+  if (mintPot && tracks.some((track) => isWebUrl(track.url) && !/[?&]pot=/.test(track.url))) {
+    try {
+      const token = await mintPot();
+      if (token) {
+        for (const track of tracks) {
+          if (isWebUrl(track.url) && !/[?&]pot=/.test(track.url)) {
+            track.url += `&pot=${encodeURIComponent(token)}`;
+          }
+        }
+      }
+    } catch {
+      // 발급기가 없거나 아직 안 덥혀졌다. 앞부분만이라도 받게 두고 넘어간다.
+    }
   }
   return formats;
 }
@@ -1589,12 +1638,13 @@ async function fetchRange(url, start, end) {
 const statusOf = (error) => Number(/HTTP (\d{3})/.exec(error?.message || "")?.[1]) || 0;
 
 /**
- * 조각을 받아 온다. 몫이 떨어져 403 이 나면 주소를 새로 받아 한 번 더 해본다.
+ * 조각을 받아 온다. 403 이 나면 주소를 새로 받아 한 번 더 해본다.
  *
- * 유튜브는 (아이피 × 영상 × 클라이언트)마다 받을 수 있는 몫을 둔다. 다 쓰면 그 뒤 자리는
- * 403 이고, 같은 클라이언트로는 주소를 새로 받아도 열리지 않는다(방문자 ID 를 새로
- * 만들어도, 쿠키를 빼도 마찬가지다). 다른 클라이언트로 물으면 새 몫이 나오고, 같은
- * itag 면 바이트가 완전히 같아서 받던 자리에서 그대로 이어진다.
+ * 403 의 큰 원인은 두 가지다.
+ * - **주소 만료.** 새로 받으면 풀린다. 이 갈아타기가 그 경우를 잡는다.
+ * - **60초 벽.** 로그인하지 않으면 유튜브가 앞부분 약 60초까지만 내어준다(PO 토큰이
+ *   없어서다). 이건 갈아타도 못 넘는다 — 세 클라이언트의 경계가 바이트까지 같다.
+ *   로그인해 있으면 `WEB_CREATOR` 로 물어 끝까지 받으므로 애초에 여기 오지 않는다.
  *
  * 영상과 소리가 거의 동시에 403 을 맞으므로 갈아타기는 한 번만 한다(같은 약속을 나눠 쓴다).
  *
@@ -2267,7 +2317,7 @@ async function solveUrls(urls, { runtime, ask, onStep }) {
   const challenges = [...new Set(urls.map(challengeOf).filter(Boolean))];
   if (!challenges.length) return urls;
 
-  onStep?.("로그인 영상이라 주소를 푸는 중입니다");
+  onStep?.("주소를 푸는 중입니다");
   const { lib, core } = await loadSolver(runtime);
   const answered = await ask({ lib, core, challenges });
   const answers = answered?.answers;
@@ -2374,6 +2424,44 @@ var playerSource = null;
  *    페이지 이동이다. 본 화면에서 하면 유튜브가 날아간다. 틀 안이라 안전하고,
  *    답은 그전에 이미 나오므로(푸는 일은 동기다) 받자마자 틀을 치운다.
  */
+/**
+ * GVS(googlevideo) PO 토큰을 만든다.
+ *
+ * 왜 필요한가 — 유튜브가 2026-08-02 에 바꿔서, PO 토큰이 없으면 영상 **앞부분 약 60초까지만**
+ * 내어준다. 그 너머는 언제나 403 이다(위치 제한이지 몫이 아니다. 기다려도 안 열린다).
+ *
+ * 어떻게 만드나 — 유튜브 페이지 자신이 토큰 발급기(WebPoClient)를 들고 있다. yt-dlp 같은
+ * 바깥 도구는 이걸 쓰려고 브라우저를 따로 띄워야 하지만, 우리는 이미 페이지 안이라
+ * 그냥 부르면 된다. 여기가 우리가 유리한 자리다.
+ *
+ * 무엇에 묶나 — GVS 토큰은 로그인해 있으면 계정(DATASYNC_ID), 아니면 방문자(visitorData)에
+ * 묶는다(yt-dlp 의 get_webpo_content_binding 과 같은 규칙이다).
+ *
+ * 이 토큰은 **웹 계열 클라이언트에만 통한다.** ANDROID_VR 주소에 붙여봐야 403 그대로다
+ * (안드로이드는 DroidGuard 토큰을 따로 요구한다 — 실측했다).
+ */
+async function mintPoToken() {
+  // 발급기는 유튜브가 이름을 난독화해 두었다. 없으면 실험이 안 켜진 것이다.
+  const make = window.top?.["havuokmhhs-0"]?.bevasrs?.wpc;
+  if (typeof make !== "function") throw new Error("토큰 발급기를 찾지 못했습니다");
+
+  const cfg = window.ytcfg;
+  const dataSync = cfg?.get?.("DATASYNC_ID");
+  const visitor = cfg?.get?.("INNERTUBE_CONTEXT")?.client?.visitorData;
+  // DATASYNC_ID 는 `계정||기기` 꼴이다. 앞쪽만 쓴다.
+  const binding = (cfg?.get?.("LOGGED_IN") && dataSync ? dataSync.split("||")[0] : visitor) || visitor;
+  if (!binding) throw new Error("토큰을 묶을 값을 찾지 못했습니다");
+
+  // 발급기가 아직 덥혀지지 않았으면 "backoff" 를 준다. 잠깐 두었다 다시 묻는다.
+  for (let tries = 0; tries < 8; tries += 1) {
+    const client = await make();
+    const token = await client.mws({ c: binding, mc: false, me: false });
+    if (token && token !== "backoff") return token;
+    await new Promise((done) => setTimeout(done, 500));
+  }
+  throw new Error("토큰 발급기가 준비되지 않았습니다");
+}
+
 async function solveChallenges({ lib, core, challenges }) {
   if (!playerSource) {
     const jsUrl = window.ytcfg?.get?.("PLAYER_JS_URL");
@@ -2428,6 +2516,22 @@ async function onMessage(event) {
     try {
       const answers = await solveChallenges(message);
       window.postMessage({ ytdl: "response", id: message.id, ok: true, answers }, "*");
+    } catch (error) {
+      window.postMessage({
+        ytdl: "response",
+        id: message.id,
+        ok: false,
+        status: 0,
+        error: String(error?.message || error),
+      }, "*");
+    }
+    return;
+  }
+
+  if (message?.ytdl === "pot") {
+    try {
+      const token = await mintPoToken();
+      window.postMessage({ ytdl: "response", id: message.id, ok: true, token }, "*");
     } catch (error) {
       window.postMessage({
         ytdl: "response",
@@ -3692,7 +3796,7 @@ window.__ytdlPageTeardown = () => {
     setStatus("화질 목록을 불러오는 중입니다");
 
     try {
-      // 로그인해야 볼 수 있는 영상은 주소의 `n` 을 풀어야 받을 수 있다.
+      // 로그인해서 받은 주소에는 `n` 이 붙어 있다. 풀지 않으면 403 이다.
       const unlock = (urls) =>
         nsig.solveUrls(urls, {
           // 해결기 원본이 있는 곳. 북마클릿은 확장 주소가 없어 배포처에서 받아온다.
@@ -3700,7 +3804,9 @@ window.__ytdlPageTeardown = () => {
           ask: (payload) => viaPage.ask(payload, "solve"),
           onStep: (text) => setStatus(text),
         });
-      const formats = await getFormats(videoId, null, unlock);
+      // PO 토큰은 페이지 안의 유튜브 발급기가 만든다. 없으면 앞 60초까지만 받힌다.
+      const mintPot = async () => (await viaPage.ask({}, "pot"))?.token;
+      const formats = await getFormats(videoId, null, unlock, undefined, mintPot);
       if (state.videoId !== videoId) return; // 그 사이 다른 영상으로 옮겼다
       if (!formats.video.length || !formats.audio.length) {
         throw new Error("받을 수 있는 mp4 화질이 없습니다");
@@ -3816,7 +3922,7 @@ window.__ytdlPageTeardown = () => {
         if (!next) return null;
         setStatus(`몫이 떨어져 ${next.clientName} 로 갈아타 이어받습니다`);
         // 이 클라이언트들의 주소에는 `n` 이 붙지 않아 해독기가 필요 없다(확인했다).
-        const fresh = await getFormats(state.videoId, null, null, next);
+        const fresh = await getFormats(state.videoId, null, null, next, null);
         const table = new Map(
           [...fresh.video, ...fresh.audio].map((f) => [String(f.itag), f.url]),
         );

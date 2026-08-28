@@ -22,12 +22,12 @@ export const CLIENT = {
 };
 
 /**
- * 몫이 떨어졌을 때 갈아탈 클라이언트들.
+ * 403 이 났을 때 갈아탈 클라이언트들.
  *
- * 유튜브는 (아이피 × 영상 × 클라이언트)마다 받을 수 있는 몫을 둔다. 다 쓰면 그 뒤로는
- * 403 이고, **같은 클라이언트로는 주소를 새로 받아도 열리지 않는다**(방문자 ID 를 새로
- * 만들어도, 쿠키를 빼도 마찬가지다 — 전부 확인했다). 다른 클라이언트로 물으면 새 몫이
- * 나온다.
+ * 주소가 만료된 경우를 잡는 용도다. **60초 벽에는 소용이 없다** — 로그인하지 않으면
+ * 유튜브가 앞부분 약 60초까지만 내어주는데, `ANDROID_VR`·`IOS`·`ANDROID` 셋의 경계가
+ * 바이트까지 똑같아서(245.7MB 파일에서 셋 다 23.27MB) 갈아타도 그대로 막힌다.
+ * 60초 너머를 받으려면 로그인해서 `WEB_CREATOR` 로 물어야 한다(`fetchPlayerResponse`).
  *
  * 갈아타도 안전한 이유: 같은 itag 면 세 클라이언트가 **완전히 같은 파일**을 준다.
  * contentLength·initRange·indexRange·lastModified 가 모두 같고, 앞부분 바이트를 받아
@@ -94,7 +94,35 @@ const CREATOR_CLIENT = {
 
 const ORIGIN = "https://www.youtube.com";
 
+/**
+ * 포맷 주소를 받아 온다. **로그인해 있으면 내 계정으로 먼저 물어본다.**
+ *
+ * 왜 로그인 쪽이 먼저인가 — 유튜브가 2026-08-02 에 바꿔서, `ANDROID_VR` 같은 클라이언트는
+ * PO 토큰 없이는 **영상 앞부분 약 60초까지만** 내어준다. 그 너머는 받은 양과 상관없이
+ * 언제나 403 이고, 클라이언트를 갈아타도(IOS·ANDROID) 경계가 바이트까지 똑같다.
+ * 기다려도 열리지 않는다 — 위치 제한이지 몫이 아니다.
+ *
+ * 반면 `WEB_CREATOR` 로 로그인해 물으면 **파일 끝까지 준다**(0%·50%·99% 전부 206 확인).
+ * 영상 넷으로 재봤고, `contentLength`·`initRange`·`indexRange` 가 `ANDROID_VR` 것과
+ * 완전히 같아서 색인·조각 경계·이어받기가 그대로 맞는다. 대신 주소에 `n` 이 붙어 있어
+ * 풀어야 한다(`nsig.js`. 안 풀면 403).
+ *
+ * 로그인이 없으면 예전대로 `ANDROID_VR` 이다 — 60초까지만 받힌다.
+ */
 export async function fetchPlayerResponse(videoId, visitorData, client = CLIENT) {
+  // 부르는 쪽이 클라이언트를 콕 집어 줬으면(갈아타기 중이다) 그대로 따른다.
+  if (client === CLIENT) {
+    try {
+      const auth = await authHeaders();
+      if (auth) {
+        const mine = await requestPlayer(videoId, visitorData, CREATOR_CLIENT, auth);
+        if (mine?.playabilityStatus?.status === "OK") return mine;
+      }
+    } catch {
+      // 로그인 쪽이 안 되면 조용히 아래 길로 간다.
+    }
+  }
+
   const first = await requestPlayer(videoId, visitorData, client);
   if (first?.playabilityStatus?.status === "OK") return first;
 

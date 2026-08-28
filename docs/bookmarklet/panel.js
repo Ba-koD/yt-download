@@ -5108,8 +5108,11 @@ window.__ytdlPageTeardown = () => {
           }
           if (자리) {
             try {
+              // 파일을 그대로 넘긴다. 브라우저가 알아서 흘려 쓰므로 메모리에 다 올리지 않는다
+              // (`pipeTo` 로도 되지만 쓰는 쪽이 정식 스트림이 아닌 환경에서 깨진다).
               const writable = await 자리.createWritable();
-              await file.stream().pipeTo(writable);
+              await writable.write(file);
+              await writable.close();
               markSaved(item.videoId, done.key, true);
               setStatus(`저장했습니다 · ${showMb(file.size)} MB`, "ytdl-ok");
               render();

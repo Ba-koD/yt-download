@@ -204,9 +204,20 @@ function requestPlayer(videoId, visitorData, client, extraHeaders, sts) {
   });
 }
 
-/** 주소를 하나라도 줬는지. SABR 만 온 답을 가려낸다. */
+/**
+ * 받을 거리가 있는 답인지.
+ *
+ * 포맷마다 주소를 줬거나(보통), 주소는 없어도 `serverAbrStreamingUrl` 을 줬으면(뮤직비디오)
+ * 받을 수 있다. 후자는 SABR 로 조각을 받는다(`sabr.js`).
+ */
 function hasDirectUrl(playerResponse) {
-  return (playerResponse?.streamingData?.adaptiveFormats || []).some((format) => format.url);
+  const formats = playerResponse?.streamingData?.adaptiveFormats || [];
+  if (formats.some((format) => format.url)) return true;
+  return Boolean(
+    playerResponse?.streamingData?.serverAbrStreamingUrl &&
+      playerResponse?.playerConfig?.mediaCommonConfig?.mediaUstreamerRequestConfig
+        ?.videoPlaybackUstreamerConfig,
+  );
 }
 
 /**
@@ -273,9 +284,17 @@ export function readFormats(playerResponse) {
   // 두 가지 방식이 있다.
   // - 일반 영상: 파일 하나에 색인(sidx)이 있어 필요한 바이트만 집어온다.
   // - 라이브: 색인이 없고 조각 번호(`&sq=N`)로 하나씩 받는다. 조각 길이는 targetDurationSec.
+  // - 뮤직비디오: 주소를 아예 안 주고 `serverAbrStreamingUrl`(SABR) 만 준다.
+  //   이때는 주소가 없어도 쓸 만한 포맷으로 친다 — 조각은 SABR 로 받는다(sabr.js).
+  const sabrUrl = playerResponse?.streamingData?.serverAbrStreamingUrl || null;
+  const sabrConfig =
+    playerResponse?.playerConfig?.mediaCommonConfig?.mediaUstreamerRequestConfig
+      ?.videoPlaybackUstreamerConfig || null;
+  const viaSabr = Boolean(sabrUrl && sabrConfig && !all.some((format) => format.url));
+
   const usable = all.filter(
     (format) =>
-      format.url &&
+      (format.url || viaSabr) &&
       isMp4(format) &&
       ((format.indexRange && format.initRange) || format.targetDurationSec > 0),
   );
@@ -296,6 +315,8 @@ export function readFormats(playerResponse) {
     // 라이브·지난 라이브는 조각(`&sq=N`) 방식이라 mp4 에 색인이 없다.
     // 왜 못 받는지 구분해서 알려주려고 따로 표시해 둔다.
     liveWithoutIndex: all.length > 0 && usable.length === 0 && all.some(isSegmentedLive),
+    // 주소가 없어 SABR 로 받아야 할 때 필요한 것들. 주소의 `n` 은 아직 안 풀린 상태다.
+    sabr: viaSabr ? { url: sabrUrl, config: sabrConfig } : null,
   };
 }
 
@@ -312,6 +333,8 @@ function describe(format) {
   return {
     itag: format.itag,
     url: format.url,
+    // SABR 요청에서 포맷을 가리킬 때 itag 와 함께 보내야 하는 값.
+    lastModified: format.lastModified || 0,
     mimeType: format.mimeType,
     codec: (format.mimeType.match(/codecs="([^"]+)"/) || [])[1] || "",
     width: format.width,

@@ -11,6 +11,7 @@ import { fetchPlayerResponse, fetchVisitorData, readFormats } from "./innertube.
 import { mergeRanges, parseSidx, segmentsForRange } from "./mp4index.js";
 import { request } from "./net.js";
 import { openMemory } from "./store.js";
+import { decodeBase64Url, fetchSabrSection, openSession } from "./sabr.js";
 import { buildHead, editStartOf, fillChunkOffsets, mdatHeader } from "./mp4file.js";
 import { mediaTimescaleOf, readSamples, splitLiveSegment } from "./mp4mux.js";
 
@@ -55,6 +56,26 @@ export async function getFormats(videoId, visitorData, unlock, client, mintPot, 
     } catch {
       // 발급기가 없거나 아직 안 덥혀졌다. 앞부분만이라도 받게 두고 넘어간다.
     }
+  }
+  // 주소가 아예 없으면(공식 뮤직비디오) SABR 로 받는다. 조각을 받으려면 주소의 `n` 을 풀고
+  // PO 토큰을 함께 보내야 한다. 여기서 준비만 해두고, 실제 요청은 downloadSection 이 한다.
+  if (formats.sabr) {
+    let url = formats.sabr.url;
+    if (unlock) {
+      const [solved] = await unlock([url]);
+      if (solved) url = typeof solved === "string" ? solved : solved.url || url;
+    }
+    let poToken = null;
+    if (mintPot) {
+      try {
+        // SABR 주소도 인증 없이 받은 것이라 토큰은 방문자에 묶는다.
+        poToken = decodeBase64Url(await mintPot("visitor"));
+      } catch {
+        // 없으면 없는 대로 해본다.
+      }
+    }
+    const session = { url, config: decodeBase64Url(formats.sabr.config), poToken };
+    for (const track of tracks) track.sabr = session;
   }
   return formats;
 }
@@ -597,7 +618,24 @@ export async function downloadSection({
   let video;
   let audio;
 
-  if (live) {
+  if (videoFormat.sabr) {
+    // 주소가 없는 영상(공식 뮤직비디오)이다. 재생 위치를 밀어가며 조각을 받아온다.
+    onProgress?.(0, 1, "조각 받는 중");
+    const session = openSession(videoFormat.sabr);
+    const got = await fetchSabrSection({
+      session,
+      videoFormat,
+      audioFormat,
+      start,
+      end,
+      caches,
+      control,
+      onProgress: (done, total, size) =>
+        onProgress?.(done, total, "받는 중", size && { got: size.bytes, estimated: size.estimated }),
+    });
+    video = got.video;
+    audio = got.audio;
+  } else if (live) {
     onProgress?.(0, 1, "조각 받는 중");
     // 소리는 영상이 시작하는 지점부터 받아야 한다. 조각 길이가 서로 달라서
     // 같은 시각을 달라고 하면 소리가 영상보다 늦게 시작하는 일이 생긴다.

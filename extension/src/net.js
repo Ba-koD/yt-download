@@ -24,6 +24,11 @@ export function directTransport() {
       if (!response.ok) throw new Error(`조각을 받지 못했습니다 (HTTP ${response.status})`);
       return new Uint8Array(await response.arrayBuffer());
     },
+    async post(url, body) {
+      const response = await fetch(url, { method: "POST", body, credentials: "omit" });
+      if (!response.ok) throw new Error(`조각을 받지 못했습니다 (HTTP ${response.status})`);
+      return new Uint8Array(await response.arrayBuffer());
+    },
   };
 }
 
@@ -37,6 +42,9 @@ export const request = {
   json: (url, init) => transport.json(url, init),
   text: (url) => transport.text(url),
   bytes: (url, headers) => transport.bytes(url, headers),
+  // SABR 전용. 재시도·서버 안내(alr) 껍데기를 거치지 않는다 —
+  // 그 껍데기들은 GET 으로 범위를 받는 길에 맞춰져 있어 POST 에는 해가 된다.
+  post: (url, body) => transport.post(url, body),
 };
 
 /**
@@ -101,6 +109,7 @@ export function pageTransport(target = window, timeoutMs = 120_000) {
       ),
     text: async (url) => decode((await ask({ url })).buffer),
     bytes: async (url, headers) => adopt((await ask({ url, headers })).buffer),
+    post: async (url, body) => adopt((await ask({ url, method: "POST", body })).buffer),
     // 받아오기 말고 다른 일(예: n 풀기)을 시킬 때 쓴다.
     ask,
   };

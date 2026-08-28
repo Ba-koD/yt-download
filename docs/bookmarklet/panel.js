@@ -38,6 +38,11 @@ function directTransport() {
       if (!response.ok) throw new Error(`조각을 받지 못했습니다 (HTTP ${response.status})`);
       return new Uint8Array(await response.arrayBuffer());
     },
+    async post(url, body) {
+      const response = await fetch(url, { method: "POST", body, credentials: "omit" });
+      if (!response.ok) throw new Error(`조각을 받지 못했습니다 (HTTP ${response.status})`);
+      return new Uint8Array(await response.arrayBuffer());
+    },
   };
 }
 
@@ -51,6 +56,9 @@ const request = {
   json: (url, init) => transport.json(url, init),
   text: (url) => transport.text(url),
   bytes: (url, headers) => transport.bytes(url, headers),
+  // SABR 전용. 재시도·서버 안내(alr) 껍데기를 거치지 않는다 —
+  // 그 껍데기들은 GET 으로 범위를 받는 길에 맞춰져 있어 POST 에는 해가 된다.
+  post: (url, body) => transport.post(url, body),
 };
 
 /**
@@ -115,6 +123,7 @@ function pageTransport(target = window, timeoutMs = 120_000) {
       ),
     text: async (url) => decode((await ask({ url })).buffer),
     bytes: async (url, headers) => adopt((await ask({ url, headers })).buffer),
+    post: async (url, body) => adopt((await ask({ url, method: "POST", body })).buffer),
     // 받아오기 말고 다른 일(예: n 풀기)을 시킬 때 쓴다.
     ask,
   };
@@ -537,9 +546,20 @@ function requestPlayer(videoId, visitorData, client, extraHeaders, sts) {
   });
 }
 
-/** 주소를 하나라도 줬는지. SABR 만 온 답을 가려낸다. */
+/**
+ * 받을 거리가 있는 답인지.
+ *
+ * 포맷마다 주소를 줬거나(보통), 주소는 없어도 `serverAbrStreamingUrl` 을 줬으면(뮤직비디오)
+ * 받을 수 있다. 후자는 SABR 로 조각을 받는다(`sabr.js`).
+ */
 function hasDirectUrl(playerResponse) {
-  return (playerResponse?.streamingData?.adaptiveFormats || []).some((format) => format.url);
+  const formats = playerResponse?.streamingData?.adaptiveFormats || [];
+  if (formats.some((format) => format.url)) return true;
+  return Boolean(
+    playerResponse?.streamingData?.serverAbrStreamingUrl &&
+      playerResponse?.playerConfig?.mediaCommonConfig?.mediaUstreamerRequestConfig
+        ?.videoPlaybackUstreamerConfig,
+  );
 }
 
 /**
@@ -606,9 +626,17 @@ function readFormats(playerResponse) {
   // 두 가지 방식이 있다.
   // - 일반 영상: 파일 하나에 색인(sidx)이 있어 필요한 바이트만 집어온다.
   // - 라이브: 색인이 없고 조각 번호(`&sq=N`)로 하나씩 받는다. 조각 길이는 targetDurationSec.
+  // - 뮤직비디오: 주소를 아예 안 주고 `serverAbrStreamingUrl`(SABR) 만 준다.
+  //   이때는 주소가 없어도 쓸 만한 포맷으로 친다 — 조각은 SABR 로 받는다(sabr.js).
+  const sabrUrl = playerResponse?.streamingData?.serverAbrStreamingUrl || null;
+  const sabrConfig =
+    playerResponse?.playerConfig?.mediaCommonConfig?.mediaUstreamerRequestConfig
+      ?.videoPlaybackUstreamerConfig || null;
+  const viaSabr = Boolean(sabrUrl && sabrConfig && !all.some((format) => format.url));
+
   const usable = all.filter(
     (format) =>
-      format.url &&
+      (format.url || viaSabr) &&
       isMp4(format) &&
       ((format.indexRange && format.initRange) || format.targetDurationSec > 0),
   );
@@ -629,6 +657,8 @@ function readFormats(playerResponse) {
     // 라이브·지난 라이브는 조각(`&sq=N`) 방식이라 mp4 에 색인이 없다.
     // 왜 못 받는지 구분해서 알려주려고 따로 표시해 둔다.
     liveWithoutIndex: all.length > 0 && usable.length === 0 && all.some(isSegmentedLive),
+    // 주소가 없어 SABR 로 받아야 할 때 필요한 것들. 주소의 `n` 은 아직 안 풀린 상태다.
+    sabr: viaSabr ? { url: sabrUrl, config: sabrConfig } : null,
   };
 }
 
@@ -645,6 +675,8 @@ function describe(format) {
   return {
     itag: format.itag,
     url: format.url,
+    // SABR 요청에서 포맷을 가리킬 때 itag 와 함께 보내야 하는 값.
+    lastModified: format.lastModified || 0,
     mimeType: format.mimeType,
     codec: (format.mimeType.match(/codecs="([^"]+)"/) || [])[1] || "",
     width: format.width,
@@ -1661,6 +1693,7 @@ const { fetchPlayerResponse, fetchVisitorData, readFormats } = __need("innertube
 const { mergeRanges, parseSidx, segmentsForRange } = __need("mp4index.js");
 const { request } = __need("net.js");
 const { openMemory } = __need("store.js");
+const { decodeBase64Url, fetchSabrSection, openSession } = __need("sabr.js");
 const { buildHead, editStartOf, fillChunkOffsets, mdatHeader } = __need("mp4file.js");
 const { mediaTimescaleOf, readSamples, splitLiveSegment } = __need("mp4mux.js");
 /** 한 번에 보내는 요청 수. 너무 늘리면 유튜브가 속도를 깎는다. */
@@ -1704,6 +1737,26 @@ async function getFormats(videoId, visitorData, unlock, client, mintPot, getSts)
     } catch {
       // 발급기가 없거나 아직 안 덥혀졌다. 앞부분만이라도 받게 두고 넘어간다.
     }
+  }
+  // 주소가 아예 없으면(공식 뮤직비디오) SABR 로 받는다. 조각을 받으려면 주소의 `n` 을 풀고
+  // PO 토큰을 함께 보내야 한다. 여기서 준비만 해두고, 실제 요청은 downloadSection 이 한다.
+  if (formats.sabr) {
+    let url = formats.sabr.url;
+    if (unlock) {
+      const [solved] = await unlock([url]);
+      if (solved) url = typeof solved === "string" ? solved : solved.url || url;
+    }
+    let poToken = null;
+    if (mintPot) {
+      try {
+        // SABR 주소도 인증 없이 받은 것이라 토큰은 방문자에 묶는다.
+        poToken = decodeBase64Url(await mintPot("visitor"));
+      } catch {
+        // 없으면 없는 대로 해본다.
+      }
+    }
+    const session = { url, config: decodeBase64Url(formats.sabr.config), poToken };
+    for (const track of tracks) track.sabr = session;
   }
   return formats;
 }
@@ -2246,7 +2299,24 @@ async function downloadSection({
   let video;
   let audio;
 
-  if (live) {
+  if (videoFormat.sabr) {
+    // 주소가 없는 영상(공식 뮤직비디오)이다. 재생 위치를 밀어가며 조각을 받아온다.
+    onProgress?.(0, 1, "조각 받는 중");
+    const session = openSession(videoFormat.sabr);
+    const got = await fetchSabrSection({
+      session,
+      videoFormat,
+      audioFormat,
+      start,
+      end,
+      caches,
+      control,
+      onProgress: (done, total, size) =>
+        onProgress?.(done, total, "받는 중", size && { got: size.bytes, estimated: size.estimated }),
+    });
+    video = got.video;
+    audio = got.audio;
+  } else if (live) {
     onProgress?.(0, 1, "조각 받는 중");
     // 소리는 영상이 시작하는 지점부터 받아야 한다. 조각 길이가 서로 달라서
     // 같은 시각을 달라고 하면 소리가 영상보다 늦게 시작하는 일이 생긴다.

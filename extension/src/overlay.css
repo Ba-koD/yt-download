@@ -650,6 +650,60 @@ html[dark] .ytdl-go:disabled {
   z-index: 2501;
 }
 
+/* ── 패널 안의 구간 목록 ──────────────────────────────────────
+   받기 줄 바로 아래에 둔다. 담은 것이 눈앞에 있어야 다음에 뭘 할지 정할 수 있다. */
+.ytdl-clips {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(127, 127, 127, 0.25);
+  border-radius: 10px;
+}
+
+.ytdl-clips .ytdl-clip-list {
+  flex-direction: row;
+  flex-wrap: wrap;
+  max-height: 30vh;
+}
+
+.ytdl-clips .ytdl-clip {
+  flex: 0 1 auto;
+  min-width: 200px;
+  border: 1px solid rgba(127, 127, 127, 0.25);
+}
+
+.ytdl-clips .ytdl-clip.on {
+  border-color: currentColor;
+}
+
+/* 받기 줄: 담기는 왼쪽 끝, 받기는 오른쪽 끝. */
+.ytdl-do {
+  align-items: center;
+}
+
+.ytdl-addclip {
+  border: 1px solid var(--ytdl-line, rgba(127, 127, 127, 0.5));
+  background: transparent;
+  color: inherit;
+  border-radius: 18px;
+  height: 36px;
+  padding: 0 14px;
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+}
+
+.ytdl-addclip:hover:not(:disabled) {
+  background: rgba(127, 127, 127, 0.15);
+}
+
+.ytdl-addclip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .ytdl-side-head {
   font-weight: 500;
   opacity: 0.75;

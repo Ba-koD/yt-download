@@ -711,10 +711,9 @@
     // 받는 동안에만 보이는 버튼들.
     el.hold = make("button", { class: "ytdl-hold", type: "button", text: "일시정지", hidden: true });
     el.halt = make("button", { class: "ytdl-halt", type: "button", text: "정지", hidden: true });
-    // 고른 구간 바로 옆에 둔다. 이 단추는 "지금 이 구간"에 대한 것이라 거기 있어야 읽힌다.
     el.addClip = make("button", {
-      class: "ytdl-plus", type: "button", text: "+ 담기",
-      title: "지금 고른 구간을 목록에 담습니다",
+      class: "ytdl-addclip", type: "button", text: "구간 담기",
+      title: "지금 고른 구간을 아래 목록에 담습니다",
     });
     // 딸림창 여닫이. 담긴 것이 있을 때만 보인다.
     el.clipsToggle = make("button", { class: "ytdl-toggle", type: "button", text: "구간 목록", hidden: true });
@@ -796,7 +795,8 @@
       state.clipsShut = true;
       render();
     });
-    el.clips = make("aside", { class: "ytdl-side ytdl-clips", hidden: true }, [
+    // 구간 목록은 **패널 안**에 둔다. 받기 줄 바로 아래에 있어야 "담고 → 받는다"가 한눈에 읽힌다.
+    el.clips = make("section", { class: "ytdl-clips", hidden: true }, [
       make("div", { class: "ytdl-side-head" }, [
         make("span", { text: "구간 목록" }),
         shutClips,
@@ -832,7 +832,7 @@
       head,
       make("div", { class: "ytdl-body" }, [
         buildTimeline(),
-        // 세 묶음으로 나눠 읽는다 — 어디를(구간), 무엇으로(내용·화질), 어떻게 할지(받기).
+        // 두 줄로 나눈다 — 위는 무엇을 고를지, 아래는 그걸로 무엇을 할지.
         make("div", { class: "ytdl-row" }, [
           make("span", { class: "ytdl-group" }, [
             toStart,
@@ -843,17 +843,20 @@
             markOut,
             toEnd,
             el.length,
-            el.addClip,
           ]),
           make("span", { class: "ytdl-group" }, [el.media, el.quality]),
+        ]),
+        // 받기 줄. 담기는 왼쪽, 받기는 오른쪽 — 왼쪽은 쌓는 일, 오른쪽은 끝내는 일이다.
+        make("div", { class: "ytdl-row ytdl-do" }, [
+          el.addClip,
           make("span", { class: "ytdl-group ytdl-actions" }, [el.go, el.reveal, el.hold, el.halt]),
         ]),
+        el.clips,
         el.status,
       ]),
     ]);
     el.panel = panel;
-    document.body.append(el.leftovers, el.clips);
-    bindSideDrag(el.clips, "clips");
+    document.body.append(el.leftovers);
     bindSideDrag(el.leftovers, "leftovers");
 
     for (const button of [markIn, markOut]) {
@@ -1182,7 +1185,6 @@
 
   function placeSides() {
     if (!el.panel || el.panel.hidden) {
-      if (el.clips) el.clips.style.visibility = "hidden";
       if (el.leftovers) el.leftovers.style.visibility = "hidden";
       return;
     }
@@ -1194,7 +1196,6 @@
     // **양옆을 따로 잰다.** "화면이 넓은가"로 뭉뚱그리면 한쪽에 자리가 남는데도 둘 다
     // 아래로 내려가 버린다(실제로 1600px 에서 그랬다).
     const 들어가나 = (space) => space >= wide + gap + 8;
-    const 오른쪽 = 들어가나(window.innerWidth - box.right);
     const 왼쪽 = 들어가나(box.left);
 
     const 띠 = [];
@@ -1207,17 +1208,15 @@
       side.style.top = `${Math.round(Math.max(8, box.top))}px`;
     };
 
-    for (const [side, where, 자리있음] of [
-      [el.clips, "right", 오른쪽],
-      [el.leftovers, "left", 왼쪽],
-    ]) {
+    // 구간 목록은 패널 안으로 들어갔다. 여기서 자리를 봐줄 것은 남은 조각뿐이다.
+    for (const [side, where, 자리있음] of [[el.leftovers, "left", 왼쪽]]) {
       if (!side) continue;
       if (side.hidden) {
         side.style.visibility = "hidden";
         continue;
       }
       // 사람이 옮겨 놓은 창은 그 자리에 둔다. 화면 밖으로만 안 나가게 지켜본다.
-      if (state[`${side === el.clips ? "clips" : "leftovers"}Free`]) {
+      if (state.leftoversFree) {
         side.style.visibility = "visible";
         const box2 = side.getBoundingClientRect();
         const 가두기 = (value, high) => Math.max(8, Math.min(value, Math.max(8, high)));

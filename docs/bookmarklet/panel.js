@@ -2028,7 +2028,9 @@ async function fetchSabrSection({
       // 고른 구간에 안 걸치는 조각은 버린다(서버가 넉넉히 보내준다).
       if (segment.time + segment.duration <= start || segment.time >= end) continue;
       await track.cache.write(name, segment.bytes);
-      track.segments.push({ time: segment.time, duration: segment.duration, name, live: true });
+      // `live: true` 를 달면 안 된다 — 라이브 조각은 앞머리를 품고 와서 떼어내야 하지만,
+      // SABR 조각은 `moof`+`mdat` 뿐이라 그대로 써야 한다.
+      track.segments.push({ time: segment.time, duration: segment.duration, name });
       track.bytes += segment.bytes.length;
       진전 = true;
     }
@@ -2051,9 +2053,16 @@ async function fetchSabrSection({
     if (!track.init) throw new Error("조각에서 앞머리를 찾지 못했습니다");
     track.segments.sort((a, b) => a.time - b.time);
   }
+  // `firstTime` 은 합치는 쪽이 편집 목록을 만들 때 쓴다. 빠뜨리면 계산이 NaN 이 되어
+  // "담을 샘플이 없다"는 엉뚱한 곳에서 터진다.
+  const 묶기 = (track) => ({
+    init: track.init,
+    segments: track.segments,
+    firstTime: track.segments[0].time,
+  });
   return {
-    video: videoFormat ? { init: tracks.video.init, segments: tracks.video.segments } : null,
-    audio: audioFormat ? { init: tracks.audio.init, segments: tracks.audio.segments } : null,
+    video: videoFormat ? 묶기(tracks.video) : null,
+    audio: audioFormat ? 묶기(tracks.audio) : null,
   };
 }
 

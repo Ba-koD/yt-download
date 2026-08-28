@@ -1365,11 +1365,37 @@
           await refreshLeftovers();
         });
         const 지금 = item.videoId === state.videoId ? " on" : "";
-        return make("div", { class: `ytdl-clip${지금}` }, [
+        const 줄 = [
           make("span", { class: "ytdl-clip-no", text: item.videoId === state.videoId ? "지금" : "" }),
-          make("span", { class: "ytdl-clip-time", text: `${item.videoId} · ${showMb(item.bytes)} MB` }),
-          drop,
-        ]);
+          make("span", {
+            class: "ytdl-clip-time",
+            text:
+              `${item.videoId} · 조각 ${showMb(item.bytes)} MB` +
+              (item.output ? ` · 파일 ${showMb(item.output)} MB` : ""),
+          }),
+        ];
+        // 조립까지 끝난 파일이 남아 있으면 다시 받을 것 없이 그대로 내준다
+        // (저장 대화상자에서 취소했을 때가 바로 이 경우다).
+        if (item.output) {
+          const again = make("button", { class: "ytdl-clip-btn ytdl-clip-save", type: "button", text: "저장" });
+          again.addEventListener("click", async (event) => {
+            event.stopPropagation();
+            const file = await store.readOutput(item.videoId).catch(() => null);
+            if (!file) {
+              setStatus("저장해 둔 파일을 찾지 못했습니다");
+              return;
+            }
+            const 이름 =
+              item.videoId === state.videoId && state.formats
+                ? `${safeFileName(state.formats.title)} [다시저장].mp4`
+                : `${item.videoId} [다시저장].mp4`;
+            save(file, 이름);
+            setStatus(`받아둔 파일을 다시 내보냈습니다 · ${showMb(file.size)} MB`, "ytdl-ok");
+          });
+          줄.push(again);
+        }
+        줄.push(drop);
+        return make("div", { class: `ytdl-clip${지금}` }, 줄);
       }),
     );
   }

@@ -767,3 +767,10 @@ html[dark] .ytdl-side {
 .ytdl-side-wide .ytdl-clip.on {
   border-color: currentColor;
 }
+
+/* 남은 파일을 그대로 다시 내주는 버튼. 줄 안에 들어가므로 작게 둔다. */
+.ytdl-clip-save {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+}

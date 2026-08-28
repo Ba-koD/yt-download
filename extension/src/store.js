@@ -17,6 +17,7 @@
 
 const ROOT = "ytdl-media";
 const STAMP = "stamp";
+const OUTPUT = "out.mp4";
 
 /** OPFS 를 쓸 수 있는 곳인가. 아니면 메모리 저장소로 대신한다(이어받기만 없어진다). */
 export async function diskAvailable() {
@@ -101,7 +102,7 @@ export async function openDisk(videoId) {
 
     /** 완성본을 흘려 쓸 자리. close() 가 디스크 기반 File 을 돌려준다(메모리에 안 올라온다). */
     async output() {
-      const handle = await home.getFileHandle("out.mp4", { create: true });
+      const handle = await home.getFileHandle(OUTPUT, { create: true });
       const writable = await handle.createWritable(); // 기존 내용은 지워진다
       return {
         write: (bytes) => writable.write(bytes),
@@ -164,7 +165,19 @@ export async function listLeftovers() {
       } catch {
         // 도장이 없으면 0 으로 둔다
       }
-      for await (const [, box] of home.entries()) {
+      let output = 0;
+      for await (const [name, box] of home.entries()) {
+        if (box.kind === "file") {
+          // 조립까지 끝난 파일. 저장을 취소했어도 여기 그대로 있다 — 다시 꺼내 쓸 수 있다.
+          if (name === OUTPUT) {
+            try {
+              output = (await box.getFile()).size;
+            } catch {
+              // 읽을 수 없으면 없는 것으로 친다
+            }
+          }
+          continue;
+        }
         if (box.kind !== "directory") continue;
         for await (const [, file] of box.entries()) {
           if (file.kind !== "file") continue;
@@ -176,12 +189,30 @@ export async function listLeftovers() {
           }
         }
       }
-      if (chunks) out.push({ videoId, bytes, chunks, usedAt: stamped });
+      if (chunks || output) out.push({ videoId, bytes, chunks, output, usedAt: stamped });
     }
   } catch {
     // 디스크가 없는 곳이면 빈 목록이다
   }
   return out.sort((a, b) => b.usedAt - a.usedAt);
+}
+
+/**
+ * 조립까지 끝난 파일을 그대로 꺼낸다.
+ *
+ * 저장 대화상자에서 취소했더라도 완성본은 여기 남아 있다. 다시 받을 것도, 다시 합칠
+ * 것도 없이 이걸 그대로 내주면 된다.
+ */
+export async function readOutput(videoId) {
+  try {
+    const opfs = await navigator.storage.getDirectory();
+    const root = await dir(opfs, ROOT, false);
+    const home = root && (await dir(root, videoId, false));
+    if (!home) return null;
+    return await (await home.getFileHandle(OUTPUT)).getFile();
+  } catch {
+    return null;
+  }
 }
 
 /** 이 영상의 저장소를 통째로 지운다(받다 만 조각 버리기). */

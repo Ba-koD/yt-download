@@ -20,12 +20,13 @@ const CONCURRENCY = 6;
 /** 웹 계열 클라이언트가 준 주소인가. 이쪽만 PO 토큰이 통한다. */
 const isWebUrl = (url) => /[?&]c=(WEB|MWEB|TVHTML5)/.test(url);
 
-export async function getFormats(videoId, visitorData, unlock, client, mintPot) {
+export async function getFormats(videoId, visitorData, unlock, client, mintPot, getSts) {
   const visitor = visitorData || (await fetchVisitorData());
-  const player = await fetchPlayerResponse(videoId, visitor, client);
+  const player = await fetchPlayerResponse(videoId, visitor, client, { sts: getSts });
   const formats = readFormats(player);
 
   // 웹 계열이 주는 주소에는 `n` 이 붙어 있고, 풀지 않으면 403 이다.
+  // 로그아웃일 때 쓰는 TVHTML5_SIMPLY 주소에도 붙어 있다.
   // ANDROID_VR 주소에는 아예 없으므로 이 길로 오지 않는다.
   const tracks = [...formats.video, ...formats.audio];
   if (unlock && tracks.some((track) => track.url.includes("n="))) {
@@ -67,9 +68,10 @@ const statusOf = (error) => Number(/HTTP (\d{3})/.exec(error?.message || "")?.[1
  *
  * 403 의 큰 원인은 두 가지다.
  * - **주소 만료.** 새로 받으면 풀린다. 이 갈아타기가 그 경우를 잡는다.
- * - **60초 벽.** 로그인하지 않으면 유튜브가 앞부분 약 60초까지만 내어준다(PO 토큰이
- *   없어서다). 이건 갈아타도 못 넘는다 — 세 클라이언트의 경계가 바이트까지 같다.
- *   로그인해 있으면 `WEB_CREATOR` 로 물어 끝까지 받으므로 애초에 여기 오지 않는다.
+ * - **60초 벽.** PO 토큰이 없으면 유튜브가 앞부분 약 60초까지만 내어준다. 이건 갈아타도
+ *   못 넘는다 — 세 클라이언트의 경계가 바이트까지 같다. `WEB_CREATOR`(로그인) 나
+ *   `TVHTML5_SIMPLY`(로그아웃) 로 물어 토큰을 붙였으면 끝까지 받으므로 여기 오지 않는다.
+ *   공식 뮤직비디오는 로그아웃에서 두 길이 다 막혀 여전히 앞 60초까지다.
  *
  * 영상과 소리가 거의 동시에 403 을 맞으므로 갈아타기는 한 번만 한다(같은 약속을 나눠 쓴다).
  *

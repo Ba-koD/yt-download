@@ -194,6 +194,14 @@ async function onMessage(event) {
     return;
   }
 
+  // STS(signatureTimestamp). 페이지 쪽에만 있는 값인데, 로그아웃에서 쓰는
+  // TVHTML5_SIMPLY 는 이게 없으면 주소를 하나도 주지 않는다.
+  if (message?.ytdl === "sts") {
+    const sts = Number(window.ytcfg?.get?.("STS")) || 0;
+    window.postMessage({ ytdl: "response", id: message.id, ok: true, sts }, "*");
+    return;
+  }
+
   if (message?.ytdl === "watch-progress") {
     clearInterval(progressTimer);
     progressTimer = null;

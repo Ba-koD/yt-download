@@ -3,7 +3,13 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@1";
 
 import { findBox, mergeRanges, parseSidx, segmentsForRange } from "../src/mp4index.js";
-import { buildPlayerRequest, extractVisitorData, formatLabel, readFormats } from "../src/innertube.js";
+import {
+  buildPlayerRequest,
+  extractVisitorData,
+  fetchPlayerResponse,
+  formatLabel,
+  readFormats,
+} from "../src/innertube.js";
 
 const here = new URL(".", import.meta.url);
 const readFixture = (name) => Deno.readFileSync(new URL(`fixtures/${name}`, here));
@@ -342,7 +348,7 @@ Deno.test("통로 계량기는 지나간 바이트를 알려준다", async () =>
 
 // --- 조각 저장소와 이어받기 ---
 import { downloadTrack, fetchSegments } from "../src/download.js";
-import { useTransport } from "../src/net.js";
+import { directTransport, useTransport } from "../src/net.js";
 import { openMemory } from "../src/store.js";
 
 Deno.test("받아둔 조각은 다시 받지 않는다(이어받기)", async () => {
@@ -655,4 +661,99 @@ Deno.test("이어받기의 첫 요청(색인)에서도 클라이언트를 갈아
   assert(asked.some((u) => u.startsWith("https://b.example/")), "새 클라이언트로 묻지 않았다");
   // 403 으로 끝나 버렸다면 갈아타기가 듣지 않은 것이다.
   assert(!/HTTP 403/.test(String(err?.message ?? "")), `403 으로 끝났다: ${err?.message}`);
+});
+
+/** player 응답 하나를 흉내 낸다. */
+function okResponse(url) {
+  return {
+    playabilityStatus: { status: "OK" },
+    streamingData: {
+      adaptiveFormats: [
+        {
+          itag: 299,
+          url,
+          mimeType: 'video/mp4; codecs="avc1.64002a"',
+          height: 1080,
+          contentLength: "100",
+          initRange: { start: "0", end: "10" },
+          indexRange: { start: "11", end: "20" },
+        },
+      ],
+    },
+    videoDetails: { lengthSeconds: "634", title: "제목" },
+  };
+}
+
+/**
+ * InnerTube player 만 가로채는 가짜 서버.
+ *
+ * 어떤 클라이언트로 물었는지 순서대로 적어두고, 표에 있는 클라이언트에만 답을 준다.
+ * 표에 없으면 주소 없는 답(SABR 만)을 준다.
+ */
+function fakePlayerServer(log, table) {
+  useTransport({
+    json: (_url, init) => {
+      const body = JSON.parse(init.body);
+      const client = body.context.client.clientName;
+      log.push({ client, sts: body.playbackContext?.contentPlaybackContext?.signatureTimestamp });
+      return Promise.resolve(
+        table[client] || { playabilityStatus: { status: "OK" }, streamingData: {} },
+      );
+    },
+    text: () => Promise.resolve(""),
+    bytes: () => Promise.reject(new Error("쓰지 않는다")),
+  });
+  return { restore: () => useTransport(directTransport()) };
+}
+
+Deno.test("STS 를 주면 playbackContext 가 붙는다 (TVHTML5_SIMPLY 필수)", () => {
+  // STS 없이 물으면 유튜브가 UNPLAYABLE 로 끝내고 주소를 하나도 주지 않는다(실측).
+  const without = buildPlayerRequest("abc123", "VISITOR");
+  assertEquals(without.playbackContext, undefined);
+
+  const with_ = buildPlayerRequest("abc123", "VISITOR", { clientName: "TVHTML5_SIMPLY" }, 20690);
+  assertEquals(with_.playbackContext.contentPlaybackContext.signatureTimestamp, 20690);
+  assertEquals(with_.context.client.clientName, "TVHTML5_SIMPLY");
+});
+
+Deno.test("로그아웃이면 TVHTML5_SIMPLY 로 먼저 물어본다", async () => {
+  const asked = [];
+  const sent = fakePlayerServer(asked, {
+    TVHTML5_SIMPLY: okResponse("https://r1.googlevideo.com/x?c=TVHTML5_SIMPLY&n=abc"),
+  });
+  const player = await fetchPlayerResponse("v1", "VISITOR", undefined, { sts: 20690 });
+  sent.restore();
+
+  assertEquals(asked[0].client, "TVHTML5_SIMPLY");
+  assertEquals(asked[0].sts, 20690);
+  assert(player.streamingData.adaptiveFormats[0].url.includes("c=TVHTML5_SIMPLY"));
+});
+
+Deno.test("STS 를 못 구하면 TVHTML5_SIMPLY 를 건너뛴다", async () => {
+  const asked = [];
+  const sent = fakePlayerServer(asked, {
+    ANDROID_VR: okResponse("https://r1.googlevideo.com/x?c=ANDROID_VR"),
+  });
+  await fetchPlayerResponse("v1", "VISITOR", undefined, { sts: null });
+  sent.restore();
+
+  assertEquals(asked.map((a) => a.client), ["ANDROID_VR"]);
+});
+
+Deno.test("주소 없이 SABR 만 오면 ANDROID_VR 로 떨어진다 (공식 뮤직비디오)", async () => {
+  const asked = [];
+  // status 는 OK 인데 주소가 없다 — 뮤직비디오에서 실제로 이렇게 온다.
+  const sabrOnly = {
+    playabilityStatus: { status: "OK" },
+    streamingData: { serverAbrStreamingUrl: "https://sabr", adaptiveFormats: [{ itag: 299 }] },
+  };
+  const sent = fakePlayerServer(asked, {
+    TVHTML5_SIMPLY: sabrOnly,
+    ANDROID_VR: okResponse("https://r1.googlevideo.com/x?c=ANDROID_VR"),
+  });
+  const player = await fetchPlayerResponse("v1", "VISITOR", undefined, { sts: 20690 });
+  sent.restore();
+
+  assertEquals(asked.map((a) => a.client), ["TVHTML5_SIMPLY", "ANDROID_VR"]);
+  assert(player.streamingData.adaptiveFormats[0].url.includes("c=ANDROID_VR"));
 });

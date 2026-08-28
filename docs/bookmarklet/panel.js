@@ -360,7 +360,8 @@ const CLIENT = {
  * 주소가 만료된 경우를 잡는 용도다. **60초 벽에는 소용이 없다** — 로그인하지 않으면
  * 유튜브가 앞부분 약 60초까지만 내어주는데, `ANDROID_VR`·`IOS`·`ANDROID` 셋의 경계가
  * 바이트까지 똑같아서(245.7MB 파일에서 셋 다 23.27MB) 갈아타도 그대로 막힌다.
- * 60초 너머를 받으려면 로그인해서 `WEB_CREATOR` 로 물어야 한다(`fetchPlayerResponse`).
+ * 60초 너머를 받으려면 `WEB_CREATOR`(로그인) 나 `TVHTML5_SIMPLY`(로그아웃) 로 물어
+ * PO 토큰을 붙여야 한다(`fetchPlayerResponse`).
  *
  * 갈아타도 안전한 이유: 같은 itag 면 세 클라이언트가 **완전히 같은 파일**을 준다.
  * contentLength·initRange·indexRange·lastModified 가 모두 같고, 앞부분 바이트를 받아
@@ -391,13 +392,20 @@ const FALLBACK_CLIENTS = [
 /** 기본 클라이언트부터 차례로 돌 목록. 몫이 떨어지면 다음 것으로 갈아탄다. */
 const ROTATION = [CLIENT, ...FALLBACK_CLIENTS];
 
-function buildPlayerRequest(videoId, visitorData, client = CLIENT) {
-  return {
+function buildPlayerRequest(videoId, visitorData, client = CLIENT, sts) {
+  const body = {
     videoId,
     context: { client: { ...client, visitorData: visitorData || "" } },
     contentCheckOk: true,
     racyCheckOk: true,
   };
+  // TVHTML5_SIMPLY 는 이게 없으면 UNPLAYABLE 로 끝난다(주소를 하나도 주지 않는다).
+  if (sts) {
+    body.playbackContext = {
+      contentPlaybackContext: { html5Preference: "HTML5_PREF_WANTS", signatureTimestamp: sts },
+    };
+  }
+  return body;
 }
 
 /** 유튜브 첫 화면에서 방문자 ID를 얻는다. 이게 없으면 로그인하라는 답이 온다. */
@@ -425,6 +433,28 @@ const CREATOR_CLIENT = {
   gl: "KR",
 };
 
+/**
+ * 로그인하지 않았을 때 60초 벽을 넘게 해주는 클라이언트.
+ *
+ * 로그아웃 상태에서 `WEB` 계열은 이제 평범한 주소를 주지 않고 SABR 만 준다. 그런데
+ * `TVHTML5_SIMPLY` 는 **여전히 포맷마다 직접 주소를 준다**(게스트 브라우저에서 실측:
+ * 검색으로 뽑은 일반 영상 12개가 모두 주소를 줬다). 주소가 `c=TVHTML5_SIMPLY` 라
+ * 웹 계열로 쳐주므로, 여기에 방문자에 묶은 PO 토큰을 `&pot=` 로 붙이면 벽이 사라진다
+ * (토큰 없이 65초 → 403, 붙이면 맨 끝까지 206 — 영상 둘로 갈라 확인했다).
+ *
+ * **`signatureTimestamp` 가 없으면 `UNPLAYABLE` 로 끝나고 주소를 하나도 주지 않는다.**
+ * 그래서 이 클라이언트는 STS 를 구할 수 있을 때만 쓴다.
+ *
+ * 안 되는 것: 공식 뮤직비디오는 이 클라이언트로도 SABR 만 준다(8개 중 7개).
+ * 그때는 아래 `CLIENT` 로 떨어져 앞 60초까지만 받힌다.
+ */
+const TV_CLIENT = {
+  clientName: "TVHTML5_SIMPLY",
+  clientVersion: "1.0",
+  hl: "en",
+  gl: "US",
+};
+
 const ORIGIN = "https://www.youtube.com";
 
 /**
@@ -440,19 +470,39 @@ const ORIGIN = "https://www.youtube.com";
  * 완전히 같아서 색인·조각 경계·이어받기가 그대로 맞는다. 대신 주소에 `n` 이 붙어 있어
  * 풀어야 한다(`nsig.js`. 안 풀면 403).
  *
- * 로그인이 없으면 예전대로 `ANDROID_VR` 이다 — 60초까지만 받힌다.
+ * 로그인이 없으면 `TVHTML5_SIMPLY` 로 물어본다 — 이쪽도 평범한 주소를 주고, PO 토큰을
+ * 붙이면 끝까지 받힌다. 그것마저 안 되면(공식 뮤직비디오) 예전대로 `ANDROID_VR` 이라
+ * 앞 60초까지만 받힌다.
+ *
+ * @param options.sts 페이지의 `STS`. TVHTML5_SIMPLY 를 쓰려면 꼭 있어야 한다.
  */
-async function fetchPlayerResponse(videoId, visitorData, client = CLIENT) {
+async function fetchPlayerResponse(videoId, visitorData, client = CLIENT, options = {}) {
   // 부르는 쪽이 클라이언트를 콕 집어 줬으면(갈아타기 중이다) 그대로 따른다.
   if (client === CLIENT) {
+    let loggedIn = false;
     try {
       const auth = await authHeaders();
       if (auth) {
+        loggedIn = true;
         const mine = await requestPlayer(videoId, visitorData, CREATOR_CLIENT, auth);
         if (mine?.playabilityStatus?.status === "OK") return mine;
       }
     } catch {
       // 로그인 쪽이 안 되면 조용히 아래 길로 간다.
+    }
+
+    // 로그아웃일 때만. STS 를 구할 수 있을 때만 뜻이 있다(다리를 한 번 건너므로
+    // 로그인해 있으면 아예 묻지 않는다).
+    const sts = loggedIn ? null : await readSts(options.sts);
+    if (sts) {
+      try {
+        const guest = await requestPlayer(videoId, visitorData, TV_CLIENT, null, sts);
+        // 주소를 실제로 줬을 때만 받아들인다. 뮤직비디오는 status 가 OK 라도
+        // SABR 만 주므로, 그때는 아래 ANDROID_VR 로 떨어지는 편이 낫다.
+        if (guest?.playabilityStatus?.status === "OK" && hasDirectUrl(guest)) return guest;
+      } catch {
+        // 이 길이 막히면 조용히 예전 길로 간다.
+      }
     }
   }
 
@@ -471,7 +521,7 @@ async function fetchPlayerResponse(videoId, visitorData, client = CLIENT) {
   return first;
 }
 
-function requestPlayer(videoId, visitorData, client, extraHeaders) {
+function requestPlayer(videoId, visitorData, client, extraHeaders, sts) {
   return request.json(PLAYER_ENDPOINT, {
     method: "POST",
     headers: {
@@ -479,8 +529,28 @@ function requestPlayer(videoId, visitorData, client, extraHeaders) {
       "X-Goog-Visitor-Id": visitorData || "",
       ...extraHeaders,
     },
-    body: JSON.stringify(buildPlayerRequest(videoId, visitorData, client)),
+    body: JSON.stringify(buildPlayerRequest(videoId, visitorData, client, sts)),
   });
+}
+
+/** 주소를 하나라도 줬는지. SABR 만 온 답을 가려낸다. */
+function hasDirectUrl(playerResponse) {
+  return (playerResponse?.streamingData?.adaptiveFormats || []).some((format) => format.url);
+}
+
+/**
+ * `STS`(signatureTimestamp)를 구한다.
+ *
+ * 페이지 쪽에만 있는 값이라 부르는 쪽이 다리를 건너 가져다준다. 못 구해도 받기를 막지
+ * 않는다 — TVHTML5_SIMPLY 를 건너뛰고 예전 길로 갈 뿐이다.
+ */
+async function readSts(source) {
+  try {
+    const value = typeof source === "function" ? await source() : source;
+    return Number(value) || null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1595,12 +1665,13 @@ const CONCURRENCY = 6;
 /** 웹 계열 클라이언트가 준 주소인가. 이쪽만 PO 토큰이 통한다. */
 const isWebUrl = (url) => /[?&]c=(WEB|MWEB|TVHTML5)/.test(url);
 
-async function getFormats(videoId, visitorData, unlock, client, mintPot) {
+async function getFormats(videoId, visitorData, unlock, client, mintPot, getSts) {
   const visitor = visitorData || (await fetchVisitorData());
-  const player = await fetchPlayerResponse(videoId, visitor, client);
+  const player = await fetchPlayerResponse(videoId, visitor, client, { sts: getSts });
   const formats = readFormats(player);
 
   // 웹 계열이 주는 주소에는 `n` 이 붙어 있고, 풀지 않으면 403 이다.
+  // 로그아웃일 때 쓰는 TVHTML5_SIMPLY 주소에도 붙어 있다.
   // ANDROID_VR 주소에는 아예 없으므로 이 길로 오지 않는다.
   const tracks = [...formats.video, ...formats.audio];
   if (unlock && tracks.some((track) => track.url.includes("n="))) {
@@ -1642,9 +1713,10 @@ const statusOf = (error) => Number(/HTTP (\d{3})/.exec(error?.message || "")?.[1
  *
  * 403 의 큰 원인은 두 가지다.
  * - **주소 만료.** 새로 받으면 풀린다. 이 갈아타기가 그 경우를 잡는다.
- * - **60초 벽.** 로그인하지 않으면 유튜브가 앞부분 약 60초까지만 내어준다(PO 토큰이
- *   없어서다). 이건 갈아타도 못 넘는다 — 세 클라이언트의 경계가 바이트까지 같다.
- *   로그인해 있으면 `WEB_CREATOR` 로 물어 끝까지 받으므로 애초에 여기 오지 않는다.
+ * - **60초 벽.** PO 토큰이 없으면 유튜브가 앞부분 약 60초까지만 내어준다. 이건 갈아타도
+ *   못 넘는다 — 세 클라이언트의 경계가 바이트까지 같다. `WEB_CREATOR`(로그인) 나
+ *   `TVHTML5_SIMPLY`(로그아웃) 로 물어 토큰을 붙였으면 끝까지 받으므로 여기 오지 않는다.
+ *   공식 뮤직비디오는 로그아웃에서 두 길이 다 막혀 여전히 앞 60초까지다.
  *
  * 영상과 소리가 거의 동시에 403 을 맞으므로 갈아타기는 한 번만 한다(같은 약속을 나눠 쓴다).
  *
@@ -2541,6 +2613,14 @@ async function onMessage(event) {
         error: String(error?.message || error),
       }, "*");
     }
+    return;
+  }
+
+  // STS(signatureTimestamp). 페이지 쪽에만 있는 값인데, 로그아웃에서 쓰는
+  // TVHTML5_SIMPLY 는 이게 없으면 주소를 하나도 주지 않는다.
+  if (message?.ytdl === "sts") {
+    const sts = Number(window.ytcfg?.get?.("STS")) || 0;
+    window.postMessage({ ytdl: "response", id: message.id, ok: true, sts }, "*");
     return;
   }
 
@@ -3806,7 +3886,9 @@ window.__ytdlPageTeardown = () => {
         });
       // PO 토큰은 페이지 안의 유튜브 발급기가 만든다. 없으면 앞 60초까지만 받힌다.
       const mintPot = async () => (await viaPage.ask({}, "pot"))?.token;
-      const formats = await getFormats(videoId, null, unlock, undefined, mintPot);
+      // 로그아웃일 때 TVHTML5_SIMPLY 로 물으려면 페이지의 STS 가 있어야 한다.
+      const getSts = async () => (await viaPage.ask({}, "sts"))?.sts;
+      const formats = await getFormats(videoId, null, unlock, undefined, mintPot, getSts);
       if (state.videoId !== videoId) return; // 그 사이 다른 영상으로 옮겼다
       if (!formats.video.length || !formats.audio.length) {
         throw new Error("받을 수 있는 mp4 화질이 없습니다");

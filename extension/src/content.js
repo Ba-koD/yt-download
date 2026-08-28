@@ -1214,7 +1214,9 @@
         });
       // PO 토큰은 페이지 안의 유튜브 발급기가 만든다. 없으면 앞 60초까지만 받힌다.
       const mintPot = async () => (await viaPage.ask({}, "pot"))?.token;
-      const formats = await getFormats(videoId, null, unlock, undefined, mintPot);
+      // 로그아웃일 때 TVHTML5_SIMPLY 로 물으려면 페이지의 STS 가 있어야 한다.
+      const getSts = async () => (await viaPage.ask({}, "sts"))?.sts;
+      const formats = await getFormats(videoId, null, unlock, undefined, mintPot, getSts);
       if (state.videoId !== videoId) return; // 그 사이 다른 영상으로 옮겼다
       if (!formats.video.length || !formats.audio.length) {
         throw new Error("받을 수 있는 mp4 화질이 없습니다");

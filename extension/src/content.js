@@ -1085,6 +1085,36 @@
     }
     const box = el.panel.getBoundingClientRect();
     const gap = 10;
+
+    // 좁은 화면에서는 옆에 못 세운다. 위아래 중 **남는 쪽**에 패널 폭짜리 띠로 쌓는다.
+    // 무조건 아래로 붙이면 패널이 화면 아래쪽에 있을 때 띠가 화면 밖으로 나간다(실제로 그랬다).
+    const 좁은가 = box.width + 240 + gap * 2 > window.innerWidth - 16;
+    if (좁은가) {
+      const 보이는것 = [el.clips, el.leftovers].filter((side) => side && !side.hidden);
+      for (const side of [el.clips, el.leftovers]) {
+        if (side && side.hidden) side.style.visibility = "hidden";
+      }
+      const 아래여유 = window.innerHeight - box.bottom - gap - 8;
+      const 위여유 = box.top - gap - 8;
+      const 아래로 = 아래여유 >= 위여유;
+      const 여유 = Math.max(120, 아래로 ? 아래여유 : 위여유);
+      // 여럿이면 남는 높이를 나눠 갖는다.
+      const 몫 = Math.max(110, Math.floor((여유 - gap * (보이는것.length - 1)) / Math.max(1, 보이는것.length)));
+      let cursor = 아래로 ? box.bottom + gap : box.top - gap;
+      for (const side of 보이는것) {
+        side.style.visibility = "visible";
+        side.classList.add("ytdl-side-wide");
+        side.style.width = `${Math.round(box.width)}px`;
+        side.style.maxHeight = `${몫}px`;
+        side.style.left = `${Math.round(Math.max(8, box.left))}px`;
+        const height = Math.min(side.offsetHeight || 0, 몫);
+        const top = 아래로 ? cursor : cursor - height;
+        side.style.top = `${Math.round(Math.max(8, top))}px`;
+        cursor = 아래로 ? top + height + gap : top - gap;
+      }
+      return;
+    }
+
     const put = (side, prefer) => {
       if (!side || side.hidden) return;
       side.style.visibility = "visible";
@@ -1102,19 +1132,9 @@
         return;
       }
 
-      // 좁은 화면: 옆에 세우면 패널을 덮는다(받기 버튼이 가려져 아무것도 못 누른다 — 실제로 그랬다).
-      // 그래서 **패널 폭에 맞춘 띠**로 위아래에 붙인다. 오른쪽 것은 아래, 왼쪽 것은 위로 간다.
-      side.classList.add("ytdl-side-wide");
-      side.style.width = `${Math.round(box.width)}px`;
-      const 아래로 = prefer === "right";
-      const 여유 = Math.max(
-        120,
-        (아래로 ? window.innerHeight - box.bottom : box.top) - gap - 8,
-      );
-      side.style.maxHeight = `${Math.round(여유)}px`;
-      const height = Math.min(side.offsetHeight || 0, 여유);
-      side.style.left = `${Math.round(Math.max(8, box.left))}px`;
-      side.style.top = `${Math.round(Math.max(8, 아래로 ? box.bottom + gap : box.top - gap - height))}px`;
+      // 여기까지 오면 옆에 자리가 있다(좁은 경우는 위에서 이미 처리했다).
+      side.style.left = `${Math.round(Math.max(8, 옆자리))}px`;
+      side.style.top = `${Math.round(Math.max(8, box.top))}px`;
     };
     put(el.clips, "right");
     put(el.leftovers, "left");

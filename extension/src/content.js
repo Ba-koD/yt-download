@@ -53,7 +53,7 @@
   const runtime = bundled ? null : chrome.runtime;
   const load = (name) => (bundled ? bundled[name] : import(runtime.getURL(`src/${name}`)));
   const [
-    { downloadSection, downloadTrack, getFormats, safeFileName, clockLabel, createControl, Stopped },
+    { downloadSection, downloadTrack, downloadClips, getFormats, safeFileName, clockLabel, createControl, Stopped },
     innertube,
     net,
     nsig,
@@ -147,6 +147,12 @@
     hasLeftovers: false,
     // 방금 저장을 마쳤는지. "폴더 열기" 버튼을 보일지 정한다.
     saved: false,
+    // 담아둔 구간 목록. 오른쪽 딸림창에 선다.
+    clips: [],
+    // 지금 편집 중인 구간. 목록에서 고른 것이 여기 들어오고, 시각을 고치면 함께 바뀐다.
+    activeClip: null,
+    // 조각이 남아 있는 영상들. 왼쪽 딸림창에 선다.
+    leftovers: [],
     // 받을 내용(영상+소리 / 영상만 / 소리만). 마지막 선택을 기억한다.
     media: savedMediaMode(),
     // 끝점을 "끝까지"로 둔 상태. 라이브면 방송이 진행되는 만큼 따라간다.
@@ -695,6 +701,10 @@
     // 받는 동안에만 보이는 버튼들.
     el.hold = make("button", { class: "ytdl-hold", type: "button", text: "일시정지", hidden: true });
     el.halt = make("button", { class: "ytdl-halt", type: "button", text: "정지", hidden: true });
+    el.addClip = make("button", {
+      class: "ytdl-add", type: "button", text: "구간 추가",
+      title: "지금 고른 구간을 오른쪽 목록에 담습니다",
+    });
     // 저장이 끝난 뒤에만 보이는 버튼. 확장에서만 쓸 수 있다(웹 페이지는 폴더를 못 연다).
     el.reveal = make("button", {
       class: "ytdl-reveal", type: "button", text: "폴더 열기", hidden: true,
@@ -747,8 +757,30 @@
     ]);
     if (floating) bindPanelDrag(head);
 
+    // 딸림창 둘. **패널의 자식으로 둔다** — 그래야 패널을 끌 때 함께 따라온다.
+    // 따로 띄우면 위치를 매번 맞춰줘야 하고, 스크롤·창 크기 변화에서 어긋난다.
+    el.clipList = make("div", { class: "ytdl-clip-list" });
+    el.clipSaveEach = make("button", { class: "ytdl-clip-btn", type: "button", text: "따로 저장" });
+    el.clipSaveJoin = make("button", { class: "ytdl-clip-btn", type: "button", text: "이어붙여 저장" });
+    el.clipAll = make("button", { class: "ytdl-clip-btn", type: "button", text: "모두 고르기" });
+    el.clips = make("aside", { class: "ytdl-side ytdl-clips", hidden: true }, [
+      make("div", { class: "ytdl-side-head", text: "구간 목록" }),
+      el.clipList,
+      make("div", { class: "ytdl-side-foot" }, [el.clipAll, el.clipSaveEach, el.clipSaveJoin]),
+    ]);
+
+    el.leftoverList = make("div", { class: "ytdl-leftover-list" });
+    el.leftoverAll = make("button", { class: "ytdl-clip-btn", type: "button", text: "모두 버리기" });
+    el.leftovers = make("aside", { class: "ytdl-side ytdl-leftovers", hidden: true }, [
+      make("div", { class: "ytdl-side-head", text: "남은 조각" }),
+      el.leftoverList,
+      make("div", { class: "ytdl-side-foot" }, [el.leftoverAll]),
+    ]);
+
     // 숏츠에는 영상 아래에 끼워 넣을 자리가 없다. 화면 위에 띄운다.
     const panel = make("div", { class: floating ? "ytdl-panel ytdl-float" : "ytdl-panel", hidden: true }, [
+      el.leftovers,
+      el.clips,
       head,
       make("div", { class: "ytdl-body" }, [
         buildTimeline(),
@@ -763,6 +795,7 @@
           el.length,
           el.media,
           el.quality,
+          el.addClip,
           el.go,
           el.reveal,
           el.hold,
@@ -830,6 +863,26 @@
       render();
     });
     el.halt.addEventListener("click", () => state.control?.stop());
+    el.addClip.addEventListener("click", () => {
+      if (state.end - state.start < 0.05) return;
+      const clip = { id: (state.clipSeq = (state.clipSeq || 0) + 1),
+                     start: state.start, end: state.end, picked: true };
+      state.clips.push(clip);
+      state.activeClip = clip.id;
+      render();
+    });
+    el.clipAll.addEventListener("click", () => {
+      const 켤까 = state.clips.some((clip) => !clip.picked);
+      for (const clip of state.clips) clip.picked = 켤까;
+      render();
+    });
+    el.clipSaveEach.addEventListener("click", () => saveClips(false));
+    el.clipSaveJoin.addEventListener("click", () => saveClips(true));
+    el.leftoverAll.addEventListener("click", async () => {
+      for (const item of state.leftovers) await store.discard(item.videoId);
+      if (state.videoId) state.hasLeftovers = false;
+      await refreshLeftovers();
+    });
     el.reveal.addEventListener("click", () => {
       // 배경 일꾼만 chrome.downloads 를 부를 수 있다.
       runtime?.sendMessage({ type: "reveal" }, () => void chrome.runtime.lastError);
@@ -1144,6 +1197,12 @@
     // 끝에 붙여뒀으면 "끝까지"로 본다. 라이브면 방송이 나아가는 만큼 함께 간다.
     state.toEnd = high > low && state.end >= high - 0.5;
     state.touched = true;
+    // 목록에서 고른 구간이 있으면 그 구간을 고치는 중이다.
+    const editing = state.clips.find((clip) => clip.id === state.activeClip);
+    if (editing) {
+      editing.start = state.start;
+      editing.end = state.end;
+    }
     render();
     clearTimeout(state.saveTimer);
     state.saveTimer = setTimeout(saveRange, 400);
@@ -1163,7 +1222,82 @@
     el.discard.hidden = state.busy || !state.hasLeftovers;
     el.reveal.hidden = state.busy || !state.saved || !runtime;
     el.hold.textContent = state.control?.paused ? "이어받기" : "일시정지";
+    el.addClip.disabled = state.busy || state.end - state.start < 0.05;
+    renderClips();
+    renderLeftovers();
     renderTimeline();
+  }
+
+  /** 오른쪽 구간 목록. 고른 줄은 하이라이트되고, 누르면 그 구간이 편집 대상이 된다. */
+  function renderClips() {
+    if (!el.clips) return;
+    el.clips.hidden = !state.clips.length;
+    const rows = state.clips.map((clip, at) => {
+      const pick = make("input", { class: "ytdl-clip-pick", type: "checkbox" });
+      pick.checked = clip.picked;
+      pick.addEventListener("click", (event) => event.stopPropagation());
+      pick.addEventListener("change", () => {
+        clip.picked = pick.checked;
+      });
+      const drop = make("button", { class: "ytdl-clip-del", type: "button", text: "✕", title: "목록에서 뺍니다" });
+      drop.addEventListener("click", (event) => {
+        event.stopPropagation();
+        state.clips = state.clips.filter((one) => one !== clip);
+        if (state.activeClip === clip.id) state.activeClip = null;
+        render();
+      });
+      const row = make(
+        "div",
+        { class: state.activeClip === clip.id ? "ytdl-clip on" : "ytdl-clip" },
+        [
+          pick,
+          make("span", { class: "ytdl-clip-no", text: `구간${at + 1}` }),
+          make("span", {
+            class: "ytdl-clip-time",
+            text: `${showClock(clip.start, 2)}~${showClock(clip.end, 2)}`,
+          }),
+          drop,
+        ],
+      );
+      // 누르면 그 구간으로 옮겨간다. 손잡이·시각칸이 따라 움직이고, 고치면 이 구간이 바뀐다.
+      row.addEventListener("click", () => {
+        state.activeClip = clip.id;
+        setRange(clip.start, clip.end);
+      });
+      return row;
+    });
+    el.clipList.replaceChildren(...rows);
+    const 고른수 = state.clips.filter((clip) => clip.picked).length;
+    el.clipSaveEach.disabled = state.busy || !고른수;
+    el.clipSaveJoin.disabled = state.busy || 고른수 < 2;
+    el.clipSaveEach.textContent = 고른수 ? `따로 저장 (${고른수})` : "따로 저장";
+  }
+
+  /** 왼쪽 남은 조각 목록. 이 브라우저에 쌓인 것을 영상별로 보여준다. */
+  function renderLeftovers() {
+    if (!el.leftovers) return;
+    el.leftovers.hidden = !state.leftovers.length;
+    el.leftoverList.replaceChildren(
+      ...state.leftovers.map((item) => {
+        const drop = make("button", { class: "ytdl-clip-del", type: "button", text: "✕", title: "이 영상의 조각을 지웁니다" });
+        drop.addEventListener("click", async () => {
+          await store.discard(item.videoId);
+          if (item.videoId === state.videoId) state.hasLeftovers = false;
+          await refreshLeftovers();
+        });
+        const 지금 = item.videoId === state.videoId ? " on" : "";
+        return make("div", { class: `ytdl-clip${지금}` }, [
+          make("span", { class: "ytdl-clip-no", text: item.videoId === state.videoId ? "지금" : "" }),
+          make("span", { class: "ytdl-clip-time", text: `${item.videoId} · ${showMb(item.bytes)} MB` }),
+          drop,
+        ]);
+      }),
+    );
+  }
+
+  async function refreshLeftovers() {
+    state.leftovers = await store.listLeftovers().catch(() => []);
+    render();
   }
 
   function renderTimeline() {
@@ -1260,6 +1394,8 @@
         }
         render();
       }).catch(() => {});
+      // 왼쪽 목록은 이 브라우저에 쌓인 것을 통째로 보여준다(다른 영상 것까지).
+      refreshLeftovers().catch(() => {});
     } catch (error) {
       setStatus(error.message, "ytdl-bad");
       say("화질 목록 실패:", error);
@@ -1287,7 +1423,7 @@
       return;
     }
     const percent = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
-    let text = `받는 중 ${percent}%`;
+    let text = `${state.stageLabel || ""}받는 중 ${percent}%`;
     // 일반 영상은 진행량이 바이트라 그대로 적는다. 라이브는 조각 개수로 받아서
     // 전체 용량을 미리 모르므로, 받는 쪽이 트랙별 평균 조각 크기로 어림해 준
     // 용량(size)을 적는다(진행률 막대는 여전히 조각 개수 기준이라 정확하다).
@@ -1312,8 +1448,33 @@
     setStatus(text);
   }
 
-  async function start() {
+  /**
+   * 고른 구간들을 받는다.
+   *
+   * `merge` 면 하나로 이어붙이고, 아니면 구간마다 파일을 하나씩 만든다.
+   * 따로 저장은 기존 받기를 구간마다 한 번씩 부르는 것뿐이라 이어받기·갈아타기가 그대로 산다.
+   */
+  async function saveClips(merge) {
+    if (state.busy) return;
+    const order = state.clips.filter((clip) => clip.picked).sort((a, b) => a.start - b.start);
+    if (!order.length) return;
+    if (merge) {
+      await start({ clips: order });
+      return;
+    }
+    for (let at = 0; at < order.length; at += 1) {
+      const clip = order[at];
+      state.activeClip = clip.id;
+      setRange(clip.start, clip.end);
+      await start({ label: `구간 ${at + 1}/${order.length} · ` });
+      if (!state.saved) return; // 실패하거나 멈췄으면 거기서 그만둔다
+    }
+    setStatus(`구간 ${order.length}개를 모두 저장했습니다`, "ytdl-ok");
+  }
+
+  async function start(options = {}) {
     if (state.busy || !state.formats) return;
+    state.stageLabel = options.label || "";
     const mode = state.media || "merged";
     const choices = qualityChoices();
     const chosenFormat =
@@ -1370,8 +1531,14 @@
           showProgress();
         },
       };
-      const { file, mediaStart, mediaEnd, mediaSeconds } =
-        mode === "merged"
+      const { file, mediaStart, mediaEnd, mediaSeconds } = options.clips
+        ? await downloadClips({
+            ...request,
+            clips: options.clips,
+            videoFormat: chosenFormat,
+            audioFormat: state.formats.audio[0],
+          })
+        : mode === "merged"
           ? await downloadSection({
               ...request,
               videoFormat: chosenFormat,
@@ -1385,7 +1552,8 @@
       const realStart = Number.isFinite(mediaStart) ? mediaStart : state.start;
       const realEnd = Number.isFinite(mediaEnd) ? mediaEnd : state.end;
       // 소리만 받은 파일은 확장자(m4a)가, 소리 없는 영상은 이름표가 내용을 알려준다.
-      const marker = mode === "video" ? " [영상만]" : "";
+      const marker =
+        (mode === "video" ? " [영상만]" : "") + (options.clips ? ` [구간 ${options.clips.length}개]` : "");
       const ext = mode === "audio" ? "m4a" : "mp4";
       // 어떤 화질로 받았는지 파일 이름만 봐도 알 수 있게 앞에 붙인다. 예: [2160p60 AV1]
       const quality = innertube.formatLabel(chosenFormat);
@@ -1413,7 +1581,7 @@
             // 취소했거나 알 수 없다. 조각을 남겨 다시 누르면 곧바로 나오게 한다.
             state.hasLeftovers = true;
           }
-          render();
+          refreshLeftovers().catch(() => render());
         });
       } else {
         state.hasLeftovers = true;

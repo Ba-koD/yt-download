@@ -141,6 +141,49 @@ export async function hasLeftovers(videoId) {
   }
 }
 
+/**
+ * 조각이 남아 있는 영상을 전부 훑는다. 왼쪽 "남은 조각" 목록이 쓴다.
+ *
+ * 크기까지 재는 이유 — 몇 MB 가 눌러앉아 있는지 보이지 않으면 지울 마음이 안 생긴다.
+ * 파일 수가 많을 수 있어 크기는 조각 파일만 더한다(완성본은 세지 않는다).
+ */
+export async function listLeftovers() {
+  const out = [];
+  try {
+    const opfs = await navigator.storage.getDirectory();
+    const root = await dir(opfs, ROOT, false);
+    if (!root) return out;
+    for await (const [videoId, home] of root.entries()) {
+      if (home.kind !== "directory") continue;
+      let bytes = 0;
+      let chunks = 0;
+      let stamped = 0;
+      try {
+        const raw = await readFileIn(home, STAMP);
+        stamped = Number(new TextDecoder().decode(raw)) || 0;
+      } catch {
+        // 도장이 없으면 0 으로 둔다
+      }
+      for await (const [, box] of home.entries()) {
+        if (box.kind !== "directory") continue;
+        for await (const [, file] of box.entries()) {
+          if (file.kind !== "file") continue;
+          try {
+            bytes += (await file.getFile()).size;
+            chunks += 1;
+          } catch {
+            // 읽다 만 파일은 건너뛴다
+          }
+        }
+      }
+      if (chunks) out.push({ videoId, bytes, chunks, usedAt: stamped });
+    }
+  } catch {
+    // 디스크가 없는 곳이면 빈 목록이다
+  }
+  return out.sort((a, b) => b.usedAt - a.usedAt);
+}
+
 /** 이 영상의 저장소를 통째로 지운다(받다 만 조각 버리기). */
 export async function discard(videoId) {
   try {

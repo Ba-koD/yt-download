@@ -127,7 +127,9 @@
 /* 영상 정보 바로 아래에 끼어드는 패널.
    자기 너비를 기준으로 줄을 다시 짜는 반응형이다(아래 @container 규칙).
    화면(뷰포트)이 아니라 패널이 낀 칸의 너비가 기준이라 컨테이너 쿼리를 쓴다. */
+/* 딸림창(구간 목록·남은 조각)을 패널 양옆에 세우는 기준점. */
 .ytdl-panel {
+  position: relative;
   container-type: inline-size;
   margin: 12px 0 16px;
   border: 1px solid rgba(0, 0, 0, 0.1);
@@ -618,5 +620,147 @@ html[dark] .ytdl-go:disabled {
   .ytdl-discard {
     flex: 1 1 auto;
     margin-left: 0;
+  }
+}
+
+/* ── 딸림창: 구간 목록(오른쪽)과 남은 조각(왼쪽) ──────────────────────
+   패널의 자식이라 패널을 끌면 함께 따라온다. 자리가 좁으면 아래로 접어 넣는다. */
+.ytdl-side {
+  position: absolute;
+  top: 0;
+  width: 240px;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  box-sizing: border-box;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  background: #f9f9f9;
+  color: #0f0f0f;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25);
+  z-index: 1;
+}
+
+.ytdl-clips {
+  left: calc(100% + 10px);
+}
+
+.ytdl-leftovers {
+  right: calc(100% + 10px);
+}
+
+.ytdl-side-head {
+  font-weight: 500;
+  opacity: 0.75;
+}
+
+.ytdl-side-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ytdl-clip-list,
+.ytdl-leftover-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  max-height: 40vh;
+}
+
+/* 목록의 한 줄. 누르면 그 구간으로 옮겨가므로 눌릴 것처럼 보여야 한다. */
+.ytdl-clip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.ytdl-clip:hover {
+  background: rgba(127, 127, 127, 0.12);
+}
+
+/* 지금 편집 중인 구간. 어느 줄을 고쳤는지 한눈에 보이게 한다. */
+.ytdl-clip.on {
+  border-color: currentColor;
+  background: rgba(127, 127, 127, 0.16);
+}
+
+.ytdl-clip-no {
+  min-width: 40px;
+  opacity: 0.7;
+  font-size: 12px;
+}
+
+.ytdl-clip-time {
+  flex: 1 1 auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ytdl-clip-del {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  opacity: 0.6;
+  padding: 0 4px;
+}
+
+.ytdl-clip-del:hover {
+  opacity: 1;
+}
+
+.ytdl-clip-btn,
+.ytdl-add {
+  border: 1px solid var(--ytdl-line, rgba(255, 255, 255, 0.2));
+  background: transparent;
+  color: inherit;
+  border-radius: 18px;
+  padding: 0 12px;
+  height: 32px;
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+}
+
+.ytdl-add {
+  height: 36px;
+}
+
+.ytdl-clip-btn:hover:not(:disabled),
+.ytdl-add:hover:not(:disabled) {
+  background: rgba(127, 127, 127, 0.15);
+}
+
+.ytdl-clip-btn:disabled,
+.ytdl-add:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+html[dark] .ytdl-side {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: #0f0f0f;
+  color: #f1f1f1;
+}
+
+/* 창이 좁으면 옆에 세울 자리가 없다. 패널 아래로 내려 붙인다. */
+@media (max-width: 1500px) {
+  .ytdl-side {
+    position: static;
+    width: auto;
+    max-height: none;
+    margin: 8px 0 0;
+    box-shadow: none;
   }
 }

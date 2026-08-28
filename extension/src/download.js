@@ -695,6 +695,98 @@ export async function downloadSection({
 }
 
 /**
+ * 고른 구간 여러 개를 **하나로 이어붙여** 받는다.
+ *
+ * 어떻게 이어지나 — 조각들을 시간 순으로 늘어놓고 한 번에 조립한다. 샘플 시간은 조각을
+ * 이어 붙인 순서대로 흐르므로(`indexTrack` 이 길이를 누적한다), 구간 사이의 빈 곳은
+ * 저절로 사라지고 고른 데만 이어서 재생된다.
+ *
+ * **경계는 조각 단위다.** 구간 하나만 받을 때는 뒤를 샘플 단위로 잘라내지만, 여기서는
+ * 시간축이 이어지지 않아 그 계산을 쓸 수 없다. 그래서 각 구간이 조각 경계까지 조금
+ * 넉넉하게 담긴다(앞쪽 한 번만 편집 목록으로 다듬는다).
+ *
+ * 라이브와 SABR(뮤직비디오)은 아직 지원하지 않는다 — 색인이 있어야 조각을 고를 수 있다.
+ */
+export async function downloadClips({
+  videoFormat,
+  audioFormat,
+  clips,
+  onProgress,
+  control,
+  store,
+  renewUrl,
+}) {
+  if (videoFormat.sabr || videoFormat.segmentSeconds > 0 || !videoFormat.indexRange) {
+    throw new Error("이 영상은 이어붙이기를 지원하지 않습니다");
+  }
+  const order = [...clips].sort((a, b) => a.start - b.start);
+  if (!order.length) throw new Error("고른 구간이 없습니다");
+
+  const media = store || openMemory();
+  const pull = makePuller(renewUrl);
+  const caches = {
+    video: await media.track(videoFormat.itag),
+    audio: await media.track(audioFormat.itag),
+  };
+
+  onProgress?.(0, 1, "색인 읽는 중");
+  const [videoIndex, audioIndex] = await Promise.all([
+    fetchIndex(videoFormat, pull),
+    fetchIndex(audioFormat, pull),
+  ]);
+
+  const picked = { video: [], audio: [] };
+  let done = 0;
+  const total = order.length;
+  for (const clip of order) {
+    // 소리는 영상 조각이 시작하는 곳부터 받아야 두 트랙이 같은 자리에서 시작한다.
+    const head = segmentsForRange(videoIndex.segments, clip.start, clip.end)[0]?.time ?? clip.start;
+    const [v, a] = await Promise.all([
+      fetchSegments(videoFormat, videoIndex, clip.start, clip.end, null, control, caches.video, pull),
+      fetchSegments(audioFormat, audioIndex, head, clip.end, null, control, caches.audio, pull),
+    ]);
+    picked.video.push(...v.segments);
+    picked.audio.push(...a.segments);
+    done += 1;
+    onProgress?.(done, total, "받는 중");
+  }
+
+  // 겹치는 구간을 고르면 같은 조각이 두 번 들어온다. 이름으로 걸러 시간 순으로 세운다.
+  const tidy = (segments) => {
+    const seen = new Map();
+    for (const segment of segments) if (!seen.has(segment.name)) seen.set(segment.name, segment);
+    return [...seen.values()].sort((x, y) => x.time - y.time);
+  };
+  const video = { init: videoIndex.init, segments: tidy(picked.video) };
+  const audio = { init: audioIndex.init, segments: tidy(picked.audio) };
+  video.firstTime = video.segments[0].time;
+  audio.firstTime = audio.segments[0].time;
+
+  onProgress?.(0, 1, "합치는 중");
+  const output = await media.output();
+  let file;
+  try {
+    // 꼬리를 자르지 않는다(end 를 무한대로) — 구간이 여럿이라 "몇 초까지"가 뜻을 잃는다.
+    await writeProgressive(
+      output,
+      [
+        { ...video, cache: caches.video, snap: true },
+        { ...audio, cache: caches.audio },
+      ],
+      { start: order[0].start, end: Infinity },
+      control,
+      (step, steps) => onProgress?.(step, steps, "합치는 중"),
+    );
+    file = await output.close();
+  } catch (error) {
+    output.abort();
+    throw error;
+  }
+  const seconds = video.segments.reduce((sum, segment) => sum + segment.duration, 0);
+  return { file, mediaStart: order[0].start, mediaEnd: order[0].start + seconds, mediaSeconds: seconds };
+}
+
+/**
  * 트랙 하나만 골라 파일로 만든다. 앞머리는 원본 그대로라 트랙을 합칠 일이 없다.
  *
  * 영상은 키프레임(조각 경계)에서만 자를 수 있어 조각을 통째로 담고,

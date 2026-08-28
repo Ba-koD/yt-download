@@ -341,7 +341,7 @@ Deno.test("통로 계량기는 지나간 바이트를 알려준다", async () =>
 });
 
 // --- 조각 저장소와 이어받기 ---
-import { fetchSegments } from "../src/download.js";
+import { downloadTrack, fetchSegments } from "../src/download.js";
 import { useTransport } from "../src/net.js";
 import { openMemory } from "../src/store.js";
 
@@ -607,4 +607,52 @@ Deno.test("화질 이름이 없으면 높이와 주사율로 짓는다", () => {
   const base = { mimeType: "video/mp4", codec: "av01.0.12M.08" };
   assertEquals(formatLabel({ ...base, height: 1080, fps: 60 }), "1080p60 AV1");
   assertEquals(formatLabel({ ...base, height: 1080, fps: 30 }), "1080p AV1");
+});
+
+Deno.test("이어받기의 첫 요청(색인)에서도 클라이언트를 갈아탄다", async () => {
+  // 몫이 떨어진 뒤 다시 눌러 이어받을 때 맨 처음 하는 일이 색인 받기다. 여기서
+  // 갈아타지 못하면 조각 받기까지 가보지도 못하고 403 으로 끝난다 — 실제로 그랬다.
+  const head = readFixture("itag401-index.bin");
+  const format = {
+    itag: 401,
+    url: "https://a.example/videoplayback?itag=401",
+    initRange: { start: 0, end: 1000 },
+    indexRange: { start: 1001, end: VIDEO_INDEX_END },
+  };
+
+  const asked = [];
+  useTransport({
+    json: () => { throw new Error("쓰지 않는다"); },
+    text: () => { throw new Error("쓰지 않는다"); },
+    async bytes(url) {
+      asked.push(url);
+      // 첫 클라이언트의 몫은 다 썼다.
+      if (url.startsWith("https://a.example/")) throw new Error("요청 실패 (HTTP 403)");
+      return head;
+    },
+  });
+
+  let 갈아탄횟수 = 0;
+  const renewUrl = async () => {
+    갈아탄횟수 += 1;
+    return () => "https://b.example/videoplayback?itag=401";
+  };
+
+  // 색인만 확인하면 되므로, 조각을 받기 전에 멈춰 세운다.
+  const control = { stopped: true, signal: null };
+  const err = await downloadTrack({
+    format,
+    kind: "video",
+    start: 0,
+    end: 1,
+    store: openMemory(),
+    renewUrl,
+    control,
+  }).catch((e) => e);
+
+  assertEquals(갈아탄횟수, 1);
+  assert(asked.length >= 2, `갈아탄 뒤 다시 묻지 않았다 (${asked.length}번)`);
+  assert(asked.some((u) => u.startsWith("https://b.example/")), "새 클라이언트로 묻지 않았다");
+  // 403 으로 끝나 버렸다면 갈아타기가 듣지 않은 것이다.
+  assert(!/HTTP 403/.test(String(err?.message ?? "")), `403 으로 끝났다: ${err?.message}`);
 });

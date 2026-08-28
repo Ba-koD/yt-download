@@ -161,9 +161,16 @@ export async function fetchLiveSegments(format, start, end, onProgress, control,
   return { init, segments, firstTime: first * step };
 }
 
-/** 앞머리(init)와 조각 색인(sidx)을 한 번에 받아 온다. 둘이 파일 맨 앞에 붙어 있다. */
-export async function fetchIndex(format) {
-  const head = await fetchRange(format.url, 0, format.indexRange.end);
+/**
+ * 앞머리(init)와 조각 색인(sidx)을 한 번에 받아 온다. 둘이 파일 맨 앞에 붙어 있다.
+ *
+ * 이 첫 요청도 `pull` 을 거쳐야 한다. 몫이 떨어진 뒤 다시 눌러 이어받을 때 맨 처음
+ * 하는 일이 바로 여기라서, 여기서 갈아타지 못하면 조각 받기까지 가보지도 못하고
+ * 403 으로 끝난다. 클라이언트가 달라도 initRange/indexRange 는 같으므로(실측) 그대로 쓴다.
+ */
+export async function fetchIndex(format, pull) {
+  const fetchOne = (url) => fetchRange(url, 0, format.indexRange.end);
+  const head = pull ? await pull(format, fetchOne) : await fetchOne(format.url);
   const init = head.subarray(format.initRange.start, format.initRange.end + 1);
   const index = parseSidx(head, format.indexRange.end);
   return { init: init.slice(), ...index };
@@ -575,8 +582,8 @@ export async function downloadSection({
   } else {
     onProgress?.(0, 1, "색인 읽는 중");
     const [videoIndex, audioIndex] = await Promise.all([
-      fetchIndex(videoFormat),
-      fetchIndex(audioFormat),
+      fetchIndex(videoFormat, pull),
+      fetchIndex(audioFormat, pull),
     ]);
     // 영상은 조각 경계에서만 시작할 수 있다. 소리도 그 지점부터 받아야
     // 두 트랙이 같은 곳에서 시작한다. 그러지 않으면 소리가 늦게 시작해 앞서 간다.
@@ -644,7 +651,7 @@ export async function downloadTrack({ format, kind, start, end, onProgress, cont
     track = await fetchLiveSegments(format, start, end, report, control, cache, pull);
   } else {
     onProgress?.(0, 1, "색인 읽는 중");
-    const index = await fetchIndex(format);
+    const index = await fetchIndex(format, pull);
     const parts = await fetchSegments(format, index, start, end, report, control, cache, pull);
     track = { init: index.init, ...parts };
   }

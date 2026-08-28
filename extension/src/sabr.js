@@ -8,6 +8,7 @@
 // (안드로이드·iOS 토큰을 브라우저에서 만들 수 없어서다). SABR 은 그 벽이 없다.
 // 실측: 213초 뮤직비디오에서 90·150·200초 조각을 모두 받았다.
 
+import { parseSidx, segmentsForRange } from "./mp4index.js";
 import { request } from "./net.js";
 
 /* ── protobuf 쓰기 ─────────────────────────────────────────────── */
@@ -284,6 +285,31 @@ function readAnswer(data, contexts) {
 /* ── 구간 받기 ─────────────────────────────────────────────────── */
 
 /**
+ * 앞머리를 받아 갈무리하면서 **고른 구간의 정확한 크기**를 함께 낸다.
+ *
+ * SABR 이 주는 앞머리는 `ftyp`+`moov`+`sidx` 다 — 일반 경로에서 `fetchIndex` 가 파일 앞을
+ * 잘라 받는 것과 같은 내용이고, 길이도 `indexRange.end + 1` 과 딱 맞는다(실측).
+ * 그래서 색인을 그대로 읽어 어느 조각이 몇 바이트인지 처음부터 알 수 있다.
+ *
+ * 앞머리 자체는 `initRange` 까지만 남긴다. 뒤에 붙은 색인은 합칠 때 쓰지 않는다.
+ */
+function takeInit(track, bytes, start, end) {
+  const format = track.format;
+  track.init = bytes;
+  if (!format?.indexRange || !format?.initRange) return;
+  try {
+    const index = parseSidx(bytes, format.indexRange.end);
+    track.init = bytes.subarray(format.initRange.start, format.initRange.end + 1).slice();
+    track.expected = segmentsForRange(index.segments, start, end).reduce(
+      (sum, segment) => sum + (segment.end - segment.start + 1),
+      0,
+    );
+  } catch {
+    // 색인을 못 읽어도 받기는 계속한다. 총량만 모른 채 간다.
+  }
+}
+
+/**
  * 고른 구간을 덮을 때까지 재생 위치를 밀어가며 조각을 모은다.
  *
  * 서버가 한 번에 얼마를 줄지는 서버가 정한다. 그래서 "받은 조각 중 가장 뒤쪽 끝"을
@@ -318,6 +344,18 @@ export async function fetchSabrSection({
   };
   const 남은트랙 = () => [tracks.video, tracks.audio].filter((t) => t.format);
 
+  // 받은 양과 **정확한 총량**을 알린다.
+  //
+  // 총량은 앞머리에 딸려 온 색인(sidx)에서 한 번에 낸다. 조각을 받아가며 평균으로
+  // 어림하면 받을수록 총량이 불어나 남은 시간이 계속 어긋난다(라이브가 그렇다).
+  // SABR 은 색인이 있으니 그럴 이유가 없다.
+  const 보고 = () => {
+    const list = 남은트랙();
+    const bytes = list.reduce((n, t) => n + t.bytes, 0);
+    const estimated = list.reduce((n, t) => n + (t.expected || 0), 0);
+    onProgress?.(bytes, Math.max(1, estimated), { bytes, estimated });
+  };
+
   let playerTimeMs = Math.max(0, start) * 1000;
   let guard = 0;
 
@@ -338,7 +376,7 @@ export async function fetchSabrSection({
       const track = byItag.get(Number(segment.itag));
       if (!track) continue;
       if (segment.init) {
-        if (!track.init) track.init = segment.bytes;
+        if (!track.init) takeInit(track, segment.bytes, start, end);
         continue;
       }
       const name = `q${segment.sequence}`;
@@ -356,11 +394,7 @@ export async function fetchSabrSection({
 
     const 진행 = 남은트랙().map(covered);
     const 가장뒤처진 = Math.min(...진행);
-    onProgress?.(
-      Math.min(가장뒤처진 - start, end - start),
-      Math.max(0.001, end - start),
-      { bytes: 남은트랙().reduce((n, t) => n + t.bytes, 0), estimated: 0 },
-    );
+    보고();
     if (가장뒤처진 >= end) break;
     const 다음 = 가장뒤처진 * 1000;
     if (!진전 || 다음 <= playerTimeMs) break; // 더 안 나간다

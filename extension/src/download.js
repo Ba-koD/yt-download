@@ -30,9 +30,11 @@ export async function getFormats(videoId, visitorData, unlock, client, mintPot, 
   // 로그아웃일 때 쓰는 TVHTML5_SIMPLY 주소에도 붙어 있다.
   // ANDROID_VR 주소에는 아예 없으므로 이 길로 오지 않는다.
   const tracks = [...formats.video, ...formats.audio];
-  if (unlock && tracks.some((track) => track.url.includes("n="))) {
-    const solved = await unlock(tracks.map((track) => track.url));
-    tracks.forEach((track, index) => {
+  // SABR 로 받을 영상은 포맷마다 주소가 없다. 푸는 것은 SABR 주소 하나뿐이라 아래에서 따로 한다.
+  const withUrl = tracks.filter((track) => track.url);
+  if (unlock && withUrl.some((track) => track.url.includes("n="))) {
+    const solved = await unlock(withUrl.map((track) => track.url));
+    withUrl.forEach((track, index) => {
       track.url = solved[index];
     });
   }
@@ -40,14 +42,14 @@ export async function getFormats(videoId, visitorData, unlock, client, mintPot, 
   // PO 토큰이 없으면 유튜브는 앞부분 약 60초까지만 내어준다. 웹 계열 주소에만 통하므로
   // 그쪽일 때만 붙인다(ANDROID_VR 주소에 붙여봐야 403 그대로다 — 실측).
   // 못 만들어도 받기를 막지는 않는다. 앞 60초까지는 그대로 되니까.
-  if (mintPot && tracks.some((track) => isWebUrl(track.url) && !/[?&]pot=/.test(track.url))) {
+  if (mintPot && withUrl.some((track) => isWebUrl(track.url) && !/[?&]pot=/.test(track.url))) {
     try {
       // 무엇에 묶을지는 주소를 준 클라이언트가 정한다. `TVHTML5_SIMPLY` 는 인증 없이
       // 받은 주소라 **방문자**에 묶어야 한다(계정에 묶으면 로그인 상태에서 403).
-      const guestUrl = tracks.some((track) => /[?&]c=TVHTML5/.test(track.url));
+      const guestUrl = withUrl.some((track) => /[?&]c=TVHTML5/.test(track.url));
       const token = await mintPot(guestUrl ? "visitor" : undefined);
       if (token) {
-        for (const track of tracks) {
+        for (const track of withUrl) {
           if (isWebUrl(track.url) && !/[?&]pot=/.test(track.url)) {
             track.url += `&pot=${encodeURIComponent(token)}`;
           }

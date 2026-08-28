@@ -724,7 +724,8 @@
     el.leftoversToggle = make("button", { class: "ytdl-add ytdl-toggle", type: "button", text: "남은 조각", hidden: true });
     el.leftoversToggle.addEventListener("click", () => {
       state.leftoversShut = !state.leftoversShut;
-      render();
+      if (state.leftoversShut) render();
+      else refreshLeftovers().catch(() => render()); // 펼 때는 최신 목록으로
     });
     // 저장이 끝난 뒤에만 보이는 버튼. 확장에서만 쓸 수 있다(웹 페이지는 폴더를 못 연다).
     el.reveal = make("button", {
@@ -805,7 +806,8 @@
     el.leftoverScope = make("button", { class: "ytdl-clip-btn", type: "button", text: "전체 보기" });
     el.leftoverScope.addEventListener("click", () => {
       state.leftoversAll = !state.leftoversAll;
-      render();
+      // 목록을 다시 읽는다. 다른 탭이나 다른 영상에서 쌓인 것이 그새 생겼을 수 있다.
+      refreshLeftovers().catch(() => render());
     });
     el.leftoverAll = make("button", { class: "ytdl-clip-btn", type: "button", text: "모두 버리기" });
     const shutLeft = make("button", { class: "ytdl-side-shut", type: "button", text: "✕", title: "접기" });
@@ -1443,13 +1445,13 @@
       ? state.leftovers
       : state.leftovers.filter((item) => item.videoId === state.videoId);
     const 다른것 = state.leftovers.length - 보일것.length;
-    el.leftovers.hidden = !보일것.length || state.leftoversShut;
-    el.leftoversToggle.hidden = !보일것.length;
+    el.leftovers.hidden = !state.leftovers.length || state.leftoversShut;
+    el.leftoversToggle.hidden = !state.leftovers.length;
     el.leftoversToggle.textContent = `남은 조각 ${보일것.length}`;
     el.leftoversToggle.classList.toggle("on", !state.leftoversShut);
     el.leftoverScope.textContent = state.leftoversAll ? "이 영상만" : `전체 보기${다른것 ? ` (+${다른것})` : ""}`;
     el.leftoverScope.classList.toggle("on", state.leftoversAll);
-    el.leftoverScope.hidden = !state.leftoversAll && !다른것;
+    el.leftoverScope.hidden = false;
     el.leftoverAll.textContent = state.leftoversAll ? "모두 버리기" : "조각 버리기";
     el.leftoverList.replaceChildren(
       ...보일것.map((item) => {

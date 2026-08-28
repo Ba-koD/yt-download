@@ -757,8 +757,11 @@
     ]);
     if (floating) bindPanelDrag(head);
 
-    // 딸림창 둘. **패널의 자식으로 둔다** — 그래야 패널을 끌 때 함께 따라온다.
-    // 따로 띄우면 위치를 매번 맞춰줘야 하고, 스크롤·창 크기 변화에서 어긋난다.
+    // 딸림창 둘. **패널과 별개의 창**이다(문서 본문에 따로 붙는다).
+    //
+    // 패널 안에 두면 패널의 스크롤·최대 높이에 갇혀 잘리고, 좁은 창에서는 안쪽으로
+    // 접혀 버린다. 그래서 따로 띄우고 `placeSides()` 가 패널 옆자리를 계산해 붙여 준다
+    // — 끌든 스크롤하든 창을 줄이든 늘 패널을 따라다닌다.
     el.clipList = make("div", { class: "ytdl-clip-list" });
     el.clipSaveEach = make("button", { class: "ytdl-clip-btn", type: "button", text: "따로 저장" });
     el.clipSaveJoin = make("button", { class: "ytdl-clip-btn", type: "button", text: "이어붙여 저장" });
@@ -779,8 +782,6 @@
 
     // 숏츠에는 영상 아래에 끼워 넣을 자리가 없다. 화면 위에 띄운다.
     const panel = make("div", { class: floating ? "ytdl-panel ytdl-float" : "ytdl-panel", hidden: true }, [
-      el.leftovers,
-      el.clips,
       head,
       make("div", { class: "ytdl-body" }, [
         buildTimeline(),
@@ -806,6 +807,7 @@
       ]),
     ]);
     el.panel = panel;
+    document.body.append(el.leftovers, el.clips);
 
     for (const button of [markIn, markOut]) {
       button.addEventListener("click", () => markHere(button.dataset.mark));
@@ -1032,6 +1034,11 @@
    * 한 번이라도 직접 옮겼으면 그 뒤로는 자동 배치를 하지 않는다. 놓아둔 자리가
    * 매 초 원래대로 돌아가면 옮기는 의미가 없다.
    */
+  // 패널이 움직이는 길은 끌기 말고도 있다 — 페이지 스크롤(끼워 넣은 패널), 창 크기 변화,
+  // 유튜브가 화면을 다시 그릴 때. 그때마다 딸림창 자리를 다시 잡는다.
+  window.addEventListener("scroll", () => placeSides(), { passive: true });
+  window.addEventListener("resize", () => placeSides(), { passive: true });
+
   function bindPanelDrag(head) {
     head.addEventListener("pointerdown", (event) => {
       // 닫기 단추를 누른 것은 끌기가 아니다.
@@ -1065,12 +1072,49 @@
   }
 
   /** 화면 밖으로 나가지 않게 잡아두고 옮긴다. */
+  /**
+   * 딸림창을 패널 양옆에 붙인다.
+   *
+   * 옆에 자리가 모자라면 패널 아래로 내린다. 화면 밖으로 나가지 않게 가둔다.
+   */
+  function placeSides() {
+    if (!el.panel || el.panel.hidden) {
+      if (el.clips) el.clips.style.visibility = "hidden";
+      if (el.leftovers) el.leftovers.style.visibility = "hidden";
+      return;
+    }
+    const box = el.panel.getBoundingClientRect();
+    const gap = 10;
+    const put = (side, prefer) => {
+      if (!side || side.hidden) return;
+      side.style.visibility = "visible";
+      const width = side.offsetWidth || 240;
+      const height = side.offsetHeight || 0;
+      let left =
+        prefer === "right"
+          ? box.right + gap
+          : box.left - width - gap;
+      let top = box.top;
+      const 넘침 = prefer === "right" ? left + width > window.innerWidth - 8 : left < 8;
+      if (넘침) {
+        // 옆이 좁다. 패널 아래에 붙인다(오른쪽 것은 오른쪽 끝, 왼쪽 것은 왼쪽 끝에 맞춘다).
+        left = prefer === "right" ? box.right - width : box.left;
+        top = box.bottom + gap;
+      }
+      side.style.left = `${Math.round(Math.max(8, Math.min(left, window.innerWidth - width - 8)))}px`;
+      side.style.top = `${Math.round(Math.max(8, Math.min(top, window.innerHeight - Math.min(height, 200) - 8)))}px`;
+    };
+    put(el.clips, "right");
+    put(el.leftovers, "left");
+  }
+
   function moveFloatingPanel(left, top) {
     const width = el.panel.offsetWidth;
     const height = el.panel.offsetHeight;
     const limit = (value, high) => Math.max(8, Math.min(value, Math.max(8, high)));
     el.panel.style.left = `${Math.round(limit(left, window.innerWidth - width - 8))}px`;
     el.panel.style.top = `${Math.round(limit(top, window.innerHeight - height - 8))}px`;
+    placeSides();
   }
 
   /**
@@ -1228,6 +1272,7 @@
     renderClips();
     renderLeftovers();
     renderTimeline();
+    placeSides();
   }
 
   /** 오른쪽 구간 목록. 고른 줄은 하이라이트되고, 누르면 그 구간이 편집 대상이 된다. */

@@ -626,10 +626,9 @@ html[dark] .ytdl-go:disabled {
 /* ── 딸림창: 구간 목록(오른쪽)과 남은 조각(왼쪽) ──────────────────────
    패널의 자식이라 패널을 끌면 함께 따라온다. 자리가 좁으면 아래로 접어 넣는다. */
 .ytdl-side {
-  position: absolute;
-  top: 0;
+  position: fixed;
   width: 240px;
-  max-height: 100%;
+  max-height: 60vh;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -643,12 +642,9 @@ html[dark] .ytdl-go:disabled {
   z-index: 1;
 }
 
-.ytdl-clips {
-  left: calc(100% + 10px);
-}
-
-.ytdl-leftovers {
-  right: calc(100% + 10px);
+/* 자리는 placeSides() 가 잡는다. 패널보다 위에 둬야 가려지지 않는다. */
+.ytdl-side {
+  z-index: 2501;
 }
 
 .ytdl-side-head {
@@ -754,13 +750,3 @@ html[dark] .ytdl-side {
   color: #f1f1f1;
 }
 
-/* 창이 좁으면 옆에 세울 자리가 없다. 패널 아래로 내려 붙인다. */
-@media (max-width: 1500px) {
-  .ytdl-side {
-    position: static;
-    width: auto;
-    max-height: none;
-    margin: 8px 0 0;
-    box-shadow: none;
-  }
-}

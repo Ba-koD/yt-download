@@ -153,6 +153,9 @@
     activeClip: null,
     // 조각이 남아 있는 영상들. 왼쪽 딸림창에 선다.
     leftovers: [],
+    // 딸림창을 접어 뒀는지. 담긴 것이 있어도 접혀 있으면 안 보인다.
+    clipsShut: false,
+    leftoversShut: false,
     // 받을 내용(영상+소리 / 영상만 / 소리만). 마지막 선택을 기억한다.
     media: savedMediaMode(),
     // 끝점을 "끝까지"로 둔 상태. 라이브면 방송이 진행되는 만큼 따라간다.
@@ -708,7 +711,18 @@
     el.halt = make("button", { class: "ytdl-halt", type: "button", text: "정지", hidden: true });
     el.addClip = make("button", {
       class: "ytdl-add", type: "button", text: "구간 추가",
-      title: "지금 고른 구간을 오른쪽 목록에 담습니다",
+      title: "지금 고른 구간을 목록에 담습니다",
+    });
+    // 딸림창 여닫이. 담긴 것이 있을 때만 보인다.
+    el.clipsToggle = make("button", { class: "ytdl-add ytdl-toggle", type: "button", text: "구간 목록", hidden: true });
+    el.clipsToggle.addEventListener("click", () => {
+      state.clipsShut = !state.clipsShut;
+      render();
+    });
+    el.leftoversToggle = make("button", { class: "ytdl-add ytdl-toggle", type: "button", text: "남은 조각", hidden: true });
+    el.leftoversToggle.addEventListener("click", () => {
+      state.leftoversShut = !state.leftoversShut;
+      render();
     });
     // 저장이 끝난 뒤에만 보이는 버튼. 확장에서만 쓸 수 있다(웹 페이지는 폴더를 못 연다).
     el.reveal = make("button", {
@@ -771,16 +785,32 @@
     el.clipSaveEach = make("button", { class: "ytdl-clip-btn", type: "button", text: "따로 저장" });
     el.clipSaveJoin = make("button", { class: "ytdl-clip-btn", type: "button", text: "이어붙여 저장" });
     el.clipAll = make("button", { class: "ytdl-clip-btn", type: "button", text: "모두 고르기" });
+    const shutClips = make("button", { class: "ytdl-side-shut", type: "button", text: "✕", title: "접기" });
+    shutClips.addEventListener("click", () => {
+      state.clipsShut = true;
+      render();
+    });
     el.clips = make("aside", { class: "ytdl-side ytdl-clips", hidden: true }, [
-      make("div", { class: "ytdl-side-head", text: "구간 목록" }),
+      make("div", { class: "ytdl-side-head" }, [
+        make("span", { text: "구간 목록" }),
+        shutClips,
+      ]),
       el.clipList,
       make("div", { class: "ytdl-side-foot" }, [el.clipAll, el.clipSaveEach, el.clipSaveJoin]),
     ]);
 
     el.leftoverList = make("div", { class: "ytdl-leftover-list" });
     el.leftoverAll = make("button", { class: "ytdl-clip-btn", type: "button", text: "모두 버리기" });
+    const shutLeft = make("button", { class: "ytdl-side-shut", type: "button", text: "✕", title: "접기" });
+    shutLeft.addEventListener("click", () => {
+      state.leftoversShut = true;
+      render();
+    });
     el.leftovers = make("aside", { class: "ytdl-side ytdl-leftovers", hidden: true }, [
-      make("div", { class: "ytdl-side-head", text: "남은 조각" }),
+      make("div", { class: "ytdl-side-head" }, [
+        make("span", { text: "남은 조각" }),
+        shutLeft,
+      ]),
       el.leftoverList,
       make("div", { class: "ytdl-side-foot" }, [el.leftoverAll]),
     ]);
@@ -802,6 +832,8 @@
           el.media,
           el.quality,
           el.addClip,
+          el.clipsToggle,
+          el.leftoversToggle,
           el.go,
           el.reveal,
           el.hold,
@@ -880,6 +912,7 @@
       // 담은 뒤에는 **편집 대상을 놓는다.** 그대로 붙들고 있으면 다음 구간을 잡으려고
       // 시각을 바꿀 때 방금 담은 구간이 덮어써진다. 고치고 싶으면 목록에서 누르면 된다.
       state.activeClip = null;
+      state.clipsShut = false; // 담았으면 보여준다
       render();
     });
     el.clipAll.addEventListener("click", () => {
@@ -1346,7 +1379,10 @@
   /** 오른쪽 구간 목록. 고른 줄은 하이라이트되고, 누르면 그 구간이 편집 대상이 된다. */
   function renderClips() {
     if (!el.clips) return;
-    el.clips.hidden = !state.clips.length;
+    el.clips.hidden = !state.clips.length || state.clipsShut;
+    el.clipsToggle.hidden = !state.clips.length;
+    el.clipsToggle.textContent = `구간 목록 ${state.clips.length}`;
+    el.clipsToggle.classList.toggle("on", !state.clipsShut);
     const rows = state.clips.map((clip, at) => {
       const pick = make("input", { class: "ytdl-clip-pick", type: "checkbox" });
       pick.checked = clip.picked;
@@ -1393,7 +1429,10 @@
   /** 왼쪽 남은 조각 목록. 이 브라우저에 쌓인 것을 영상별로 보여준다. */
   function renderLeftovers() {
     if (!el.leftovers) return;
-    el.leftovers.hidden = !state.leftovers.length;
+    el.leftovers.hidden = !state.leftovers.length || state.leftoversShut;
+    el.leftoversToggle.hidden = !state.leftovers.length;
+    el.leftoversToggle.textContent = `남은 조각 ${state.leftovers.length}`;
+    el.leftoversToggle.classList.toggle("on", !state.leftoversShut);
     el.leftoverList.replaceChildren(
       ...state.leftovers.map((item) => {
         const drop = make("button", { class: "ytdl-clip-del", type: "button", text: "✕", title: "이 영상의 조각을 지웁니다" });

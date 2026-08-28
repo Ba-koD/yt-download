@@ -316,6 +316,17 @@ export async function fetchSabrSection({
   };
   const 남은트랙 = () => [tracks.video, tracks.audio].filter((t) => t.format);
 
+  // 앞머리(init)는 **맨 앞에서 시작할 때만** 온다. 뒤쪽 구간을 고르면 그냥 조각만 오므로,
+  // 먼저 0초를 한 번 물어 앞머리만 챙긴다(딸려 오는 조각은 아래 걸러내기에 걸려 버려진다).
+  if (start > 0) {
+    control?.throwIfStopped?.();
+    const 첫판 = await session.pull({ playerTimeMs: 0, video: videoFormat, audio: audioFormat });
+    for (const segment of 첫판.segments) {
+      const track = byItag.get(Number(segment.itag));
+      if (track && segment.init && !track.init) track.init = segment.bytes;
+    }
+  }
+
   let playerTimeMs = Math.max(0, start) * 1000;
   let guard = 0;
 

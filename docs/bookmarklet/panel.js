@@ -4189,7 +4189,7 @@ window.__ytdlPageTeardown = () => {
     ]);
 
     el.leftoverList = make("div", { class: "ytdl-leftover-list" });
-    el.leftoverAll = make("button", { class: "ytdl-clip-btn", type: "button", text: "모두 버리기" });
+    el.leftoverAll = make("button", { class: "ytdl-clip-btn", type: "button", text: "조각 버리기" });
     const shutLeft = make("button", { class: "ytdl-side-shut", type: "button", text: "✕", title: "접기" });
     shutLeft.addEventListener("click", () => {
       state.leftoversShut = true;
@@ -4830,15 +4830,14 @@ window.__ytdlPageTeardown = () => {
           if (item.videoId === state.videoId) state.hasLeftovers = false;
           await refreshLeftovers();
         });
-        const 지금 = item.videoId === state.videoId ? " on" : "";
         const 줄 = [
-          make("span", { class: "ytdl-clip-no", text: item.videoId === state.videoId ? "지금" : "" }),
-          make("span", {
-            class: "ytdl-clip-time",
-            text:
-              `${item.videoId} · 조각 ${showMb(item.bytes)} MB` +
-              (item.output ? ` · 파일 ${showMb(item.output)} MB` : ""),
-          }),
+          make("span", { class: "ytdl-clip-time" }, [
+            make("span", { text: `조각 ${item.chunks}개 · ${showMb(item.bytes)} MB` }),
+            make("span", {
+              class: "ytdl-clip-set",
+              text: item.output ? `받아둔 파일 ${showMb(item.output)} MB` : "완성본 없음",
+            }),
+          ]),
         ];
         // 조립까지 끝난 파일이 남아 있으면 다시 받을 것 없이 그대로 내준다
         // (저장 대화상자에서 취소했을 때가 바로 이 경우다).
@@ -4854,22 +4853,23 @@ window.__ytdlPageTeardown = () => {
             // 처음 저장할 때 쓴 이름 그대로 내준다. 못 찾으면(옛 것) 영상 제목으로 짓는다.
             const 이름 =
               item.outputName ||
-              (item.videoId === state.videoId && state.formats
-                ? `${safeFileName(state.formats.title)}.mp4`
-                : `${item.videoId}.mp4`);
+              (state.formats ? `${safeFileName(state.formats.title)}.mp4` : `${item.videoId}.mp4`);
             const handed = save(file, 이름);
             offerLink(handed, `받아둔 파일을 내보냈습니다 · ${showMb(file.size)} MB`);
           });
           줄.push(again);
         }
         줄.push(drop);
-        return make("div", { class: `ytdl-clip${지금}` }, 줄);
+        return make("div", { class: "ytdl-clip" }, 줄);
       }),
     );
   }
 
   async function refreshLeftovers() {
-    state.leftovers = await store.listLeftovers().catch(() => []);
+    // 지금 보고 있는 영상 것만 보여준다. 다른 영상 조각까지 늘어놓으면 지금 할 일과 상관없는
+    // 목록이 되고, 그건 오래된 것을 걷어내는 cleanup 의 몫이다.
+    const all = await store.listLeftovers().catch(() => []);
+    state.leftovers = state.videoId ? all.filter((item) => item.videoId === state.videoId) : [];
     render();
   }
 

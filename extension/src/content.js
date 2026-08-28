@@ -694,9 +694,14 @@
       state.media = el.media.value;
       saveMediaMode(state.media);
       fillQuality();
+      applyToActiveClip();
       render();
     });
     el.quality = make("select", { class: "ytdl-quality" }, [make("option", { text: "불러오는 중…" })]);
+    el.quality.addEventListener("change", () => {
+      applyToActiveClip();
+      render();
+    });
     el.go = make("button", { class: "ytdl-go", type: "button", text: "구간 받기", disabled: true });
     // 받는 동안에만 보이는 버튼들.
     el.hold = make("button", { class: "ytdl-hold", type: "button", text: "일시정지", hidden: true });
@@ -867,8 +872,10 @@
     el.halt.addEventListener("click", () => state.control?.stop());
     el.addClip.addEventListener("click", () => {
       if (state.end - state.start < 0.05) return;
+      // 구간마다 화질·내용을 따로 기억한다. 담을 때의 설정이 그 구간의 설정이 된다.
       const clip = { id: (state.clipSeq = (state.clipSeq || 0) + 1),
-                     start: state.start, end: state.end, picked: true };
+                     start: state.start, end: state.end, picked: true,
+                     mode: state.media || "merged", itag: el.quality.value };
       state.clips.push(clip);
       // 담은 뒤에는 **편집 대상을 놓는다.** 그대로 붙들고 있으면 다음 구간을 잡으려고
       // 시각을 바꿀 때 방금 담은 구간이 덮어써진다. 고치고 싶으면 목록에서 누르면 된다.
@@ -1307,6 +1314,35 @@
     placeSides();
   }
 
+  /** 화질·내용을 바꾸면 편집 중인 구간에도 그대로 적어 둔다. */
+  function applyToActiveClip() {
+    const editing = state.clips.find((clip) => clip.id === state.activeClip);
+    if (!editing) return;
+    editing.mode = state.media || "merged";
+    editing.itag = el.quality.value;
+  }
+
+  /** 구간에 적힌 설정을 화면(내용·화질 칸)에 되돌려 놓는다. */
+  function loadClipSettings(clip) {
+    if (clip.mode && clip.mode !== state.media) {
+      state.media = clip.mode;
+      el.media.value = clip.mode;
+      saveMediaMode(clip.mode);
+      fillQuality();
+    }
+    if (clip.itag && [...el.quality.options].some((option) => option.value === clip.itag)) {
+      el.quality.value = clip.itag;
+    }
+  }
+
+  /** 구간에 적힌 설정을 사람이 읽을 말로. */
+  function clipLabel(clip) {
+    const 내용 = clip.mode === "video" ? "영상만" : clip.mode === "audio" ? "소리만" : "영상+소리";
+    const list = clip.mode === "audio" ? state.formats?.audio : state.formats?.video;
+    const format = list?.find((one) => String(one.itag) === String(clip.itag));
+    return format ? `${innertube.formatLabel(format)} · ${내용}` : 내용;
+  }
+
   /** 오른쪽 구간 목록. 고른 줄은 하이라이트되고, 누르면 그 구간이 편집 대상이 된다. */
   function renderClips() {
     if (!el.clips) return;
@@ -1331,16 +1367,18 @@
         [
           pick,
           make("span", { class: "ytdl-clip-no", text: `구간${at + 1}` }),
-          make("span", {
-            class: "ytdl-clip-time",
-            text: `${showClock(clip.start, 2)}~${showClock(clip.end, 2)}`,
-          }),
+          make("span", { class: "ytdl-clip-time" }, [
+            make("span", { text: `${showClock(clip.start, 2)}~${showClock(clip.end, 2)}` }),
+            make("span", { class: "ytdl-clip-set", text: clipLabel(clip) }),
+          ]),
           drop,
         ],
       );
       // 누르면 그 구간으로 옮겨간다. 손잡이·시각칸이 따라 움직이고, 고치면 이 구간이 바뀐다.
       row.addEventListener("click", () => {
         state.activeClip = clip.id;
+        // 시각뿐 아니라 그 구간의 화질·내용까지 화면에 되돌린다. 그래야 바로 고칠 수 있다.
+        loadClipSettings(clip);
         setRange(clip.start, clip.end);
       });
       return row;
@@ -1433,9 +1471,9 @@
   }
 
   /** 받을 내용에 맞는 품질 목록. "소리만"이면 소리 품질(비트레이트)을 보여준다. */
-  function qualityChoices() {
+  function qualityChoices(mode = state.media) {
     if (!state.formats) return [];
-    return state.media === "audio" ? state.formats.audio : state.formats.video;
+    return mode === "audio" ? state.formats.audio : state.formats.video;
   }
 
   /** 받아둔 품질 목록을 화질칸에 채운다. 패널을 다시 만들었을 때도 쓴다. */
@@ -1566,14 +1604,23 @@
     const order = state.clips.filter((clip) => clip.picked).sort((a, b) => a.start - b.start);
     if (!order.length) return;
     if (merge) {
-      await start({ clips: order });
+      // 이어붙이기는 트랙 하나로 조립하므로 화질이 섞이면 안 된다. 첫 구간 것으로 맞춘다.
+      const 섞임 = order.some((clip) => clip.mode !== order[0].mode || clip.itag !== order[0].itag);
+      await start({ clips: order, mode: order[0].mode, itag: order[0].itag });
+      if (섞임 && state.saved) {
+        setStatus(
+          `${el.status.textContent} · 구간마다 설정이 달라 첫 구간(${clipLabel(order[0])}) 것으로 맞췄습니다`,
+          "ytdl-ok",
+        );
+      }
       return;
     }
     for (let at = 0; at < order.length; at += 1) {
       const clip = order[at];
       state.activeClip = clip.id;
+      loadClipSettings(clip);
       setRange(clip.start, clip.end);
-      await start({ label: `구간 ${at + 1}/${order.length} · ` });
+      await start({ label: `구간 ${at + 1}/${order.length} · `, mode: clip.mode, itag: clip.itag });
       if (!state.saved) return; // 실패하거나 멈췄으면 거기서 그만둔다
     }
     setStatus(`구간 ${order.length}개를 모두 저장했습니다`, "ytdl-ok");
@@ -1582,10 +1629,12 @@
   async function start(options = {}) {
     if (state.busy || !state.formats) return;
     state.stageLabel = options.label || "";
-    const mode = state.media || "merged";
-    const choices = qualityChoices();
+    // 구간 목록에서 부르면 그 구간에 적힌 화질·내용을 쓴다(칸에 뭐가 떠 있든 상관없다).
+    const mode = options.mode || state.media || "merged";
+    const choices = qualityChoices(mode);
+    const wanted = options.itag || el.quality.value;
     const chosenFormat =
-      choices.find((format) => String(format.itag) === el.quality.value) || choices[0];
+      choices.find((format) => String(format.itag) === String(wanted)) || choices[0];
     if (!chosenFormat) return;
 
     state.busy = true;

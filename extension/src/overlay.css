@@ -782,3 +782,15 @@ html[dark] .ytdl-side {
   cursor: pointer;
   font-weight: 500;
 }
+
+/* 구간 줄의 설정 표시. 시각 아래에 작게 붙는다. */
+.ytdl-clip-time {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.ytdl-clip-set {
+  font-size: 11px;
+  opacity: 0.65;
+}

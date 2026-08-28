@@ -17,9 +17,12 @@
 
 const ROOT = "ytdl-media";
 const STAMP = "stamp";
-const OUTPUT = "out.mp4";
+// 완성본은 **구간마다 따로** 둔다. 한 칸만 두면 다음 구간을 받을 때 앞 구간이 지워져,
+// 여러 구간을 받아 놓고도 마지막 것 하나만 다시 꺼낼 수 있었다.
+const OUTPUT = (key) => `out-${key || "last"}.mp4`;
 // 저장할 때 쓴 파일 이름. 완성본 옆에 적어 둬야 나중에 그대로 다시 내줄 수 있다.
-const OUTNAME = "out.name";
+const OUTNAME = (key) => `out-${key || "last"}.name`;
+const OLD_OUTPUT = "out.mp4"; // 예전 판이 남긴 것. 읽기만 한다.
 
 /** OPFS 를 쓸 수 있는 곳인가. 아니면 메모리 저장소로 대신한다(이어받기만 없어진다). */
 export async function diskAvailable() {
@@ -102,9 +105,12 @@ export async function openDisk(videoId) {
       };
     },
 
-    /** 완성본을 흘려 쓸 자리. close() 가 디스크 기반 File 을 돌려준다(메모리에 안 올라온다). */
-    async output() {
-      const handle = await home.getFileHandle(OUTPUT, { create: true });
+    /**
+     * 완성본을 흘려 쓸 자리. close() 가 디스크 기반 File 을 돌려준다(메모리에 안 올라온다).
+     * `key` 는 구간을 가리킨다 — 구간마다 파일이 따로 남는다.
+     */
+    async output(key) {
+      const handle = await home.getFileHandle(OUTPUT(key), { create: true });
       const writable = await handle.createWritable(); // 기존 내용은 지워진다
       return {
         write: (bytes) => writable.write(bytes),
@@ -117,8 +123,8 @@ export async function openDisk(videoId) {
     },
 
     /** 저장할 때 쓴 이름을 적어 둔다. 나중에 "저장"을 다시 눌러도 같은 이름으로 나간다. */
-    async rememberName(text) {
-      await writeFileIn(home, OUTNAME, new TextEncoder().encode(String(text)));
+    async rememberName(key, text) {
+      await writeFileIn(home, OUTNAME(key), new TextEncoder().encode(String(text)));
     },
 
     /** 저장까지 끝났으면 조각은 더 필요 없다. 완성본(out.mp4)은 브라우저가 아직
@@ -172,22 +178,23 @@ export async function listLeftovers() {
       } catch {
         // 도장이 없으면 0 으로 둔다
       }
-      let output = 0;
-      let outputName = "";
-      try {
-        outputName = new TextDecoder().decode(await readFileIn(home, OUTNAME));
-      } catch {
-        // 이름을 안 적어둔 옛 것이면 부르는 쪽이 알아서 짓는다
-      }
+      // 조립까지 끝난 파일들. 저장을 취소했어도 여기 그대로 있다 — 구간마다 하나씩이다.
+      const outputs = [];
       for await (const [name, box] of home.entries()) {
         if (box.kind === "file") {
-          // 조립까지 끝난 파일. 저장을 취소했어도 여기 그대로 있다 — 다시 꺼내 쓸 수 있다.
-          if (name === OUTPUT) {
-            try {
-              output = (await box.getFile()).size;
-            } catch {
-              // 읽을 수 없으면 없는 것으로 친다
-            }
+          const 완성본 = name === OLD_OUTPUT || (name.startsWith("out-") && name.endsWith(".mp4"));
+          if (!완성본) continue;
+          const key = name === OLD_OUTPUT ? "" : name.slice(4, -4);
+          let label = "";
+          try {
+            label = new TextDecoder().decode(await readFileIn(home, OUTNAME(key)));
+          } catch {
+            // 이름을 안 적어둔 옛 것이면 부르는 쪽이 알아서 짓는다
+          }
+          try {
+            outputs.push({ key, name: label, bytes: (await box.getFile()).size });
+          } catch {
+            // 읽을 수 없으면 없는 것으로 친다
           }
           continue;
         }
@@ -202,7 +209,7 @@ export async function listLeftovers() {
           }
         }
       }
-      if (chunks || output) out.push({ videoId, bytes, chunks, output, outputName, usedAt: stamped });
+      if (chunks || outputs.length) out.push({ videoId, bytes, chunks, outputs, usedAt: stamped });
     }
   } catch {
     // 디스크가 없는 곳이면 빈 목록이다
@@ -216,15 +223,30 @@ export async function listLeftovers() {
  * 저장 대화상자에서 취소했더라도 완성본은 여기 남아 있다. 다시 받을 것도, 다시 합칠
  * 것도 없이 이걸 그대로 내주면 된다.
  */
-export async function readOutput(videoId) {
+export async function readOutput(videoId, key) {
   try {
     const opfs = await navigator.storage.getDirectory();
     const root = await dir(opfs, ROOT, false);
     const home = root && (await dir(root, videoId, false));
     if (!home) return null;
-    return await (await home.getFileHandle(OUTPUT)).getFile();
+    const name = key === "" ? OLD_OUTPUT : OUTPUT(key);
+    return await (await home.getFileHandle(name)).getFile();
   } catch {
     return null;
+  }
+}
+
+/** 완성본 하나만 지운다(그 구간 것만). 조각은 그대로 둔다. */
+export async function discardOutput(videoId, key) {
+  try {
+    const opfs = await navigator.storage.getDirectory();
+    const root = await dir(opfs, ROOT, false);
+    const home = root && (await dir(root, videoId, false));
+    if (!home) return;
+    await home.removeEntry(key === "" ? OLD_OUTPUT : OUTPUT(key)).catch(() => {});
+    await home.removeEntry(OUTNAME(key)).catch(() => {});
+  } catch {
+    // 지울 것이 없으면 그대로 둔다
   }
 }
 

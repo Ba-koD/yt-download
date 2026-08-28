@@ -856,6 +856,9 @@
       ]),
     ]);
     el.panel = panel;
+    // 패널은 유튜브가 화면을 다시 그릴 때마다 새로 만들어진다. 딸림창은 패널의 자식이
+    // 아니라 본문에 붙어 있어서, 그냥 붙이면 옛 창이 남아 **두 개가 뜬다**(실제로 그랬다).
+    for (const stale of document.querySelectorAll(".ytdl-side")) stale.remove();
     document.body.append(el.leftovers);
     bindSideDrag(el.leftovers, "leftovers");
 
@@ -1303,6 +1306,7 @@
       if (state.mode !== null) {
         el.button?.remove();
         el.panel?.remove();
+        el.leftovers?.remove();
         el.button = null;
         el.panel = null;
         state.mode = null;
@@ -1522,58 +1526,72 @@
     el.leftoverScope.classList.toggle("on", state.leftoversAll);
     el.leftoverScope.hidden = false;
     el.leftoverAll.textContent = state.leftoversAll ? "모두 버리기" : "조각 버리기";
-    el.leftoverList.replaceChildren(
-      ...보일것.map((item) => {
+    // 한 영상이 여러 줄이 될 수 있다 — 받아둔 구간마다 한 줄, 남은 조각이 있으면 한 줄 더.
+    const rows = [];
+    for (const item of 보일것) {
+      const 지금 = item.videoId === state.videoId;
+      const 꼬리표 = (글, 작게) =>
+        make("span", { class: "ytdl-clip-time" }, [
+          make("span", { text: 글 }),
+          make("span", { class: "ytdl-clip-set", text: 작게 }),
+        ]);
+      const 이동 = (row) => {
+        if (지금) return row;
+        row.title = "이 영상으로 갑니다";
+        row.addEventListener("click", () => {
+          location.href = `https://www.youtube.com/watch?v=${encodeURIComponent(item.videoId)}`;
+        });
+        return row;
+      };
+
+      for (const done of item.outputs || []) {
+        const again = make("button", { class: "ytdl-clip-btn ytdl-clip-save", type: "button", text: "저장" });
+        again.addEventListener("click", async (event) => {
+          event.stopPropagation();
+          const file = await store.readOutput(item.videoId, done.key).catch(() => null);
+          if (!file) {
+            setStatus("저장해 둔 파일을 찾지 못했습니다");
+            return;
+          }
+          const 이름 = done.name || `${item.videoId} [받아둔 구간].mp4`;
+          offerLink(save(file, 이름), `받아둔 파일을 내보냈습니다 · ${showMb(file.size)} MB`);
+        });
+        const drop = make("button", { class: "ytdl-clip-del", type: "button", text: "✕", title: "이 파일을 지웁니다" });
+        drop.addEventListener("click", async (event) => {
+          event.stopPropagation();
+          await store.discardOutput(item.videoId, done.key);
+          await refreshLeftovers();
+        });
+        // 이름에 적어둔 구간 표시가 있으면 그것을, 없으면 영상 ID 를 보여준다.
+        const 구간 = ((done.name || "").match(/\[([0-9:.~\-]+)\]/) || [])[1] || done.key || "받아둔 파일";
+        rows.push(
+          이동(make("div", { class: `ytdl-clip${지금 ? " on" : ""}` }, [
+            make("span", { class: "ytdl-clip-no", text: 지금 ? "받음" : "" }),
+            꼬리표(구간.replace(/-/g, ":"), `${지금 ? "" : item.videoId + " · "}${showMb(done.bytes)} MB`),
+            again,
+            drop,
+          ])),
+        );
+      }
+
+      if (item.chunks) {
         const drop = make("button", { class: "ytdl-clip-del", type: "button", text: "✕", title: "이 영상의 조각을 지웁니다" });
         drop.addEventListener("click", async (event) => {
           event.stopPropagation();
           await store.discard(item.videoId);
-          if (item.videoId === state.videoId) state.hasLeftovers = false;
+          if (지금) state.hasLeftovers = false;
           await refreshLeftovers();
         });
-        const 지금 = item.videoId === state.videoId;
-        const 줄 = [
-          make("span", { class: "ytdl-clip-no", text: 지금 ? "지금" : "" }),
-          make("span", { class: "ytdl-clip-time" }, [
-            make("span", { text: `${item.videoId} · 조각 ${showMb(item.bytes)} MB` }),
-            make("span", {
-              class: "ytdl-clip-set",
-              text: item.output ? `받아둔 파일 ${showMb(item.output)} MB` : "완성본 없음",
-            }),
-          ]),
-        ];
-        // 조립까지 끝난 파일이 남아 있으면 다시 받을 것 없이 그대로 내준다
-        // (저장 대화상자에서 취소했을 때가 바로 이 경우다).
-        if (item.output) {
-          const again = make("button", { class: "ytdl-clip-btn ytdl-clip-save", type: "button", text: "저장" });
-          again.addEventListener("click", async (event) => {
-            event.stopPropagation();
-            const file = await store.readOutput(item.videoId).catch(() => null);
-            if (!file) {
-              setStatus("저장해 둔 파일을 찾지 못했습니다");
-              return;
-            }
-            // 처음 저장할 때 쓴 이름 그대로 내준다. 못 찾으면(옛 것) 영상 제목으로 짓는다.
-            const 이름 =
-              item.outputName ||
-              (지금 && state.formats ? `${safeFileName(state.formats.title)}.mp4` : `${item.videoId}.mp4`);
-            const handed = save(file, 이름);
-            offerLink(handed, `받아둔 파일을 내보냈습니다 · ${showMb(file.size)} MB`);
-          });
-          줄.push(again);
-        }
-        줄.push(drop);
-        const row = make("div", { class: `ytdl-clip${지금 ? " on" : ""}` }, 줄);
-        // 다른 영상 줄을 누르면 그 영상으로 옮겨간다. 조각이 어느 영상 것인지 보러 갈 수 있어야 한다.
-        if (!지금) {
-          row.title = "이 영상으로 갑니다";
-          row.addEventListener("click", () => {
-            location.href = `https://www.youtube.com/watch?v=${encodeURIComponent(item.videoId)}`;
-          });
-        }
-        return row;
-      }),
-    );
+        rows.push(
+          이동(make("div", { class: `ytdl-clip${지금 ? " on" : ""}` }, [
+            make("span", { class: "ytdl-clip-no", text: 지금 ? "조각" : "" }),
+            꼬리표("이어받기용 조각", `${지금 ? "" : item.videoId + " · "}${item.chunks}개 · ${showMb(item.bytes)} MB`),
+            drop,
+          ])),
+        );
+      }
+    }
+    el.leftoverList.replaceChildren(...rows);
   }
 
   async function refreshLeftovers() {
@@ -1786,7 +1804,17 @@
 
     // 조각은 되도록 디스크(OPFS)에 쌓는다. 메모리는 조각 하나 크기만 쓰고,
     // 받다 죽어도 조각이 남아 다시 누르면 이어받는다.
-    const media = await store.openBest(state.videoId || "video");
+    // 완성본을 구간마다 따로 남긴다. 한 칸만 쓰면 다음 구간을 받을 때 앞 구간이 지워져,
+    // 여러 구간을 받아 놓고도 마지막 것만 다시 꺼낼 수 있었다.
+    const outputKey = options.clips
+      ? `join${options.clips.length}-${Math.round(options.clips[0].start * 100)}`
+      : `${Math.round(state.start * 100)}-${Math.round(state.end * 100)}`;
+    const disk = await store.openBest(state.videoId || "video");
+    const media = {
+      ...disk,
+      output: () => disk.output(outputKey),
+      rememberName: (text) => disk.rememberName?.(outputKey, text),
+    };
     const resumable = media.kind === "disk";
     const resumeHint = resumable ? " · 받은 만큼은 남아 있어 다시 누르면 이어받습니다" : "";
     meter.events.length = 0;
@@ -1859,7 +1887,7 @@
         `[${clockLabel(realStart)}~${clockLabel(realEnd)}]${marker}.${ext}`;
       save(file, fileName);
       // 같은 이름으로 다시 내줄 수 있게 완성본 옆에 적어 둔다(저장을 취소했을 때 쓴다).
-      media.rememberName?.(fileName).catch(() => {});
+      media.rememberName(fileName)?.catch?.(() => {});
       // 조각을 언제 지울지.
       //
       // 예전에는 저장 버튼을 누르자마자 지웠다. 그런데 `<a download>` 는 저장을 **시작**만

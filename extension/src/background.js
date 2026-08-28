@@ -37,6 +37,21 @@ if (chrome.downloads?.onCreated) {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "download-state") {
+    // 저장 대화상자를 띄우는 설정이면 사용자가 자리를 고를 때까지 in_progress 로 머문다.
+    // 끝나거나 취소될 때까지 지켜본 뒤 알린다.
+    const deadline = Date.now() + 180_000;
+    const look = () => {
+      const state = lastDownload.state;
+      if (state === "complete" || state === "interrupted" || Date.now() > deadline) {
+        sendResponse({ ok: true, state: state || "unknown" });
+        return;
+      }
+      setTimeout(look, 400);
+    };
+    look();
+    return true;
+  }
   if (message?.type === "reveal") {
     try {
       if (lastDownload.id != null) chrome.downloads.show(lastDownload.id);

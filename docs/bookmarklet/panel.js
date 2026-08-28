@@ -3755,6 +3755,30 @@ window.__ytdlPageTeardown = () => {
     }
   }
 
+  // 저장이 실제로 끝났는지 기억해 둔다. 확장에서만 알 수 있다(브라우저가 알려준다).
+  const DONE_KEY = "ytdl-saved";
+
+  function markSaved(videoId, key, ok) {
+    try {
+      const all = JSON.parse(localStorage.getItem(DONE_KEY) || "{}");
+      all[`${videoId}|${key}`] = { ok, at: Date.now() };
+      const keys = Object.keys(all).sort((a, b) => (all[b].at || 0) - (all[a].at || 0));
+      const trimmed = {};
+      for (const k of keys.slice(0, 200)) trimmed[k] = all[k];
+      localStorage.setItem(DONE_KEY, JSON.stringify(trimmed));
+    } catch {
+      // 못 적어도 파일은 목록에 남는다.
+    }
+  }
+
+  function savedMark(videoId, key) {
+    try {
+      return JSON.parse(localStorage.getItem(DONE_KEY) || "{}")[`${videoId}|${key}`]?.ok;
+    } catch {
+      return undefined;
+    }
+  }
+
   function savedRange(videoId) {
     const saved = readSaved()[videoId];
     if (!saved || !Number.isFinite(saved.start) || !Number.isFinite(saved.end)) return null;
@@ -5072,7 +5096,12 @@ window.__ytdlPageTeardown = () => {
             ...(지금 ? [make("span", { class: "ytdl-clip-no", text: "받음" })] : [섬네일()]),
             꼬리표(
               구간.replace(/-/g, ":"),
-              `${지금 ? "" : `${이름 || item.videoId} · `}${showMb(done.bytes)} MB`,
+              `${지금 ? "" : `${이름 || item.videoId} · `}${showMb(done.bytes)} MB` +
+                (() => {
+                  const 표 = savedMark(item.videoId, done.key);
+                  // 북마클릿은 알 길이 없어 아무 말도 하지 않는다.
+                  return 표 === true ? " · 저장함" : 표 === false ? " · 저장 안 함" : "";
+                })(),
             ),
             again,
             drop,
@@ -5426,6 +5455,19 @@ window.__ytdlPageTeardown = () => {
       state.hasLeftovers = false;
       media.clearChunks().catch(() => {});
       refreshLeftovers().catch(() => render());
+      // 실제로 저장까지 됐는지는 브라우저만 안다. 확장에서는 물어볼 수 있다.
+      if (runtime) {
+        runtime.sendMessage({ type: "download-state" }, (answer) => {
+          void chrome.runtime.lastError;
+          if (!answer?.state || answer.state === "unknown") return;
+          const 됐나 = answer.state === "complete";
+          markSaved(state.videoId, outputKey, 됐나);
+          if (!됐나) {
+            setStatus("저장을 취소했습니다 · 아래 목록에서 다시 저장할 수 있습니다", "ytdl-ok");
+          }
+          refreshLeftovers().catch(() => render());
+        });
+      }
       const took = ((Date.now() - began) / 1000).toFixed(1);
       const pads = [];
       if (state.start - realStart >= 0.05) pads.push(`앞 ${(state.start - realStart).toFixed(2)}초`);
@@ -5436,7 +5478,7 @@ window.__ytdlPageTeardown = () => {
           `(${showClock(mediaSeconds, 2)})${note} · ` +
           `${showMb(file.size)} MB · ${took}초` +
           // 저장 대화상자에서 취소했을 수도 있다. 그때 다시 받지 않아도 된다는 것을 알려준다.
-          (state.hasLeftovers ? " · 조각을 남겨뒀습니다(다시 누르면 바로 나옵니다)" : ""),
+          (runtime ? "" : " · 저장을 취소했다면 아래 목록에서 다시 저장하세요"),
         "ytdl-ok",
       );
     } catch (error) {

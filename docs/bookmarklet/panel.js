@@ -5006,7 +5006,9 @@ window.__ytdlPageTeardown = () => {
           refreshLeftovers().catch(() => render());
         });
       } else {
+        // 북마클릿은 저장이 끝났는지 알 길이 없다. 조각을 남기고 목록에 바로 띄운다.
         state.hasLeftovers = true;
+        refreshLeftovers().catch(() => render());
       }
       const took = ((Date.now() - began) / 1000).toFixed(1);
       const pads = [];
@@ -5016,7 +5018,9 @@ window.__ytdlPageTeardown = () => {
       setStatus(
         `저장했습니다 · ${showClock(realStart, 2)}~${showClock(realEnd, 2)} ` +
           `(${showClock(mediaSeconds, 2)})${note} · ` +
-          `${showMb(file.size)} MB · ${took}초`,
+          `${showMb(file.size)} MB · ${took}초` +
+          // 저장 대화상자에서 취소했을 수도 있다. 그때 다시 받지 않아도 된다는 것을 알려준다.
+          (state.hasLeftovers ? " · 조각을 남겨뒀습니다(다시 누르면 바로 나옵니다)" : ""),
         "ytdl-ok",
       );
     } catch (error) {

@@ -1125,65 +1125,57 @@
     }
     const box = el.panel.getBoundingClientRect();
     const gap = 10;
-
     // 딸림창 너비는 화면에 맞춘다(좁으면 좁게, 넓으면 넉넉하게).
-    const 옆너비 = Math.round(Math.max(200, Math.min(window.innerWidth * 0.22, 320)));
-    for (const side of [el.clips, el.leftovers]) {
-      if (side) side.style.setProperty("--ytdl-side-width", `${옆너비}px`);
-    }
+    const wide = Math.round(Math.max(200, Math.min(window.innerWidth * 0.22, 320)));
 
-    // 좁은 화면에서는 옆에 못 세운다. 위아래 중 **남는 쪽**에 패널 폭짜리 띠로 쌓는다.
-    // 무조건 아래로 붙이면 패널이 화면 아래쪽에 있을 때 띠가 화면 밖으로 나간다(실제로 그랬다).
-    const 좁은가 = box.width + 옆너비 * 2 + gap * 3 > window.innerWidth - 16;
-    if (좁은가) {
-      const 보이는것 = [el.clips, el.leftovers].filter((side) => side && !side.hidden);
-      for (const side of [el.clips, el.leftovers]) {
-        if (side && side.hidden) side.style.visibility = "hidden";
-      }
-      const 아래여유 = window.innerHeight - box.bottom - gap - 8;
-      const 위여유 = box.top - gap - 8;
-      const 아래로 = 아래여유 >= 위여유;
-      const 여유 = Math.max(120, 아래로 ? 아래여유 : 위여유);
-      // 여럿이면 남는 높이를 나눠 갖는다.
-      const 몫 = Math.max(110, Math.floor((여유 - gap * (보이는것.length - 1)) / Math.max(1, 보이는것.length)));
-      let cursor = 아래로 ? box.bottom + gap : box.top - gap;
-      for (const side of 보이는것) {
-        side.style.visibility = "visible";
-        side.classList.add("ytdl-side-wide");
-        side.style.width = `${Math.round(box.width)}px`;
-        side.style.maxHeight = `${몫}px`;
-        side.style.left = `${Math.round(Math.max(8, box.left))}px`;
-        const height = Math.min(side.offsetHeight || 0, 몫);
-        const top = 아래로 ? cursor : cursor - height;
-        side.style.top = `${Math.round(Math.max(8, top))}px`;
-        cursor = 아래로 ? top + height + gap : top - gap;
-      }
-      return;
-    }
+    // **양옆을 따로 잰다.** "화면이 넓은가"로 뭉뚱그리면 한쪽에 자리가 남는데도 둘 다
+    // 아래로 내려가 버린다(실제로 1600px 에서 그랬다).
+    const 들어가나 = (space) => space >= wide + gap + 8;
+    const 오른쪽 = 들어가나(window.innerWidth - box.right);
+    const 왼쪽 = 들어가나(box.left);
 
-    const put = (side, prefer) => {
-      if (!side || side.hidden) return;
+    const 띠 = [];
+    const 옆에 = (side, where) => {
       side.style.visibility = "visible";
-      const width = side.offsetWidth || 옆너비;
-      const 옆자리 = prefer === "right" ? box.right + gap : box.left - width - gap;
-      const 옆이좁다 = prefer === "right" ? 옆자리 + width > window.innerWidth - 8 : 옆자리 < 8;
-
-      if (!옆이좁다) {
-        // 넓은 화면: 패널 옆에 나란히 선다.
-        side.classList.remove("ytdl-side-wide");
-        side.style.width = `${옆너비}px`;
-        side.style.maxHeight = `${Math.round(Math.max(140, window.innerHeight - box.top - 16))}px`;
-        side.style.left = `${Math.round(옆자리)}px`;
-        side.style.top = `${Math.round(Math.max(8, box.top))}px`;
-        return;
-      }
-
-      // 여기까지 오면 옆에 자리가 있다(좁은 경우는 위에서 이미 처리했다).
-      side.style.left = `${Math.round(Math.max(8, 옆자리))}px`;
+      side.classList.remove("ytdl-side-wide");
+      side.style.width = `${wide}px`;
+      side.style.maxHeight = `${Math.round(Math.max(140, window.innerHeight - box.top - 16))}px`;
+      side.style.left = `${Math.round(where === "right" ? box.right + gap : box.left - wide - gap)}px`;
       side.style.top = `${Math.round(Math.max(8, box.top))}px`;
     };
-    put(el.clips, "right");
-    put(el.leftovers, "left");
+
+    for (const [side, where, 자리있음] of [
+      [el.clips, "right", 오른쪽],
+      [el.leftovers, "left", 왼쪽],
+    ]) {
+      if (!side) continue;
+      if (side.hidden) {
+        side.style.visibility = "hidden";
+        continue;
+      }
+      if (자리있음) 옆에(side, where);
+      else 띠.push(side);
+    }
+    if (!띠.length) return;
+
+    // 옆에 못 세운 것은 패널 폭짜리 띠로 위아래 **남는 쪽**에 쌓는다.
+    const 아래여유 = window.innerHeight - box.bottom - gap - 8;
+    const 위여유 = box.top - gap - 8;
+    const 아래로 = 아래여유 >= 위여유;
+    const 여유 = Math.max(120, 아래로 ? 아래여유 : 위여유);
+    const 몫 = Math.max(110, Math.floor((여유 - gap * (띠.length - 1)) / 띠.length));
+    let cursor = 아래로 ? box.bottom + gap : box.top - gap;
+    for (const side of 띠) {
+      side.style.visibility = "visible";
+      side.classList.add("ytdl-side-wide");
+      side.style.width = `${Math.round(box.width)}px`;
+      side.style.maxHeight = `${몫}px`;
+      side.style.left = `${Math.round(Math.max(8, box.left))}px`;
+      const height = Math.min(side.offsetHeight || 0, 몫);
+      const top = 아래로 ? cursor : cursor - height;
+      side.style.top = `${Math.round(Math.max(8, top))}px`;
+      cursor = 아래로 ? top + height + gap : top - gap;
+    }
   }
 
   function moveFloatingPanel(left, top) {

@@ -5091,7 +5091,7 @@ window.__ytdlPageTeardown = () => {
           이동(make("div", { class: `ytdl-clip${지금 ? " on" : ""}` }, [
             ...(지금 ? [make("span", { class: "ytdl-clip-no", text: "조각" })] : [섬네일()]),
             꼬리표(
-              지금 ? "이어받기용 조각" : 이름 || item.videoId,
+              지금 ? "받다 만 조각" : 이름 || item.videoId,
               `조각 ${item.chunks}개 · ${showMb(item.bytes)} MB`,
             ),
             drop,
@@ -5400,32 +5400,18 @@ window.__ytdlPageTeardown = () => {
       save(file, fileName);
       // 같은 이름으로 다시 내줄 수 있게 완성본 옆에 적어 둔다(저장을 취소했을 때 쓴다).
       media.rememberName(fileName)?.catch?.(() => {});
-      // 조각을 언제 지울지.
+      // 조립까지 끝났으면 조각은 지운다.
       //
-      // 예전에는 저장 버튼을 누르자마자 지웠다. 그런데 `<a download>` 는 저장을 **시작**만
-      // 시킬 뿐이라, 사용자가 저장 대화상자에서 취소해도 우리는 모른 채 지워버렸다.
-      // 그러면 다시 누를 때 통째로 받아야 한다 — 다 받아놓고도 말이다.
+      // 한때 "저장 대화상자에서 취소하면 다시 받아야 한다"는 걱정에 남겨 뒀었다. 그런데
+      // 이제 **완성본을 구간마다 보관**하니 취소해도 목록에서 곧바로 다시 내줄 수 있다.
+      // 조각까지 끌어안고 있으면 같은 내용을 두 벌로 들고 있는 셈이고, 목록에도 "조각"
+      // 줄이 따라 붙어 무엇이 무엇인지 헷갈린다.
       //
-      // 확장에서는 배경 일꾼이 내려받기 상태를 볼 수 있으니 **정말 끝났을 때만** 지운다.
-      // 북마클릿은 볼 길이 없어 그냥 남겨둔다(오래된 것은 store.cleanup 이 걷어간다).
+      // 그래서 조각이 남는 경우는 하나로 좁혔다 — **받다 만 것.** 그때는 이어받기의 근거다.
       state.saved = true;
-      if (runtime) {
-        runtime.sendMessage({ type: "download-state" }, (answer) => {
-          void chrome.runtime.lastError;
-          if (answer?.state === "complete") {
-            media.clearChunks().catch(() => {});
-            state.hasLeftovers = false;
-          } else {
-            // 취소했거나 알 수 없다. 조각을 남겨 다시 누르면 곧바로 나오게 한다.
-            state.hasLeftovers = true;
-          }
-          refreshLeftovers().catch(() => render());
-        });
-      } else {
-        // 북마클릿은 저장이 끝났는지 알 길이 없다. 조각을 남기고 목록에 바로 띄운다.
-        state.hasLeftovers = true;
-        refreshLeftovers().catch(() => render());
-      }
+      state.hasLeftovers = false;
+      media.clearChunks().catch(() => {});
+      refreshLeftovers().catch(() => render());
       const took = ((Date.now() - began) / 1000).toFixed(1);
       const pads = [];
       if (state.start - realStart >= 0.05) pads.push(`앞 ${(state.start - realStart).toFixed(2)}초`);
